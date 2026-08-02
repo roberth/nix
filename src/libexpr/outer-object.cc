@@ -60,8 +60,20 @@ std::shared_ptr<Object> OuterObject::maybeGetAttr(const std::string & name)
         panic("OuterObject::maybeGetAttr: queryFn returned non-ResultWHNF");
     if (!qr.child)
         panic("OuterObject::maybeGetAttr: queryFn returned null child");
+    /* Child's producer re-derives from OUR producer on every call, so
+       that descendant probes fired later see the current SCA obsSet
+       snapshot rather than the frozen one we computed for this probe.
+       Enables "each OVR self-viable" per the emit-at-result-construction
+       design: each descendant probe's parent chain reflects the
+       runningObsSet as of THAT probe's moment. */
+    auto parentProducer = producer;
+    auto & poolRef = selectorPool;
+    auto childProducer = [parentProducer, name, &poolRef]() -> ref<const trace::Selector> {
+        auto freshParent = parentProducer();
+        return poolRef.intern(trace::SelectorGetAttr{name, freshParent});
+    };
     auto child = std::make_shared<OuterObject>(
-        [qSel]() { return qSel; },
+        std::move(childProducer),
         qr.child, queryFn, outerRootFSRoot, selectorPool, applyFn);
     child->withArgCell(argCell);
     child->cachedWHNF = *r;
@@ -204,8 +216,17 @@ std::shared_ptr<Object> OuterObject::getListElem(size_t index)
         panic("OuterObject::getListElem: queryFn returned non-ResultWHNF");
     if (!qr.child)
         panic("OuterObject::getListElem: queryFn returned null child");
+    /* Same re-derive pattern as maybeGetAttr: child's producer re-samples
+       parent on each call so descendant probes see the current SCA
+       obsSet snapshot. */
+    auto parentProducer = producer;
+    auto & poolRef = selectorPool;
+    auto childProducer = [parentProducer, index, &poolRef]() -> ref<const trace::Selector> {
+        auto freshParent = parentProducer();
+        return poolRef.intern(trace::SelectorGetListElem{index, freshParent});
+    };
     auto child = std::make_shared<OuterObject>(
-        [qSel]() { return qSel; },
+        std::move(childProducer),
         qr.child, queryFn, outerRootFSRoot, selectorPool, applyFn);
     child->withArgCell(argCell);
     child->cachedWHNF = *r;
