@@ -417,9 +417,21 @@ static PrimOp * makeCachedFnPrimOp(
                         tracingCacheLog("makeCachedFnPrimOp.impl: outerArgProxy=%p seedCell=%p outerArg=%p",
                                         (void*)outerArgProxy.get_ptr().get(), (void*)seedCell.get(),
                                         (void*)outerArgObj.get());
-                        auto result = innerEval->apply(ref<Object>(fnObj), outerArgProxy);
-                        tracingCacheLog("makeCachedFnPrimOp.impl: apply result=%p", (void*)result.get_ptr().get());
-                        ExprFromObject(result.get_ptr(), innerEval, resolver).eval(state, state.baseEnv, v);
+                        try {
+                            auto result = innerEval->apply(ref<Object>(fnObj), outerArgProxy);
+                            tracingCacheLog("makeCachedFnPrimOp.impl: apply result=%p", (void*)result.get_ptr().get());
+                            ExprFromObject(result.get_ptr(), innerEval, resolver).eval(state, state.baseEnv, v);
+                        } catch (Error & e) {
+                            /* Stamp the trace when a cached-function
+                               application fails so the reader knows
+                               *which* cache callback firing surfaced
+                               the error. `fnObj` is the cached function
+                               (the one produced by `builtins.cache`);
+                               `<cached-fn>` is our name for its
+                               applied form. */
+                            e.addTrace(nullptr, HintFmt("while applying a `builtins.cache` result as a function"), TracePrint::Always);
+                            throw;
+                        }
                     },
                 .getFunctionInfo = [fnObj]() -> std::optional<FunctionInfo> { return fnObj->getFunctionInfo(); },
             };
@@ -581,10 +593,21 @@ void ExprFromObject::eval(EvalState & state, Env & env, Value & v)
 
 void ExprFromObjectAttr::eval(EvalState & state, Env & env, Value & v)
 {
-    auto childObj = parentObj->maybeGetAttr(name);
-    if (!childObj)
-        state.error<TypeError>("ExprFromObjectAttr: attribute '%s' missing", name).debugThrow();
-    ExprFromObject(std::move(childObj), innerEvaluator, outerResolver).eval(state, env, v);
+    try {
+        auto childObj = parentObj->maybeGetAttr(name);
+        if (!childObj)
+            state.error<TypeError>("ExprFromObjectAttr: attribute '%s' missing", name).debugThrow();
+        ExprFromObject(std::move(childObj), innerEvaluator, outerResolver).eval(state, env, v);
+    } catch (Error & e) {
+        /* Every navigation across a `builtins.cache` boundary lands
+           here; on error, stamp the attr name so the reader knows
+           which cache-bridged attribute was being forced when a
+           downstream failure (module system, missing attr, infinite
+           recursion, …) surfaced. TracePrint::Always so it shows
+           even without --show-trace. */
+        e.addTrace(nullptr, HintFmt("while forcing cached attribute '%s' across a `builtins.cache` boundary", name), TracePrint::Always);
+        throw;
+    }
 }
 
 std::shared_ptr<OuterResolver> makeOuterResolver(

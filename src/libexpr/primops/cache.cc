@@ -169,15 +169,29 @@ static void prim_cache(EvalState & state, const PosIdx pos, Value ** args, Value
     // so file reads are recorded as dependencies for invalidation.
     auto toInnerPath = [&](const SourcePath & p) { return RootedPath{innerState->rootFSRoot, p.path}; };
 
-    ref<Object> result = importPath
-        ? replayEval->evalFile(toInnerPath(*importPath), importPath->path.abs())
-        : replayEval->evalExpr(*expr, toInnerPath(*baseDir));
+    try {
+        ref<Object> result = importPath
+            ? replayEval->evalFile(toInnerPath(*importPath), importPath->path.abs())
+            : replayEval->evalExpr(*expr, toInnerPath(*baseDir));
 
-    // Bridge the inner Object back to the outer Value via
-    // ExprFromObject. Eager top-level eval (primops must produce a
-    // concrete Value); attrset/list children become lazy
-    // ExprFromObjectAttr / ExprFromObject thunks.
-    ExprFromObject(result.get_ptr(), replayEval.get_ptr(), resolver).eval(state, state.baseEnv, v);
+        // Bridge the inner Object back to the outer Value via
+        // ExprFromObject. Eager top-level eval (primops must produce a
+        // concrete Value); attrset/list children become lazy
+        // ExprFromObjectAttr / ExprFromObject thunks.
+        ExprFromObject(result.get_ptr(), replayEval.get_ptr(), resolver).eval(state, state.baseEnv, v);
+    } catch (Error & e) {
+        /* Root context for anything that surfaces out of the cache
+           boundary — the eager evalFile/evalExpr, downstream lazy
+           forces via bridge thunks, and callback applications all
+           unwind through here on error. Stamp the source of the
+           `builtins.cache` call so the reader can locate the site
+           in their expression. */
+        auto descriptor = importPath
+            ? fmt("import = %s", importPath->path.abs())
+            : fmt("expr = <%d bytes>, baseDir = %s", expr->size(), baseDir->path.abs());
+        e.addTrace(nullptr, HintFmt("while evaluating a `builtins.cache` call (%s)", descriptor), TracePrint::Always);
+        throw;
+    }
 }
 
 static RegisterPrimOp primop_cache({
