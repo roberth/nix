@@ -1,8 +1,9 @@
 # Custom two-site probe for the eval-cache warm-recursion bug.
 #
-# Purpose: reproduce the bug in a plain `lib.evalModules` call, WITHOUT
-# `evalConfig` / NixOS baseModules / module-list.nix. Isolates the trigger
-# to a shape that's tractable to reason about.
+# Purpose: reproduce the bug WITHOUT the NixOS module system —
+# no evalConfig, no baseModules, no outer lib.evalModules. Only
+# plain `let` bindings, plus one small internal lib.evalModules
+# call to drive submoduleWith's option-doc forcing.
 #
 # Run:
 #   NIX_TRACING_CACHE_DIR=/tmp/repro-cache \
@@ -10,89 +11,72 @@
 #     --impure -f doc/design/eval-cache-repro-two-site.nix
 #
 # Cold: prints a `.drv` path (success).
-# Warm: prints `«error: infinite recursion encountered»` inlined into
-# the output stream (rc=0 due to Nix printer quirk).
+# Warm: prints `«error: infinite recursion encountered»` inlined
+# into the output stream (rc=0 due to Nix printer quirk); stderr
+# points to nixpkgs/lib/modules.nix:372:15 (the "options"
+# module-arg site).
 #
-# Structure (mirrors NixOS's system.build.toplevel):
-#   - Site A (docsProbe) is `optionAttrSetToDocList` over a
-#     `submoduleWith` whose modules include `pkgs.ghostunnel.services.default`,
-#     wrapped in a `pkgs.runCommand` producing a derivation. This is
-#     nixpkgs's `documentation.nix` behavior condensed.
-#   - Site B (pkgRefBuilder) is a separate module that produces a
-#     derivation referencing an unrelated by-name pkg (`pkgs.hello`).
-#     This mirrors switchable-system.nix's `${pkgs.<by-name>}`
-#     interpolation into `system.<x>BuilderCommands`.
-#   - Site C (toplevel) folds both sites into a single output
-#     derivation and is what `.drvPath` forces. This is
-#     `system.build.toplevel` in miniature.
+# Structural essentials — the three let-bindings and the join:
+#   - docsProbe: a runCommand whose build inputs include the
+#     JSON dump of optionAttrSetToDocList on a submoduleWith whose
+#     modules include pkgs.ghostunnel.services.default. This is
+#     nixpkgs/nixos/modules/misc/documentation.nix condensed.
+#   - pkgRefBuilder: a separate runCommand referencing any
+#     by-name pkg via ${pkgs.hello}. Mirrors
+#     switchable-system.nix's ${pkgs.<by-name>} interpolation.
+#   - toplevel: a joint runCommand that folds both derivations
+#     via ln -s. Forced via .drvPath.
 #
-# What DOES NOT reproduce (previously tested):
-#   - Two-site combination in a single `lib.evalModules` module (one
-#     module with both site A and site B inlined) → cold and warm
+# What was tried and does NOT reproduce:
+#   - Replacing Site A's submoduleWith+optionAttrSetToDocList with
+#     a plain ${pkgs.ghostunnel} interpolation → cold and warm both
+#     succeed. So the specific forcing pattern (submoduleWith over a
+#     module-fn, forced through optionAttrSetToDocList) is required.
+#   - Skipping the joint toplevel runCommand and returning
+#     `docsProbe.drvPath + pkgRefBuilder.drvPath` → cold and warm
 #     both succeed.
-#   - Two modules where site B holds both the pkgs.hello ref AND
-#     the toplevel-composing derivation → cold and warm both succeed.
-#   - Three-module shape but returning `docsProbe + "\n" + pkgRef`
-#     from `in ...` (no shared derivation) → cold and warm both succeed.
-#
-# So the essential ingredients are:
-#   1. cachedNixpkgs (lib.cache wrapper on nixpkgs)
-#   2. Site A: pkgs.ghostunnel.services.default via submoduleWith,
-#      forced through optionAttrSetToDocList, wrapped in a derivation
-#   3. Site B: a *separate module* whose config produces a derivation
-#      referencing some other by-name pkg (pkgs/by-name/...)
-#   4. Site C: a *third module* whose config folds both sites'
-#      derivations into a single output derivation
-#   5. Force via `.drvPath` on Site C's derivation
+#   - Wrapping the three bindings in lib.evalModules modules with
+#     types.raw options → same behaviour as this file. So the
+#     module system was not load-bearing in the original three-
+#     module probe; the let-binding version has the identical drv
+#     hash and identical fire.
 
 let
   lib = import /home/sandbox/nixpkgs/lib;
   cachedNixpkgs = lib.cache { import = /home/sandbox/nixpkgs; };
   pkgs = cachedNixpkgs { config.allowUnfreePredicate = _: true; overlays = [ ]; };
 
-  eval = lib.evalModules {
-    modules = [
-      { _module.args.pkgs = pkgs; }
-
-      ({ pkgs, lib, ... }: {
-        options.docsProbe = lib.mkOption { type = lib.types.package; };
-        config.docsProbe =
-          let
-            inner = lib.evalModules {
-              modules = [{
-                options."<svc>" = lib.mkOption {
-                  type = lib.types.submoduleWith {
-                    modules = [ pkgs.ghostunnel.services.default ];
-                  };
-                };
-              }];
+  # Site A: force pkgs.ghostunnel.services.default through the
+  # module-system's option-doc walker.
+  docsProbe =
+    let
+      inner = lib.evalModules {
+        modules = [{
+          options."<svc>" = lib.mkOption {
+            type = lib.types.submoduleWith {
+              modules = [ pkgs.ghostunnel.services.default ];
             };
-          in
-            pkgs.runCommand "docs-probe" {
-              options = builtins.unsafeDiscardStringContext (builtins.toJSON (
-                lib.optionAttrSetToDocList inner.options
-              ));
-              passAsFile = [ "options" ];
-            } "cp $optionsPath $out";
-      })
+          };
+        }];
+      };
+    in
+      pkgs.runCommand "docs-probe" {
+        options = builtins.unsafeDiscardStringContext (builtins.toJSON (
+          lib.optionAttrSetToDocList inner.options
+        ));
+        passAsFile = [ "options" ];
+      } "cp $optionsPath $out";
 
-      ({ pkgs, lib, ... }: {
-        options.pkgRefBuilder = lib.mkOption { type = lib.types.package; };
-        config.pkgRefBuilder =
-          pkgs.runCommand "pkg-ref-builder" { } ''
-            ln -sf ${pkgs.hello} $out
-          '';
-      })
+  # Site B: any by-name pkg (pkgs/by-name/...); pkgs.hello works.
+  pkgRefBuilder = pkgs.runCommand "pkg-ref-builder" { } ''
+    ln -sf ${pkgs.hello} $out
+  '';
 
-      ({ config, pkgs, lib, ... }: {
-        options.toplevel = lib.mkOption { type = lib.types.package; };
-        config.toplevel = pkgs.runCommand "toplevel" { } ''
-          mkdir $out
-          ln -s ${config.docsProbe} $out/docs
-          ln -s ${config.pkgRefBuilder} $out/pkgref
-        '';
-      })
-    ];
-  };
+  # Site C: joint fold via ln -s. Forced via .drvPath below.
+  toplevel = pkgs.runCommand "toplevel" { } ''
+    mkdir $out
+    ln -s ${docsProbe} $out/docs
+    ln -s ${pkgRefBuilder} $out/pkgref
+  '';
 in
-  eval.config.toplevel.drvPath
+  toplevel.drvPath
