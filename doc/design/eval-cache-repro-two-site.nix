@@ -50,11 +50,15 @@
 let
   lib = import /home/sandbox/nixpkgs/lib;
   cachedNixpkgs = lib.cache { import = /home/sandbox/nixpkgs; };
+  # NOTE: `derivation` is exposed as a top-level pkgs attr by a
+  # companion patch on the eval-cache-minimization-repro branch of
+  # nixpkgs (see pkgs/top-level/all-packages.nix, commit
+  # 9b92077d8a33). Overlay-injection also works and produces the
+  # same drv hash and same fire, but nixpkgs-native placement
+  # confirms the trigger doesn't depend on the overlay mechanism.
   pkgs = cachedNixpkgs {
     config.allowUnfreePredicate = _: true;
-    overlays = [
-      (self: super: { derivation = builtins.derivation; })
-    ];
+    overlays = [ ];
   };
 
   # Site A: force pkgs.ghostunnel.services.default through the
