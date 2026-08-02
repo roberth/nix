@@ -69,6 +69,12 @@ public:
         ref<SourceRoot> rootFSRoot,
         std::shared_ptr<const ArgCell> argCell);
 
+    /** Set the memoized WHNF from a known value (e.g. the applyResult's
+        WHNF captured by TCA::queryApply before wrapping). Suppresses the
+        recording that whnf() would fire on first access — the caller has
+        already recorded the observation on the enclosing cell. */
+    void withCachedWHNF(trace::ResultWHNF whnf) { cachedWHNF = std::move(whnf); }
+
     std::optional<ref<const trace::Selector>> getSelector() const override { return producer; }
 
     std::shared_ptr<const ArgCell> getProxyArgCell() const override { return argCell; }

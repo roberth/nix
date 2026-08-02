@@ -432,8 +432,15 @@ std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> a
        routes the subsequent apply as plain SelectorApply. Warm then
        has no compositional SCA to look up. Doc §6a's "deferred cases"
        note. */
-    return std::make_shared<TracingCallbackArg>(
+    auto wrapper = std::make_shared<TracingCallbackArg>(
         std::move(resultObj), scaSel, writer, rootFSRoot, argCell);
+    /* Pre-populate cachedWHNF so wrapper->whnf() returns the value we
+       already computed. Otherwise the first probe (typically getType()
+       via toValueOrProxy) fires whnf() → recordObservation(scaSel,
+       applyResultWhnf) — a second copy of the same Fact we recorded on
+       the enclosing cell four lines up. */
+    wrapper->withCachedWHNF(applyResultWhnf);
+    return wrapper;
 }
 
 RootValue TracingCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_ptr<struct OuterResolver> resolver)
