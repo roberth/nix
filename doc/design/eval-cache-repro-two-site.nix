@@ -22,10 +22,12 @@
 #     { lib, options, ... }:
 #     {
 #       options.p = lib.mkOption { type = lib.types.bool; default = false; };
-#       config = lib.optionalAttrs (options ? systemd) { };
+#       config = builtins.seq options { };
 #     }
-# The `options ? systemd` check on an option NOT declared here is
-# what forces the recursion during optionAttrSetToDocList.
+# Forcing the `options` module argument to WHNF (via seq or the
+# equivalent `options ? <name>`) is what recurses under warm replay.
+# The `options.p` declaration is required — a module with zero
+# options doesn't fire.
 #
 # Ingredients that must all be present:
 #   1. cachedNixpkgs (lib.cache-wrapped nixpkgs).
