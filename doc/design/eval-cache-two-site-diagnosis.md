@@ -71,12 +71,40 @@ boundary" — this is where the extra work is coming from.
   derivation-returning attr on pkgs), and that derivation must be
   composed with a SECOND cache-bridged derivation-building call.
 
+## Follow-up: per-Object addTrace localises the recursion
+
+Commit 38bae93b9 added per-Object `addTrace` on `maybeGetAttr` for
+TRO / OO / RCA. Re-running the probe now shows:
+
+```
+… while forcing cached attribute 'drvPath' across a `builtins.cache` boundary
+… while dispatching cached attr 'drvPath' via TracingReplayObject (walker replay, parent Q=b9a9266b20d6)
+… while calling the 'derivationStrict' builtin
+… while forcing cached attribute 'args' across a `builtins.cache` boundary
+… while evaluating the option `_module.freeformType`
+… while forcing cached attribute 'config' across a `builtins.cache` boundary
+… while dispatching cached attr 'config' via TracingReplayObject (walker replay, parent Q=421a800171db)
+… while forcing cached attribute 'options' across a `builtins.cache` boundary
+… while dispatching cached attr 'options' via OuterObject (recording, parent Q=421a800171db)
+… while dispatching cached attr 'options' via OuterObject (recording, parent Q=421a800171db)   ←
+… while evaluating the module argument `options` in "imports.2 imports.1 imports.1 imports.1"
+  error: infinite recursion encountered at lib/modules.nix:372:15
+```
+
+**Two `OuterObject::maybeGetAttr('options')` dispatches on the SAME
+parent Q=421a800171db, nested.** The inner one recurses because
+the outer one's fixed point hasn't converged. The recording-side
+OuterObject is being asked for the same attr twice while producing
+it — that's the mechanism the generic ExprFromObjectAttr message
+was hiding.
+
 ## Not yet tracked down
 
-- Which specific SelectorGetAttr on `options` inserts the extra
-  force. The cell-chain dumps in the log (~350 lines each) show
-  the walker's fact accumulation but not the C++-level force site.
-- Whether the fix belongs in `TracingReplayObject::maybeGetAttr`'s
-  routing for module-system option attrs, or in the writer's
-  recording basis that produces the trace warm is now replaying,
-  or somewhere else entirely.
+- Why the second OO dispatch fires — what call site inside the
+  first dispatch's `queryFn` walk re-enters `maybeGetAttr('options')`
+  on the same OO parent.
+- Whether the fix belongs at the OO-side (memoise per-attr dispatches
+  in-flight so re-entry short-circuits), at the recording basis
+  (the writer produced a trace whose replay routes through OO
+  twice), or at the module-system-boundary shape (something about
+  submoduleWith-driven `options` navigation).
