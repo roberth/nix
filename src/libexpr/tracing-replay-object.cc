@@ -96,6 +96,7 @@ std::optional<std::pair<R, TriePosition>> TracingReplayObject::lookupStructuralC
 
 std::shared_ptr<Object> TracingReplayObject::maybeGetAttr(const std::string & name)
 {
+    try {
     /* Symmetric with TracingObject::maybeGetAttr: existence is
        projected from parent's WHNFAttrs.names (via the walker's
        whnf() lookup); only when the attr is known to exist do we
@@ -150,6 +151,15 @@ std::shared_ptr<Object> TracingReplayObject::maybeGetAttr(const std::string & na
         child->withCbApplyOrigin();
     }
     return child;
+    } catch (Error & e) {
+        /* Stamp so the reader knows this was TRO's maybeGetAttr —
+           the walker-side replay Object, distinguishing from OO
+           (outer proxy) and RCA (callback arg) dispatches that
+           share ExprFromObjectAttr's generic message. */
+        e.addTrace(nullptr, HintFmt("while dispatching cached attr '%s' via TracingReplayObject (walker replay, parent Q=%s)",
+                                    name, triePos.queryHashStr.substr(0, 12)), TracePrint::Always);
+        throw;
+    }
 }
 
 std::optional<const trace::ResultWHNF *> TracingReplayObject::whnf()

@@ -21,6 +21,7 @@ OuterObject::OuterObject(
 
 std::shared_ptr<Object> OuterObject::maybeGetAttr(const std::string & name)
 {
+    try {
     /* Existence is projected from parent WHNFAttrs.names; only if
        present do we issue the pure-retrieval SelectorGetAttr. */
     auto & w = whnf();
@@ -65,6 +66,16 @@ std::shared_ptr<Object> OuterObject::maybeGetAttr(const std::string & name)
     child->withArgCell(argCell);
     child->cachedWHNF = *r;
     return child;
+    } catch (Error & e) {
+        /* OuterObject sits on the recording side — the cache-bridged
+           proxy for a value that lives across the boundary. Stamp
+           so a stack trace distinguishes an OO dispatch from a TRO
+           (walker replay) or RCA (callback-arg replay) dispatch. */
+        auto parentHex = getSelectorHashHex().value_or(std::string{"?"});
+        e.addTrace(nullptr, HintFmt("while dispatching cached attr '%s' via OuterObject (recording, parent Q=%s)",
+                                    name, parentHex.substr(0, 12)), TracePrint::Always);
+        throw;
+    }
 }
 
 trace::ResultWHNF & OuterObject::whnf()

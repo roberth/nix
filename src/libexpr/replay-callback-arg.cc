@@ -54,6 +54,7 @@ static nlohmann::json readResponse(
 
 std::shared_ptr<Object> ReplayCallbackArg::maybeGetAttr(const std::string & name)
 {
+    try {
     /* Existence projects from parent WHNFAttrs.names (via whnf()
        cache lookup); only when present do we consume the recorded
        SelectorGetAttr response. */
@@ -76,6 +77,16 @@ std::shared_ptr<Object> ReplayCallbackArg::maybeGetAttr(const std::string & name
     /* Navigation child inherits parent's argCell cell directly. */
     child->withArgCell(argCell);
     return child;
+    } catch (Error & e) {
+        /* RCA sits on the walker side, feeding a callback firing's
+           inner body with recorded responses. Stamp so a stack
+           trace distinguishes an RCA replay from TRO (outer walker
+           replay) or OO (recording proxy) dispatches. */
+        auto parentHex = producer->cachedHash.to_string(HashFormat::Base16, false);
+        e.addTrace(nullptr, HintFmt("while replaying cached attr '%s' via ReplayCallbackArg (callback body, arg Q=%s)",
+                                    name, parentHex.substr(0, 12)), TracePrint::Always);
+        throw;
+    }
 }
 
 const trace::ResultWHNF & ReplayCallbackArg::whnf()
