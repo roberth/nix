@@ -290,8 +290,8 @@ OuterApplyResult OuterApply::run(
                 /* Look up cs.fnStateHashHex in pool; fallback to fnProducer. */
                 ref<const trace::Selector> fnRef = fnProducer;
                 try {
-                    auto fnHash = Hash::parseNonSRIUnprefixed(
-                        localCell->callbackState->fnStateHashHex, HashAlgorithm::SHA256);
+                    auto fnHash = trace::parseTracingHex(
+                        localCell->callbackState->fnStateHashHex);
                     if (auto found = dg.selectorPool.find(fnHash))
                         fnRef = *found;
                 } catch (...) {}

@@ -149,7 +149,7 @@ public:
        member list. Idempotent via INSERT OR IGNORE. */
     struct InlineFact
     {
-        Hash reqHash{HashAlgorithm::SHA256};
+        Hash reqHash = trace::tracingZeroHash();
         /* CBOR bytes of the observed response (a
            `trace::ResultVariant`). Used by the walker at replay to
            serve callback probes via an obsSet-answering proxy. */
@@ -352,7 +352,7 @@ public:
         /* Starting cur for the history. Defaults to ∅. Callers that
            have a structural anchor (= parent TracingReplayObject's terminalCur) can
            hand it in so the history starts at that lookup position. */
-        const SetHash & startCur = SetHash(HashAlgorithm::SHA256));
+        const SetHash & startCur = trace::tracingZeroHash());
 
     /* Persist one trie node by hash. Idempotent (INSERT OR IGNORE +
        in-process cache short-circuit). Used by TrieBuilder to push
@@ -429,12 +429,11 @@ TracingDecisionGraph::QueryHash TracingDecisionGraph::computeSelectorHash(const 
 {
     /* Must agree with the free `nix::computeSelectorHash(SelectorNode)`
        in trace-types.cc — both produce the identity used to look up
-       Selectors. Both switched to CBOR (from j.dump()) to skip
-       dump_escaped's per-char escape work on hex-string payloads.
-       See trace-types.cc for rationale. */
+       Selectors, so any divergence in encoding OR truncation makes
+       lookups miss. See trace-types.cc for rationale. */
     nlohmann::json j = query;
     auto cbor = nlohmann::json::to_cbor(j);
-    return hashString(HashAlgorithm::SHA256,
+    return trace::tracingHash(
         std::string_view(reinterpret_cast<const char *>(cbor.data()), cbor.size()));
 }
 

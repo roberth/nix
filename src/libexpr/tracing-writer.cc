@@ -216,7 +216,7 @@ void TracingWriter::createCallbackCell(const nlohmann::json & applyQueryPayload)
     /* Insert the apply-request payload into the Requests pool.
        Pending-payload storage lives on cell.callbackState (populated
        by the caller). */
-    auto applyReqHash = hashString(HashAlgorithm::SHA256, applyQueryPayload.dump());
+    auto applyReqHash = trace::tracingHash(applyQueryPayload.dump());
     auto applyPayloadCbor = jsonToCborString(applyQueryPayload);
     if (provenanceEnabled())
         recordProvenance(applyReqHash, "applyRequestHash",

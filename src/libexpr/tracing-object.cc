@@ -463,7 +463,7 @@ std::shared_ptr<Object> TracingObject::queryApply(std::shared_ptr<Object> argObj
     auto v = writer.getSink().logSelector(applyQ);
     auto result = inner->queryApply(argObj);
     TriePosition applyTriePos{
-        .resultNodeHash = Hash{HashAlgorithm::SHA256}, // sentinel
+        .resultNodeHash = trace::tracingZeroHash(), // sentinel
         .queryHashStr = qHex,
     };
     auto child = std::shared_ptr<TracingObject>(

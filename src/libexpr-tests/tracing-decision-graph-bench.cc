@@ -29,7 +29,7 @@ struct GraphFixture
 
 static Hash sha(std::string_view s)
 {
-    return hashString(HashAlgorithm::SHA256, s);
+    return trace::tracingHash(s);
 }
 
 /* Build a fresh FactSet with `nFacts` distinct (Request, Response)

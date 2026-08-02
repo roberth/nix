@@ -724,6 +724,26 @@ std::optional<TraceEntry> parseTraceEntry(const nlohmann::json & j);
  */
 Hash computeSelectorHash(const SelectorNode & query);
 
+/**
+ * Canonical mint / parse / zero for tracing-domain derived hashes.
+ * All tracing atom keys (Q/Request/Response/Result/Set/trie-node) and
+ * the outer-value ids minted by the tracing evaluator carry SHA-256
+ * truncated to 128 bits — half the storage, half the on-wire hex, half
+ * the memcmp cost, and still safe from birthday collisions at
+ * eval-cache scale (<10^-13 at 2^40 minted hashes).
+ *
+ * The underlying `Hash` type keeps its SHA-256 algo tag but with
+ * `hashSize = tracingHashSize`. Comparisons, hex serialisation, and
+ * SQLite blob binding all honour `hashSize`, so the truncation
+ * propagates through the existing plumbing without touching Hash's
+ * class definition. Non-tracing hashes (Nix's file/store hashes) are
+ * untouched.
+ */
+inline constexpr size_t tracingHashSize = 16;
+Hash tracingHash(std::string_view bytes);
+Hash parseTracingHex(std::string_view hex);
+Hash tracingZeroHash();
+
 /** Serialise a Query variant to its inner JSON payload
     (`{"query": <tag>, "params": {...}}`). */
 nlohmann::json toJson(const SelectorNode & query);

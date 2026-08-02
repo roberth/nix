@@ -215,7 +215,7 @@ ref<Object> TracingEvaluator::mkString(const std::string & s)
 {
     auto result = inner->mkString(s);
     // Deterministic identity from content — no trie entry needed.
-    auto hash = hashString(HashAlgorithm::SHA256, "mkString:" + s);
+    auto hash = trace::tracingHash("mkString:" + s);
     auto hashStr = hash.to_string(HashFormat::Base16, false);
     auto triePos = TriePosition{.resultNodeHash = hash, .queryHashStr = hashStr};
     auto v = writer.getSink().allocValue();
@@ -225,7 +225,7 @@ ref<Object> TracingEvaluator::mkString(const std::string & s)
 ref<Object> TracingEvaluator::mkInt(NixInt i)
 {
     auto result = inner->mkInt(i);
-    auto hash = hashString(HashAlgorithm::SHA256, "mkInt:" + std::to_string(i.value));
+    auto hash = trace::tracingHash("mkInt:" + std::to_string(i.value));
     auto hashStr = hash.to_string(HashFormat::Base16, false);
     auto triePos = TriePosition{.resultNodeHash = hash, .queryHashStr = hashStr};
     auto v = writer.getSink().allocValue();
@@ -235,7 +235,7 @@ ref<Object> TracingEvaluator::mkInt(NixInt i)
 ref<Object> TracingEvaluator::mkBool(bool b)
 {
     auto result = inner->mkBool(b);
-    auto hash = hashString(HashAlgorithm::SHA256, b ? "mkBool:true" : "mkBool:false");
+    auto hash = trace::tracingHash(b ? "mkBool:true" : "mkBool:false");
     auto hashStr = hash.to_string(HashFormat::Base16, false);
     auto triePos = TriePosition{.resultNodeHash = hash, .queryHashStr = hashStr};
     auto v = writer.getSink().allocValue();
@@ -259,7 +259,7 @@ ref<Object> TracingEvaluator::mkPath(const RootedPath & path)
     else
         content += fmt("addr:%p", (void *) &*path.root);
     content += ":" + path.path.abs();
-    auto hash = hashString(HashAlgorithm::SHA256, content);
+    auto hash = trace::tracingHash(content);
     auto hashStr = hash.to_string(HashFormat::Base16, false);
     auto triePos = TriePosition{.resultNodeHash = hash, .queryHashStr = hashStr};
     auto v = writer.getSink().allocValue();
@@ -269,7 +269,7 @@ ref<Object> TracingEvaluator::mkPath(const RootedPath & path)
 ref<Object> TracingEvaluator::getInternalPrimOp(const std::string & name)
 {
     auto result = inner->getInternalPrimOp(name);
-    auto hash = hashString(HashAlgorithm::SHA256, "internalPrimOp:" + name);
+    auto hash = trace::tracingHash("internalPrimOp:" + name);
     auto hashStr = hash.to_string(HashFormat::Base16, false);
     auto triePos = TriePosition{.resultNodeHash = hash, .queryHashStr = hashStr};
     auto v = writer.getSink().allocValue();
@@ -287,7 +287,7 @@ ref<Object> TracingEvaluator::mkAttrs(const std::map<std::string, ref<Object>> &
             content += *hex;
         content += ",";
     }
-    auto hash = hashString(HashAlgorithm::SHA256, content);
+    auto hash = trace::tracingHash(content);
     auto hashStr = hash.to_string(HashFormat::Base16, false);
     auto triePos = TriePosition{.resultNodeHash = hash, .queryHashStr = hashStr};
     auto v = writer.getSink().allocValue();
@@ -456,7 +456,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
     TriePosition triePos = tp
         ? *tp
         : TriePosition{
-              .resultNodeHash = Hash{HashAlgorithm::SHA256},
+              .resultNodeHash = trace::tracingZeroHash(),
               /* #181: use the SelectorApply Q hash (matches TRE::apply's
                  walker path); getSelectorHashHex() reads this back as fn's
                  identity for downstream applies. */

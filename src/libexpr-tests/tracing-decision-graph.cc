@@ -26,7 +26,7 @@ protected:
 
     static Hash sha(std::string_view s)
     {
-        return hashString(HashAlgorithm::SHA256, s);
+        return trace::tracingHash(s);
     }
 };
 
@@ -391,7 +391,7 @@ TEST_F(TracingDecisionGraphTest, RecordThenWalkSimpleHit)
         if (req == req1) return resp1;
         if (req == req2) return resp2;
         ADD_FAILURE() << "unexpected dispatch for " << req.to_string(HashFormat::Base16, false);
-        return Hash(HashAlgorithm::SHA256);
+        return trace::tracingZeroHash();
     });
     ASSERT_TRUE(hit.has_value());
     EXPECT_EQ(hit->resultHash, result);
@@ -578,7 +578,7 @@ TEST_F(TracingDecisionGraphTest, InsertAskSplittingWalkerReachesTerminalViaSplit
         if (req == a) return va;
         if (req == b) return vb;
         if (req == c) return sha("wrong-c");
-        return Hash(HashAlgorithm::SHA256);
+        return trace::tracingZeroHash();
     });
     ASSERT_TRUE(hitA.has_value());
     EXPECT_EQ(hitA->resultHash, rA);
@@ -588,7 +588,7 @@ TEST_F(TracingDecisionGraphTest, InsertAskSplittingWalkerReachesTerminalViaSplit
         if (req == a) return va;
         if (req == b) return sha("wrong-b");
         if (req == c) return vc;
-        return Hash(HashAlgorithm::SHA256);
+        return trace::tracingZeroHash();
     });
     ASSERT_TRUE(hitB.has_value());
     EXPECT_EQ(hitB->resultHash, rB);
@@ -660,7 +660,7 @@ TEST_F(TracingDecisionGraphTest, WalkAltFallbackFindsTerminalAndCopiesEdge)
         if (r == reqPrimary) return respPrimary;
         if (r == reqAlt) return respAlt;
         ADD_FAILURE() << "unexpected dispatch";
-        return Hash(HashAlgorithm::SHA256);
+        return trace::tracingZeroHash();
     };
 
     /* First walk: primary miss → alt fallback → hit. Both dispatched. */
@@ -700,7 +700,7 @@ TEST_F(TracingDecisionGraphTest, WalkMissesOnEmptyGraph)
 {
     TracingDecisionGraph g(dbPath);
     auto q = sha("Q");
-    auto miss = g.walk(q, [](const Hash &) { return Hash(HashAlgorithm::SHA256); });
+    auto miss = g.walk(q, [](const Hash &) { return trace::tracingZeroHash(); });
     EXPECT_FALSE(miss.has_value());
 }
 
@@ -731,7 +731,7 @@ TEST_F(TracingDecisionGraphTest, TwoRec_TwoFactsEach_DivergentSecond)
         if (req == reqA) return respA;
         if (req == reqB) return respB;
         if (req == reqC) return sha("bogus-c-resp");
-        return Hash(HashAlgorithm::SHA256);
+        return trace::tracingZeroHash();
     });
     ASSERT_TRUE(hit1.has_value());
     EXPECT_EQ(hit1->resultHash, r1);
@@ -783,7 +783,7 @@ TEST_F(TracingDecisionGraphTest, DivergentResponses_OnlyOneRecording)
         if (req == reqA) return contentV1;
         if (req == reqB) return respB;
         ADD_FAILURE() << "unexpected dispatch";
-        return Hash(HashAlgorithm::SHA256);
+        return trace::tracingZeroHash();
     });
     ASSERT_TRUE(hit.has_value());
     EXPECT_EQ(hit->resultHash, r1);
@@ -804,7 +804,7 @@ TEST_F(TracingDecisionGraphTest, IdempotentRecord)
     auto hit = g.walk(q, [&](const Hash & req) {
         if (req == sha("r1")) return sha("v1");
         if (req == sha("r2")) return sha("v2");
-        return Hash(HashAlgorithm::SHA256);
+        return trace::tracingZeroHash();
     });
     ASSERT_TRUE(hit.has_value());
     EXPECT_EQ(hit->resultHash, result);
@@ -953,10 +953,10 @@ TEST_F(TracingDecisionGraphTest, DeepRecordingPersistsAcrossReopen)
            Request name doesn't work without round-tripping. Instead
            build a static dispatch table on demand. */
         for (size_t i = 0; i < 1000; ++i) {
-            if (req == hashString(HashAlgorithm::SHA256, "dr-" + std::to_string(i)))
-                return hashString(HashAlgorithm::SHA256, "dv-" + std::to_string(i));
+            if (req == trace::tracingHash("dr-" + std::to_string(i)))
+                return trace::tracingHash("dv-" + std::to_string(i));
         }
-        return Hash(HashAlgorithm::SHA256);
+        return trace::tracingZeroHash();
     });
     ASSERT_TRUE(hit.has_value());
     EXPECT_EQ(hit->resultHash, r);
@@ -1026,7 +1026,7 @@ TEST_F(TracingDecisionGraphTest, EndToEndOnEventThenWalk)
     auto hit_v1 = g.walk(q, [&](const Hash & req) {
         if (req == reqA) return contentA_v1;
         if (req == reqB) return contentB;
-        return Hash(HashAlgorithm::SHA256);
+        return trace::tracingZeroHash();
     });
     ASSERT_TRUE(hit_v1.has_value());
     EXPECT_EQ(hit_v1->resultHash, result_v1);
@@ -1035,7 +1035,7 @@ TEST_F(TracingDecisionGraphTest, EndToEndOnEventThenWalk)
     auto hit_v2 = g.walk(q, [&](const Hash & req) {
         if (req == reqA) return contentA_v2;
         if (req == reqB) return contentB;
-        return Hash(HashAlgorithm::SHA256);
+        return trace::tracingZeroHash();
     });
     ASSERT_TRUE(hit_v2.has_value());
     EXPECT_EQ(hit_v2->resultHash, result_v2);
@@ -1045,7 +1045,7 @@ TEST_F(TracingDecisionGraphTest, EndToEndOnEventThenWalk)
     auto miss = g.walk(q, [&](const Hash & req) {
         if (req == reqA) return sha("a_unknown_v3");
         if (req == reqB) return contentB;
-        return Hash(HashAlgorithm::SHA256);
+        return trace::tracingZeroHash();
     });
     EXPECT_FALSE(miss.has_value());
 }
@@ -1088,7 +1088,7 @@ TEST_F(TracingDecisionGraphTest, EndToEndNestedQueries)
     auto innerHit = g.walk(innerQ, [&](const Hash & req) {
         if (req == outerReq) return outerResp;
         if (req == innerReq) return innerResp;
-        return Hash(HashAlgorithm::SHA256);
+        return trace::tracingZeroHash();
     });
     ASSERT_TRUE(innerHit.has_value());
     EXPECT_EQ(innerHit->resultHash, innerResult);
@@ -1097,7 +1097,7 @@ TEST_F(TracingDecisionGraphTest, EndToEndNestedQueries)
     auto outerHit = g.walk(outerQ, [&](const Hash & req) {
         if (req == outerReq) return outerResp;
         if (req == innerReq) return innerResp;
-        return Hash(HashAlgorithm::SHA256);
+        return trace::tracingZeroHash();
     });
     ASSERT_TRUE(outerHit.has_value());
     EXPECT_EQ(outerHit->resultHash, outerResult);
@@ -1165,7 +1165,7 @@ TEST_F(TracingDecisionGraphTest, Phase1_RecordEmitsSingleEdgeForFirstRecording)
         if (req == req2) return resp2;
         if (req == req3) return resp3;
         ADD_FAILURE() << "unexpected dispatch";
-        return Hash(HashAlgorithm::SHA256);
+        return trace::tracingZeroHash();
     });
     ASSERT_TRUE(hit.has_value());
     EXPECT_EQ(hit->resultHash, result);
@@ -1217,7 +1217,7 @@ TEST_F(TracingDecisionGraphTest, Phase1_RecordReusesEdgeWhenExtendingSuperset)
         if (req == r2) return v2;
         if (req == r3) return v3;
         ADD_FAILURE() << "unexpected dispatch";
-        return Hash(HashAlgorithm::SHA256);
+        return trace::tracingZeroHash();
     };
     auto hit1 = g.walk(q, dispatch);
     ASSERT_TRUE(hit1.has_value());
@@ -1274,7 +1274,7 @@ TEST_F(TracingDecisionGraphTest, Phase1_PatriciaSplitsOnOverlappingDivergence)
         if (req == b) return vb;
         if (req == c) return vc;
         if (req == d) return vd;
-        return Hash(HashAlgorithm::SHA256);
+        return trace::tracingZeroHash();
     });
     ASSERT_TRUE(hit1.has_value());
     /* With both responses available, walk will reach whichever
@@ -1289,7 +1289,7 @@ TEST_F(TracingDecisionGraphTest, Phase1_PatriciaSplitsOnOverlappingDivergence)
         if (req == b) return vb;
         if (req == c) return vc;
         if (req == d) return sha("wrong-d");
-        return Hash(HashAlgorithm::SHA256);
+        return trace::tracingZeroHash();
     });
     ASSERT_TRUE(hitC.has_value());
     EXPECT_EQ(hitC->resultHash, sha("R1"));
@@ -1301,7 +1301,7 @@ TEST_F(TracingDecisionGraphTest, Phase1_PatriciaSplitsOnOverlappingDivergence)
         if (req == b) return vb;
         if (req == c) return sha("wrong-c");
         if (req == d) return vd;
-        return Hash(HashAlgorithm::SHA256);
+        return trace::tracingZeroHash();
     });
     ASSERT_TRUE(hitD.has_value());
     EXPECT_EQ(hitD->resultHash, sha("R2"));
@@ -1363,7 +1363,7 @@ TEST_F(TracingDecisionGraphTest, Phase1_WalkDispatchesMultiElementRequestSet)
         auto it = dispatchMap.find(req);
         if (it == dispatchMap.end()) {
             ADD_FAILURE() << "unexpected dispatch";
-            return Hash(HashAlgorithm::SHA256);
+            return trace::tracingZeroHash();
         }
         return it->second;
     });

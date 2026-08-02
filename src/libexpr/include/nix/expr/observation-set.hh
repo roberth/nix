@@ -25,8 +25,8 @@ struct Observation
     Hash elementHash;
     /* #183: separately-carried (reqHash, respHash) so walker-side
        commits can append to cell.facts as (req, resp) pairs. */
-    Hash reqHash{HashAlgorithm::SHA256};
-    Hash respHash{HashAlgorithm::SHA256};
+    Hash reqHash = trace::tracingZeroHash();
+    Hash respHash = trace::tracingZeroHash();
     /* #183 attribution: which cell this fact belongs to. null →
        sessionRootCell (env-fact default). */
     std::weak_ptr<const struct ArgCell> attributionCell;

@@ -5,6 +5,7 @@
 #include "nix/util/logging.hh"
 #include "nix/util/util.hh"
 
+#include <cstring>
 #include <map>
 
 namespace nix {
@@ -522,7 +523,7 @@ Hash computeSelectorHash(const SelectorNode & query)
 {
     /* CBOR encoding rather than j.dump(): the JSON string dump ran
        nlohmann's dump_escaped (per-char escape check) on the whole
-       payload including the 64-char hex parent strings. CBOR encodes
+       payload including the 32-char hex parent strings. CBOR encodes
        strings without escaping and with a shorter length header, so
        hashing the CBOR bytes is materially cheaper for the same
        logical content. Existing DB rows keyed by the old dump-hash
@@ -531,8 +532,50 @@ Hash computeSelectorHash(const SelectorNode & query)
     nlohmann::json j;
     to_json(j, query);
     auto cbor = nlohmann::json::to_cbor(j);
-    return hashString(HashAlgorithm::SHA256,
+    return tracingHash(
         std::string_view(reinterpret_cast<const char *>(cbor.data()), cbor.size()));
+}
+
+static uint8_t hexNibble(char c)
+{
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return 10 + (c - 'a');
+    if (c >= 'A' && c <= 'F') return 10 + (c - 'A');
+    throw Error("tracing hash: bad hex nibble '%c'", c);
+}
+
+Hash tracingHash(std::string_view bytes)
+{
+    Hash h = hashString(HashAlgorithm::SHA256, bytes);
+    /* Truncate in place — hashSize governs comparison, hex output,
+       and SQLite blob binding, so all downstream users honour the
+       128-bit width automatically. Bytes past hashSize are unused
+       storage in Hash's fixed 64-byte buffer. */
+    h.hashSize = tracingHashSize;
+    return h;
+}
+
+Hash parseTracingHex(std::string_view hex)
+{
+    if (hex.size() != tracingHashSize * 2)
+        throw Error("tracing hash: hex length %d, expected %d",
+            hex.size(), tracingHashSize * 2);
+    Hash h(HashAlgorithm::SHA256);
+    h.hashSize = tracingHashSize;
+    for (size_t i = 0; i < tracingHashSize; ++i)
+        h.hash[i] = (hexNibble(hex[i * 2]) << 4) | hexNibble(hex[i * 2 + 1]);
+    return h;
+}
+
+Hash tracingZeroHash()
+{
+    static const Hash z = []() {
+        Hash h(HashAlgorithm::SHA256);
+        h.hashSize = tracingHashSize;
+        std::memset(h.hash, 0, tracingHashSize);
+        return h;
+    }();
+    return z;
 }
 
 SelectorF<Resolved>::SelectorF(SelectorNodeF<Resolved> n)
@@ -564,9 +607,9 @@ ref<const Selector> SelectorPool::intern(SelectorNode node)
 
 std::optional<ref<const Selector>> SelectorPool::findByHex(std::string_view hex)
 {
-    Hash h{HashAlgorithm::SHA256};
+    Hash h = tracingZeroHash();
     try {
-        h = Hash::parseNonSRIUnprefixed(std::string(hex), HashAlgorithm::SHA256);
+        h = parseTracingHex(hex);
     } catch (const std::exception &) {
         return std::nullopt;
     }
@@ -697,7 +740,7 @@ std::optional<ref<const Selector>> resolve(const StringSelectorNode & raw, Selec
         [&](const StringSelectorCallbackApply & s) -> std::optional<ref<const Selector>> {
             auto p = pool.findByHex(s.parent);
             if (!p) return std::nullopt;
-            auto obsSetHash = Hash::parseNonSRIUnprefixed(s.argObsSet, HashAlgorithm::SHA256);
+            auto obsSetHash = parseTracingHex(s.argObsSet);
             return pool.intern(SelectorCallbackApply{obsSetHash, *p});
         },
     }, raw);

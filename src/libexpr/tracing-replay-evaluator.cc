@@ -108,7 +108,7 @@ TracingReplayEvaluator::walk(
     auto dispatch = [&](const Hash & requestHash) -> Hash {
         auto req = decisionGraph.getRequest(requestHash);
         if (!req)
-            return Hash(HashAlgorithm::SHA256);
+            return trace::tracingZeroHash();
         bool isQueryRequest = std::holds_alternative<trace::OuterValueRequest>(*req);
         bool willMoveStateHash = false;
         std::string queryDescription = std::visit(overloaded{
@@ -138,7 +138,7 @@ TracingReplayEvaluator::walk(
                 "dispatch FAIL req=%s payload=%s (no current response)",
                 requestHash.to_string(HashFormat::Base16, false).substr(0, 12),
                 queryDescription);
-            return Hash(HashAlgorithm::SHA256);
+            return trace::tracingZeroHash();
         }
         auto h = TracingDecisionGraph::computeResponseHash(*currentResp);
         /* Env dispatch MUST NOT read stored responses to substitute
@@ -196,7 +196,7 @@ TracingReplayEvaluator::walk(
                left null — commitEdge routes null to sessionRootCell). */
             pendingEdgeObservations.push_back({
                 TracingDecisionGraph::xorFactIntoHash(
-                    Hash(HashAlgorithm::SHA256), requestHash, h),
+                    trace::tracingZeroHash(), requestHash, h),
                 requestHash,
                 h,
                 std::weak_ptr<const ArgCell>{},
@@ -373,9 +373,9 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveIdentity(const std::strin
     }
     tracingCacheLog("resolve %s: cell-chain exhausted, falling through to pool", idStr.substr(0, 12));
 
-    Hash idHash{HashAlgorithm::SHA256};
+    Hash idHash = trace::tracingZeroHash();
     try {
-        idHash = Hash::parseNonSRIUnprefixed(idStr, HashAlgorithm::SHA256);
+        idHash = trace::parseTracingHex(idStr);
     } catch (const std::exception &) { extern thread_local bool rcaBailFlag; if (rcaBailFlag) throw; /* rca-bail-diagnostic */
         return nullptr;
     }
@@ -918,7 +918,7 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
        logQueryResult anchor = triePos.factSetHash of the parent
        TracingObject wrapping the apply result). */
     TriePosition triePos{
-        .resultNodeHash = Hash{HashAlgorithm::SHA256}, // sentinel
+        .resultNodeHash = trace::tracingZeroHash(), // sentinel
         .queryHashStr = applySelectorHash.to_string(HashFormat::Base16, false),
         .factSetHash = cell->factSetHash(),
     };

@@ -56,7 +56,7 @@ struct TriePosition
        starts from its parent's reached factSet rather than from
        session-leaky envCur. Empty hash on TracingReplayObjects synthesized
        outside the walker (recording side). */
-    Hash factSetHash{HashAlgorithm::SHA256};
+    Hash factSetHash = trace::tracingZeroHash();
 };
 
 /**
@@ -321,7 +321,7 @@ public:
                time. Look up in pool; fall back to fnParent on miss. */
             ref<const trace::Selector> fnRef = fnParent;
             try {
-                auto fnHash = Hash::parseNonSRIUnprefixed(cs.fnStateHashHex, HashAlgorithm::SHA256);
+                auto fnHash = trace::parseTracingHex(cs.fnStateHashHex);
                 if (auto found = decisionGraph.selectorPool.find(fnHash))
                     fnRef = *found;
             } catch (...) {}
@@ -509,7 +509,7 @@ public:
         auto responseHash = TracingDecisionGraph::computeResponseHash(responsePayload);
         decisionGraph.insertRequest(selectorHash, jsonToCborString(reqJson));
         auto factHash = TracingDecisionGraph::xorFactIntoHash(
-            Hash(HashAlgorithm::SHA256), selectorHash, responseHash);
+            trace::tracingZeroHash(), selectorHash, responseHash);
         if (!seenRequests.insert(factHash).second)
             return;
         /* #183: env facts append to session-root cell's fact set.
@@ -553,7 +553,7 @@ public:
      */
     void deferRequest(nlohmann::json payload)
     {
-        auto key = hashString(HashAlgorithm::SHA256, payload.dump());
+        auto key = trace::tracingHash(payload.dump());
         decisionGraph.insertRequest(key, jsonToCborString(payload));
     }
 

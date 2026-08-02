@@ -495,9 +495,12 @@ static std::string dg_hashToBlob(const Hash & h)
 
 static Hash dg_blobToHash(std::string_view blob)
 {
-    if (blob.size() != Hash(HashAlgorithm::SHA256).hashSize)
+    /* Tracing hashes are truncated SHA-256; blob rows carry
+       `tracingHashSize` bytes. */
+    if (blob.size() != trace::tracingHashSize)
         throw Error("decision-graph: malformed hash blob (size=%d)", blob.size());
     Hash h(HashAlgorithm::SHA256);
+    h.hashSize = trace::tracingHashSize;
     std::memcpy(h.hash, blob.data(), blob.size());
     return h;
 }
@@ -524,7 +527,7 @@ static Hash dg_factElementHash(const Hash & request, const Hash & response)
     buf.reserve(request.hashSize + response.hashSize);
     buf.append(reinterpret_cast<const char *>(request.hash), request.hashSize);
     buf.append(reinterpret_cast<const char *>(response.hash), response.hashSize);
-    return hashString(HashAlgorithm::SHA256, buf);
+    return trace::tracingHash(buf);
 }
 
 static Hash dg_xorHash(const Hash & a, const Hash & b)
@@ -575,7 +578,7 @@ static uint8_t dg_bucketAt(const Hash & h, int depth)
 
 static std::string dg_trieLeafPayload(const std::vector<Hash> & members)
 {
-    const size_t hs = Hash(HashAlgorithm::SHA256).hashSize;
+    const size_t hs = trace::tracingHashSize;
     std::string out;
     out.reserve(1 + members.size() * hs);
     out.push_back(0x00);
@@ -586,7 +589,7 @@ static std::string dg_trieLeafPayload(const std::vector<Hash> & members)
 
 static std::string dg_trieInternalPayload(const std::vector<std::pair<uint8_t, Hash>> & children)
 {
-    const size_t hs = Hash(HashAlgorithm::SHA256).hashSize;
+    const size_t hs = trace::tracingHashSize;
     std::string out;
     out.reserve(1 + children.size() * (1 + hs));
     out.push_back(0x01);
@@ -608,7 +611,7 @@ static DgTrieNode dg_parseTrieNode(std::string_view payload)
 {
     if (payload.empty())
         throw Error("decision-graph: malformed RequestSet node (empty)");
-    const size_t hs = Hash(HashAlgorithm::SHA256).hashSize;
+    const size_t hs = trace::tracingHashSize;
     DgTrieNode out;
     out.isLeaf = (payload[0] == 0x00);
     if (out.isLeaf) {
@@ -644,7 +647,7 @@ static std::filesystem::path dg_defaultDbPath()
 
 Hash TracingDecisionGraph::computeResponseHash(const std::string & payload)
 {
-    return hashString(HashAlgorithm::SHA256, payload);
+    return trace::tracingHash(payload);
 }
 
 TracingDecisionGraph::TracingDecisionGraph()
@@ -900,7 +903,7 @@ Hash TracingDecisionGraph::insertObservationSet(
 {
     auto sorted = dg_sortAndDedup(std::move(members));
     auto payload = dg_observationSetPayload(sorted);
-    auto h = hashString(HashAlgorithm::SHA256, payload);
+    auto h = trace::tracingHash(payload);
 
     /* Early return if we've inserted this obsSet before in this session.
        `obsSetDepthMemo` is populated only after a successful insert
@@ -967,7 +970,7 @@ TracingDecisionGraph::getObservationSet(const Hash & h)
     members.reserve(arr.size());
     for (const auto & elt : arr) {
         InlineFact m;
-        m.reqHash = Hash::parseNonSRIUnprefixed(elt.at("q").get<std::string>(), HashAlgorithm::SHA256);
+        m.reqHash = trace::parseTracingHex(elt.at("q").get<std::string>());
         auto & binVal = elt.at("p").get_binary();
         m.responsePayload.assign(binVal.begin(), binVal.end());
         members.push_back(std::move(m));
@@ -982,7 +985,7 @@ static Hash dg_trieRootHash(std::vector<Hash> sortedMembers, int depth)
 {
     if (sortedMembers.size() <= TRIE_SPLIT_THRESHOLD) {
         auto payload = dg_trieLeafPayload(sortedMembers);
-        return hashString(HashAlgorithm::SHA256, payload);
+        return trace::tracingHash(payload);
     }
     /* Bucket by the depth'th 4-bit slice. Members come in sorted; a
        stable bucket-sort preserves intra-bucket sortedness. */
@@ -996,7 +999,7 @@ static Hash dg_trieRootHash(std::vector<Hash> sortedMembers, int depth)
         children.emplace_back(i, dg_trieRootHash(std::move(buckets[i]), depth + 1));
     }
     auto payload = dg_trieInternalPayload(children);
-    return hashString(HashAlgorithm::SHA256, payload);
+    return trace::tracingHash(payload);
 }
 
 TracingDecisionGraph::SetHash
@@ -1023,13 +1026,8 @@ TracingDecisionGraph::computeFactSetHash(const std::vector<Fact> & members)
 TracingDecisionGraph::SetHash
 TracingDecisionGraph::emptySetHash()
 {
-    /* All-zero hash: XOR identity, so H(∅ ∪ {e}) = H_element(e). */
-    static const SetHash h = []() {
-        SetHash z(HashAlgorithm::SHA256);
-        std::memset(z.hash, 0, z.hashSize);
-        return z;
-    }();
-    return h;
+    /* All-zero tracing hash: XOR identity, so H(∅ ∪ {e}) = H_element(e). */
+    return trace::tracingZeroHash();
 }
 
 std::vector<TracingDecisionGraph::RequestHash>
@@ -1073,7 +1071,7 @@ Hash TracingDecisionGraph::insertTrieRecursive(std::vector<Hash> sortedMembers, 
     };
     if (sortedMembers.size() <= TRIE_SPLIT_THRESHOLD) {
         auto payload = dg_trieLeafPayload(sortedMembers);
-        auto nodeHash = hashString(HashAlgorithm::SHA256, payload);
+        auto nodeHash = trace::tracingHash(payload);
         persist(nodeHash, payload);
         return nodeHash;
     }
@@ -1087,7 +1085,7 @@ Hash TracingDecisionGraph::insertTrieRecursive(std::vector<Hash> sortedMembers, 
         children.emplace_back(i, insertTrieRecursive(std::move(buckets[i]), depth + 1));
     }
     auto payload = dg_trieInternalPayload(children);
-    auto nodeHash = hashString(HashAlgorithm::SHA256, payload);
+    auto nodeHash = trace::tracingHash(payload);
     persist(nodeHash, payload);
     return nodeHash;
 }
@@ -1175,7 +1173,7 @@ struct TracingDecisionGraph::TrieBuilder::Node
     {
         if (cachedHash)
             return *cachedHash;
-        cachedHash = hashString(HashAlgorithm::SHA256, buildPayload());
+        cachedHash = trace::tracingHash(buildPayload());
         return *cachedHash;
     }
 
@@ -1222,7 +1220,7 @@ struct TracingDecisionGraph::TrieBuilder::Node
                     c->persistTree(g);
         }
         auto payload = buildPayload();
-        auto hash = cachedHash.value_or(hashString(HashAlgorithm::SHA256, payload));
+        auto hash = cachedHash.value_or(trace::tracingHash(payload));
         cachedHash = hash;
         g.persistRequestSetNode(hash, payload);
         persisted = true;
