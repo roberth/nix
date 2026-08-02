@@ -520,9 +520,19 @@ std::strong_ordering operator<=>(const SelectorCallbackApplyF<String> & a, const
 
 Hash computeSelectorHash(const SelectorNode & query)
 {
+    /* CBOR encoding rather than j.dump(): the JSON string dump ran
+       nlohmann's dump_escaped (per-char escape check) on the whole
+       payload including the 64-char hex parent strings. CBOR encodes
+       strings without escaping and with a shorter length header, so
+       hashing the CBOR bytes is materially cheaper for the same
+       logical content. Existing DB rows keyed by the old dump-hash
+       become orphans; the eval-cache is dev-only, so screw
+       migrations. */
     nlohmann::json j;
     to_json(j, query);
-    return hashString(HashAlgorithm::SHA256, j.dump());
+    auto cbor = nlohmann::json::to_cbor(j);
+    return hashString(HashAlgorithm::SHA256,
+        std::string_view(reinterpret_cast<const char *>(cbor.data()), cbor.size()));
 }
 
 SelectorF<Resolved>::SelectorF(SelectorNodeF<Resolved> n)

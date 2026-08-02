@@ -427,12 +427,15 @@ public:
 template<typename Q>
 TracingDecisionGraph::QueryHash TracingDecisionGraph::computeSelectorHash(const Q & query)
 {
-    /* Serialise the query to JSON and SHA-256 it. The Query's
-       "from" field carries the parent's selectorHash (Merkle identity),
-       so the resulting hash encodes the full provenance chain. */
+    /* Must agree with the free `nix::computeSelectorHash(SelectorNode)`
+       in trace-types.cc — both produce the identity used to look up
+       Selectors. Both switched to CBOR (from j.dump()) to skip
+       dump_escaped's per-char escape work on hex-string payloads.
+       See trace-types.cc for rationale. */
     nlohmann::json j = query;
-    auto serialised = j.dump();
-    return hashString(HashAlgorithm::SHA256, serialised);
+    auto cbor = nlohmann::json::to_cbor(j);
+    return hashString(HashAlgorithm::SHA256,
+        std::string_view(reinterpret_cast<const char *>(cbor.data()), cbor.size()));
 }
 
 } // namespace nix
