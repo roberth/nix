@@ -298,7 +298,7 @@ std::optional<std::string> TracingReplayEvaluator::computeLiveResponse(const tra
                 return dispatchQueryRequest(trace::toJson(*r.query), ctx);
             },
         }, req);
-    } catch (const std::exception & e) {
+    } catch (const std::exception & e) { extern thread_local bool rcaBailFlag; if (rcaBailFlag) throw; /* rca-bail-diagnostic */
         tracingCacheLog("replay: failed to get current response: %s", e.what());
     }
     return std::nullopt;
@@ -354,7 +354,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveIdentity(const std::strin
     Hash idHash{HashAlgorithm::SHA256};
     try {
         idHash = Hash::parseNonSRIUnprefixed(idStr, HashAlgorithm::SHA256);
-    } catch (const std::exception &) {
+    } catch (const std::exception &) { extern thread_local bool rcaBailFlag; if (rcaBailFlag) throw; /* rca-bail-diagnostic */
         return nullptr;
     }
 
@@ -420,7 +420,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveIdentity(const std::strin
             if (resultObj)
                 ctx.memo[idStr] = resultObj;
             return resultObj;
-        } catch (const std::exception & e) {
+        } catch (const std::exception & e) { extern thread_local bool rcaBailFlag; if (rcaBailFlag) throw; /* rca-bail-diagnostic */
             tracingCacheLog("resolve %s: callbackApply queryApply threw: %s",
                 idStr.substr(0, 12), e.what());
             return nullptr;
@@ -462,7 +462,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveApplyId(
     std::shared_ptr<Object> resultObj;
     try {
         resultObj = fnObj->queryApply(argObj);
-    } catch (const std::exception & e) {
+    } catch (const std::exception & e) { extern thread_local bool rcaBailFlag; if (rcaBailFlag) throw; /* rca-bail-diagnostic */
         tracingCacheLog("replay: apply %s: queryApply threw: %s", idStr, e.what());
         return nullptr;
     }
@@ -494,7 +494,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveProducerChild(
                 } else {
                     return nullptr;
                 }
-            } catch (const std::exception & e) {
+            } catch (const std::exception & e) { extern thread_local bool rcaBailFlag; if (rcaBailFlag) throw; /* rca-bail-diagnostic */
                 tracingCacheLog("replay: failed to resolve %s producer for %s: %s",
                     Q::tag, idStr, e.what());
                 return nullptr;
@@ -544,7 +544,7 @@ std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nl
                         selfHex.substr(0, 12).c_str(),
                         whnf.type.c_str());
                     return jsonToCborString(nlohmann::json(whnf));
-                } catch (const std::exception & e) {
+                } catch (const std::exception & e) { extern thread_local bool rcaBailFlag; if (rcaBailFlag) throw; /* rca-bail-diagnostic */
                     tracingCacheLog("apply: computeWHNFFromObject threw: %s", e.what());
                     return std::nullopt;
                 }
@@ -589,7 +589,7 @@ std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nl
                         "callbackApply: HIT obsSet=%s whnf=%s",
                         q.argObsSet.to_string(HashFormat::Base16, false).substr(0, 12), whnf.type.c_str());
                     return jsonToCborString(nlohmann::json(whnf));
-                } catch (const std::exception & e) {
+                } catch (const std::exception & e) { extern thread_local bool rcaBailFlag; if (rcaBailFlag) throw; /* rca-bail-diagnostic */
                     tracingCacheLog("callbackApply: fn->queryApply failed: %s", e.what());
                     return std::nullopt;
                 }
@@ -616,7 +616,7 @@ std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nl
                         selfHex.substr(0, 12).c_str(),
                         whnf.type.c_str());
                     return jsonToCborString(nlohmann::json(whnf));
-                } catch (const std::exception & e) {
+                } catch (const std::exception & e) { extern thread_local bool rcaBailFlag; if (rcaBailFlag) throw; /* rca-bail-diagnostic */
                     tracingCacheLog("arg: computeWHNFFromObject threw: %s", e.what());
                     return std::nullopt;
                 }
@@ -648,7 +648,7 @@ std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nl
                     } else {
                         return std::nullopt;
                     }
-                } catch (const std::exception & e) {
+                } catch (const std::exception & e) { extern thread_local bool rcaBailFlag; if (rcaBailFlag) throw; /* rca-bail-diagnostic */
                     tracingCacheLog("replay: dispatch failed for %s: %s", Q::tag, e.what());
                     return std::nullopt;
                 }
@@ -725,7 +725,7 @@ ref<Object> TracingReplayEvaluator::evalFile(const RootedPath & path, const std:
             trace::ResultWHNF parsed;
             from_json(whnfJson, parsed);
             obj->withCachedWHNF(std::move(parsed));
-        } catch (const std::exception &) { /* fall through */ }
+        } catch (const std::exception &) { extern thread_local bool rcaBailFlag; if (rcaBailFlag) throw; /* rca-bail-diagnostic */ /* fall through */ }
         rootCell->liveObject = obj.get_ptr();
         obj->withArgCell(rootCell);
         /* Bootstrap the pool with this root Selector. */
@@ -751,7 +751,7 @@ ref<Object> TracingReplayEvaluator::evalExpr(const std::string & expr, const Roo
             trace::ResultWHNF parsed;
             from_json(whnfJson, parsed);
             obj->withCachedWHNF(std::move(parsed));
-        } catch (const std::exception &) { /* fall through */ }
+        } catch (const std::exception &) { extern thread_local bool rcaBailFlag; if (rcaBailFlag) throw; /* rca-bail-diagnostic */ /* fall through */ }
         rootCell->liveObject = obj.get_ptr();
         obj->withArgCell(rootCell);
         obj->withProducer(decisionGraph.selectorPool.intern(rootSel));
@@ -907,7 +907,7 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
             from_json(whnfJson, parsed);
             cachedWHNF = std::move(parsed);
             triePos = applyLookup->second;
-        } catch (const std::exception &) {
+        } catch (const std::exception &) { extern thread_local bool rcaBailFlag; if (rcaBailFlag) throw; /* rca-bail-diagnostic */
             /* Parse failure — fall through to lazy path. */
         }
     }

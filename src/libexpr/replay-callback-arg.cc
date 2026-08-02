@@ -13,6 +13,14 @@
 
 namespace nix {
 
+/* TODO: panic or resolve architecturally.
+   Diagnostic bail flag set by RCA::queryApply when it hits null
+   obsSetResponses. Walker catches check the flag and rethrow so the
+   throw propagates to Nix's top-level and produces a stack trace via
+   `--show-trace`. */
+thread_local bool rcaBailFlag = false;
+
+
 /* Look up the recorded payload for `query` in the obsSet map the
    CallbackApply consumer populated at dispatch time. The map is
    keyed by requestHash; miss is a real error (there's no
@@ -274,13 +282,15 @@ std::shared_ptr<Object> ReplayCallbackArg::queryApply(std::shared_ptr<Object> ar
        argObj; on all-match, return an Object wrapping the recorded
        applyResult WHNF. On no match, throw — walker catches and
        treats as miss. */
-    if (!obsSetResponses)
-        /* Invariant: any RCA reaching queryApply has been populated
-           with obsSetResponses via withObsSetResponses at
-           materialisation (dispatchQueryRequest's callbackApply
-           branch). If null here, the RCA was constructed without
-           being wired up — bug in construction path. */
-        panic("RCA::queryApply: no obsSetResponses");
+    if (!obsSetResponses) {
+        /* TODO: panic or resolve architecturally. Currently a throw
+           with a bail flag so `nix eval --show-trace` gives a Nix
+           stack trace. Walker's `catch(const std::exception&)` sites
+           check the flag and rethrow to prevent retry loops. */
+        extern thread_local bool rcaBailFlag;
+        rcaBailFlag = true;
+        throw Error("RCA::queryApply: no obsSetResponses (TODO: panic or resolve architecturally)");
+    }
 
     for (const auto & [scaHash, recordedResp] : *obsSetResponses) {
         auto scaOpt = decisionGraph.selectorPool.find(scaHash);
@@ -323,7 +333,7 @@ std::shared_ptr<Object> ReplayCallbackArg::queryApply(std::shared_ptr<Object> ar
                     auto qr = dispatchOuterQuery(argObj, (*probeSelOpt)->node);
                     liveResult = qr.result;
                 }
-            } catch (const std::exception &) { allMatch = false; break; }
+            } catch (const std::exception &) { extern thread_local bool rcaBailFlag; if (rcaBailFlag) throw; /* rca-bail-diagnostic */ allMatch = false; break; }
             nlohmann::json liveJson = std::visit(
                 [](const auto & r) -> nlohmann::json { return r; }, liveResult);
             auto livePayload = jsonToCborString(liveJson);
