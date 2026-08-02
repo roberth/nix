@@ -535,6 +535,18 @@ void ExprFromObject::eval(EvalState & state, Env & env, Value & v)
             v = **val;
             break;
         }
+        /* H2 companion: TracingCallbackArg materialises via a <cb-apply>
+           primop routing subsequent applies through TCA::queryApply,
+           which records compositional SCAs on the enclosing callback
+           firing's cell. Since TCA::queryApply now wraps its own
+           applyResult as another TCA, that wrapper reaches here on
+           further outer-side apples and must also route through TCA,
+           not through makeCachedFnPrimOp. */
+        if (dynamic_cast<TracingCallbackArg *>(obj.get())) {
+            auto val = obj->toValueOrProxy(state, outerResolver);
+            v = **val;
+            break;
+        }
         PrimOp * primOp;
         /* makeCachedFnPrimOp routes through the cache — needs a decision
            graph to intern Selectors into AND a real producer Selector on

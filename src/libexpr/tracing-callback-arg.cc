@@ -417,7 +417,23 @@ std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> a
         trace::SelectorCallbackApply{layer2ObsHash, producer});
     recordObservation(scaSel, applyResultWhnf);
 
-    return resultObj;
+    /* H2: wrap the applyResult in a TCA with producer=scaSel and
+       argCell=this->argCell (enclosing firing's cell). Subsequent
+       applies on the applyResult then re-enter TCA::queryApply and
+       record a compositional SCA{fn=scaSel, ...} on the SAME enclosing
+       cell. Same for nav probes on non-function results — they go
+       through TCA::maybeGetAttr etc., producing SelectorGetAttr{from=
+       scaSel}. This is what makes the callback-model chain inductive:
+       one wrap step per apply/getter, no ad-hoc "second apply" case.
+
+       Without this, the applyResult was bare and returned to
+       <cb-apply>'s primop impl, which handed it to ExprFromObject —
+       which for nFunction values produces a <cached-fn> primop that
+       routes the subsequent apply as plain SelectorApply. Warm then
+       has no compositional SCA to look up. Doc §6a's "deferred cases"
+       note. */
+    return std::make_shared<TracingCallbackArg>(
+        std::move(resultObj), scaSel, writer, rootFSRoot, argCell);
 }
 
 RootValue TracingCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_ptr<struct OuterResolver> resolver)
@@ -446,6 +462,14 @@ RootValue TracingCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_
                 auto resultObj = self->queryApply(argObj);
                 ExprFromObject(resultObj, nullptr, resolver).eval(state, state.baseEnv, v);
             },
+            /* Parallel to makeCachedFnPrimOp / makeOuterFnPrimOp: expose the
+               inner value's formal-args so `builtins.functionArgs` reports the
+               real formals through the primop wrapper. Without this, patterns
+               like `callPackageWith autoArgs fn args` compute
+               `intersectAttrs (functionArgs fn) autoArgs` as `{}` because the
+               primop has no formals, and downstream `fn allArgs` sees only the
+               empty override. */
+            .getFunctionInfo = [self]() -> std::optional<FunctionInfo> { return self->getFunctionInfo(); },
         };
     auto * val = evalState.allocValue();
     val->mkPrimOp(primOp);

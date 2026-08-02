@@ -349,13 +349,20 @@ std::shared_ptr<Object> ReplayCallbackArg::queryApply(std::shared_ptr<Object> ar
                 scaHash.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
                 sca->argObsSet.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
                 layer2Obs->size());
-            /* Return a fresh RCA representing the applyResult. Its
+            /* H2: return a fresh RCA representing the applyResult. Its
                producer is this SCA; its whnf is the recorded response;
-               its obsSet is empty (any further probes on the apply-result
-               would need their own recorded chain). */
+               its obsSetResponses is INHERITED from this RCA so that
+               subsequent applies (`(x1 1) 2` on top of `x1 1`) can find
+               compositional SCAs {parent=this-SCA, ...} in the map via
+               the same filter above (line "sca->parent->cachedHash !=
+               producer->cachedHash"). The inductive step: parent's map
+               contains the whole chain of the outer firing's obsSet;
+               each level's queryApply picks the entry whose parent
+               matches its own producer. */
             auto childRca = std::make_shared<ReplayCallbackArg>(
                 *scaOpt, decisionGraph, rootFSRoot, state);
             childRca->cachedWHNF = matchedWhnf;
+            childRca->withObsSetResponses(obsSetResponses);
             return childRca;
         }
     }

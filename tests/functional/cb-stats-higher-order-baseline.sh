@@ -23,9 +23,12 @@ clearCache
 
 echo '{ f }: f (x: x + 1)' > "$TEST_ROOT/ho.nix"
 
-# Cold record.
+# Cold record. Baseline shifted from (0 3 2) to (0 2 1) when H2 routed
+# TCA-wrapped applyResults through <cb-apply> instead of makeCachedFnPrimOp.
+# Confirm the shift with git blame before treating a further change as
+# regression.
 echo "=== cold (no hits, but misses, fallbacks) ==="
-assertCacheStats 0 3 2 -- \
+assertCacheStats 0 2 1 -- \
     nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/ho.nix; }) { f = g: g 5; }'
 
 # Warm replay. Every Q dispatched live; everything hits.

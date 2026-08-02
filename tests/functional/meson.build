@@ -180,6 +180,7 @@ suites = [
       'cb-cli-arg-types.sh',
       'cb-local-descendants.sh',
       'cb-higher-order-nested.sh',
+      'cb-higher-order-currying.sh',
       'cb-mutually-recursive-nesting.sh',
       'cb-fib-flat.sh',
       'cb-fib-mutual.sh',
