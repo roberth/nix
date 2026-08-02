@@ -26,6 +26,25 @@ class TracingReplayEvaluator : public Evaluator
     TracingWriter & writer;
     Environment & validationEnv;
 
+    /** Session-scoped memo of env-request responses (FileReadRequest
+        + GetEnvRequest) already dispatched in this evaluator's
+        lifetime. Populated on first probe, returned on subsequent
+        probes. Attacks the walker's 46% inclusive `getFileHash`
+        slice surfaced by the P1a profile: file-read observations
+        re-dispatched across many Q walks in the same session hit the
+        FileHashCache SQL path repeatedly. Cell-model motivation
+        (user 2026-08-02): file-hash memoization is the session-root
+        cell's responsibility; env observations semantically belong
+        there. Not applied to OuterValueRequest — those depend on
+        the walker's current cell chain and cannot be memoized by
+        request payload alone.
+
+        Key format: "F:<path>" for FileReadRequest, "E:<name>" for
+        GetEnvRequest. Kept as string prefix rather than hashing the
+        request — memo lookup on a string is cheaper than
+        SHA256-hashing the request payload just to key the memo. */
+    std::unordered_map<std::string, std::string> envResponseMemo;
+
     /**
      * Per-history resolution context.
      *

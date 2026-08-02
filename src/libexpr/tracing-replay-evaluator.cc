@@ -284,8 +284,27 @@ TracingReplayEvaluator::walk(
 
 std::optional<std::string> TracingReplayEvaluator::computeLiveResponse(const trace::Request & req, ResolutionContext & ctx)
 {
+    /* Env-request memoization: FileReadRequest and GetEnvRequest are
+       pure functions of the request (the env is stable within a
+       session). Two probes of the same file / env var during the
+       session yield the same response; skip the re-dispatch. Attacks
+       the 46% inclusive `getFileHash` slice in the P1a profile —
+       the walker re-dispatches the same file-content probe across
+       many Q walks per session. Not memoized for OuterValueRequest:
+       response there depends on the walker's current cell chain and
+       cannot be keyed on the request alone. */
+    std::string memoKey;
+    std::visit(overloaded{
+        [&](const trace::FileReadRequest & r) { memoKey = "F:" + r.absPath; },
+        [&](const trace::GetEnvRequest & r) { memoKey = "E:" + r.name; },
+        [&](const trace::OuterValueRequest &) { /* not memoized */ },
+    }, req);
+    if (!memoKey.empty()) {
+        if (auto it = envResponseMemo.find(memoKey); it != envResponseMemo.end())
+            return it->second;
+    }
     try {
-        return std::visit(overloaded{
+        auto result = std::visit(overloaded{
             [&](const trace::FileReadRequest & r) -> std::optional<std::string> {
                 auto currentHash = validationEnv.getFileHash(r.absPath);
                 return jsonToCborString(nlohmann::json(trace::FileReadResponse{currentHash}));
@@ -298,6 +317,9 @@ std::optional<std::string> TracingReplayEvaluator::computeLiveResponse(const tra
                 return dispatchQueryRequest(trace::toJson(*r.query), ctx);
             },
         }, req);
+        if (!memoKey.empty() && result)
+            envResponseMemo.emplace(memoKey, *result);
+        return result;
     } catch (const std::exception & e) { extern thread_local bool rcaBailFlag; if (rcaBailFlag) throw; /* rca-bail-diagnostic */
         tracingCacheLog("replay: failed to get current response: %s", e.what());
     }
