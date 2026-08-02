@@ -11,10 +11,304 @@
 
 #include <nlohmann/json.hpp>
 #include <algorithm>
+#include <atomic>
+#include <condition_variable>
+#include <cstdlib>
+#include <mutex>
+#include <set>
+#include <thread>
 #include <unordered_map>
 #include <unordered_set>
+#include <variant>
 
 namespace nix {
+
+/* ---- Async writer thread (revived from v12 #1592361d6 + follow-ups) ----
+
+   The DG's insert paths pay per-statement SQLite transaction overhead
+   (~7% of cycles in the profile: btreeBeginTrans + VdbeHalt on every
+   INSERT OR IGNORE). Batching writes into transactions collapses this.
+
+   Shape (following the mature v12 pattern matured across #27ad15029,
+   #52eafc558, #1b52d14d3, #f25c31f06):
+   - WriteOp variants describe each queued insert.
+   - WriteQueue owns a std::thread with its own SQLite connection.
+   - Writer batches all pending ops into one SQLiteTxn, then PRAGMA
+     wal_checkpoint(PASSIVE) so other in-process connections see the data.
+   - Registry + std::atexit(WriteQueue::flushAll) to drain queued
+     writes at process exit even when EvalState (via Boehm GC) skips
+     destructors.
+   - Readers use in-memory caches (payload caches on the atom layer,
+     askEdgesCache + terminalCache on the DG layer) as the authoritative
+     in-session view. On a cache miss the reader loads from DB (running
+     a PASSIVE checkpoint first so writer-committed data is visible on
+     the reader's connection). Readers never block on the writer
+     thread — the ordering constraint is that writes update the cache
+     synchronously before enqueueing.
+   - waitForWrites (public) drains the queue for cross-process
+     visibility. Not used on any read path. */
+
+namespace {
+
+struct WriteInsertRequest        { Hash hash; std::string payload; };
+struct WriteInsertSelector       { Hash hash; std::string payload; };
+struct WriteInsertResult         { Hash hash; std::string payload; };
+struct WriteInsertObservationSet { Hash hash; std::string payload; };
+struct WriteInsertRequestSetNode { Hash hash; std::string payload; };
+struct WriteInsertAsk {
+    Hash selectorHash;
+    Hash factSetHash;
+    Hash requestSetHash;
+    std::optional<Hash> altRequestSetHash;
+};
+struct WriteInsertTerminal {
+    Hash selectorHash;
+    Hash factSetHash;
+    Hash resultHash;
+};
+struct WriteDeleteAsk {
+    Hash selectorHash;
+    Hash factSetHash;
+    Hash requestSetHash;
+};
+
+using WriteOp = std::variant<
+    WriteInsertRequest,
+    WriteInsertSelector,
+    WriteInsertResult,
+    WriteInsertObservationSet,
+    WriteInsertRequestSetNode,
+    WriteInsertAsk,
+    WriteInsertTerminal,
+    WriteDeleteAsk>;
+
+static std::string hashToBlob(const Hash & h)
+{
+    return std::string(reinterpret_cast<const char *>(h.hash), h.hashSize);
+}
+
+static void bindHashBlob(SQLiteStmt::Use & use, const Hash & h)
+{
+    auto blob = hashToBlob(h);
+    use(reinterpret_cast<const unsigned char *>(blob.data()), blob.size());
+}
+
+static void bindBytesBlob(SQLiteStmt::Use & use, std::string_view p)
+{
+    use(reinterpret_cast<const unsigned char *>(p.data()), p.size());
+}
+
+class WriteQueue
+{
+public:
+    Sync<std::vector<WriteOp>> pending;
+    std::condition_variable wakeup;
+    std::thread thread;
+    std::atomic<bool> done{false};
+
+    /* Drain tracking: enqueueCount counts ops as they're handed off,
+       processCount is bumped by the writer thread once a batch has
+       been committed to disk. waitDrained snapshots enqueueCount and
+       waits until processCount catches up — does NOT join the thread,
+       so the WriteQueue remains usable afterwards. */
+    std::atomic<uint64_t> enqueueCount{0};
+    std::atomic<uint64_t> processCount{0};
+    std::mutex drainMutex;
+    std::condition_variable drainWakeup;
+
+    /* Global registry so std::atexit can flush all active WriteQueues.
+       Needed because EvalState (which owns TracingDecisionGraph via
+       CacheState) uses Boehm GC — its destructor may never run before
+       process exit, so we can't rely on ~WriteQueue draining. */
+    static Sync<std::set<WriteQueue *>> & registry()
+    {
+        /* Intentionally leaked: registry must outlive every other
+           static and every atexit handler, including flushAll. A
+           function-local static's destructor could run before flushAll
+           and leave it iterating a destroyed set. */
+        static auto * instance = new Sync<std::set<WriteQueue *>>;
+        return *instance;
+    }
+
+    static void flushAll()
+    {
+        auto queues = registry().lock();
+        for (auto * q : *queues)
+            q->shutdown();
+        queues->clear();
+    }
+
+    WriteQueue(std::filesystem::path dbPath)
+    {
+        static std::once_flag atexitRegistered;
+        std::call_once(atexitRegistered, [] { std::atexit(flushAll); });
+        thread = std::thread([this, dbPath = std::move(dbPath)] { run(dbPath); });
+        registry().lock()->insert(this);
+    }
+
+    ~WriteQueue()
+    {
+        shutdown();
+        registry().lock()->erase(this);
+    }
+
+    void shutdown()
+    {
+        if (!done.exchange(true)) {
+            wakeup.notify_one();
+            if (thread.joinable())
+                thread.join();
+            {
+                std::lock_guard<std::mutex> lock(drainMutex);
+            }
+            drainWakeup.notify_all();
+        }
+    }
+
+    void enqueue(WriteOp op)
+    {
+        enqueueCount.fetch_add(1);
+        {
+            auto q = pending.lock();
+            q->push_back(std::move(op));
+        }
+        wakeup.notify_one();
+    }
+
+    /* Wait until every op enqueued before this call has been committed
+       by the writer thread. Does not join the thread; subsequent
+       enqueues continue to work. */
+    void waitDrained()
+    {
+        uint64_t target = enqueueCount.load();
+        std::unique_lock<std::mutex> lock(drainMutex);
+        drainWakeup.wait(lock, [&] {
+            return processCount.load() >= target || done.load();
+        });
+    }
+
+private:
+    void run(const std::filesystem::path & dbPath)
+    {
+        try {
+            SQLite db(dbPath, {.mode = SQLiteOpenMode::Normal, .useWAL = true});
+            db.isCache();
+
+            SQLiteStmt insertRequest, insertSelector, insertResult;
+            SQLiteStmt insertObservationSet, insertRequestSetNode;
+            SQLiteStmt insertAsk, insertTerminal, deleteAsks;
+            insertRequest.create(db,
+                "INSERT OR IGNORE INTO Requests(requestHash, payload) VALUES (?, ?)");
+            insertSelector.create(db,
+                "INSERT OR IGNORE INTO Selectors(selectorHash, payload) VALUES (?, ?)");
+            insertResult.create(db,
+                "INSERT OR IGNORE INTO Results(resultHash, payload) VALUES (?, ?)");
+            insertObservationSet.create(db,
+                "INSERT OR IGNORE INTO ObservationSet(setHash, payload) VALUES (?, ?)");
+            insertRequestSetNode.create(db,
+                "INSERT OR IGNORE INTO RequestSetNodes(nodeHash, payload) VALUES (?, ?)");
+            insertAsk.create(db,
+                "INSERT OR IGNORE INTO Ask(selectorHash, factSetHash, requestSetHash, altRequestSetHash) VALUES (?, ?, ?, ?)");
+            insertTerminal.create(db,
+                "INSERT OR IGNORE INTO Terminal(selectorHash, factSetHash, resultHash) VALUES (?, ?, ?)");
+            deleteAsks.create(db,
+                "DELETE FROM Ask WHERE selectorHash = ? AND factSetHash = ? AND requestSetHash = ?");
+
+            while (true) {
+                std::vector<WriteOp> batch;
+                {
+                    auto q = pending.lock();
+                    while (q->empty() && !done.load())
+                        q.wait(wakeup);
+                    batch = std::move(*q);
+                    q->clear();
+                }
+
+                if (batch.empty()) {
+                    if (done.load()) break;
+                    continue;
+                }
+
+                SQLiteTxn txn(db);
+                for (auto & op : batch) {
+                    std::visit(overloaded{
+                        [&](const WriteInsertRequest & w) {
+                            auto use = insertRequest.use();
+                            bindHashBlob(use, w.hash);
+                            bindBytesBlob(use, w.payload);
+                            use.exec();
+                        },
+                        [&](const WriteInsertSelector & w) {
+                            auto use = insertSelector.use();
+                            bindHashBlob(use, w.hash);
+                            bindBytesBlob(use, w.payload);
+                            use.exec();
+                        },
+                        [&](const WriteInsertResult & w) {
+                            auto use = insertResult.use();
+                            bindHashBlob(use, w.hash);
+                            bindBytesBlob(use, w.payload);
+                            use.exec();
+                        },
+                        [&](const WriteInsertObservationSet & w) {
+                            auto use = insertObservationSet.use();
+                            bindHashBlob(use, w.hash);
+                            bindBytesBlob(use, w.payload);
+                            use.exec();
+                        },
+                        [&](const WriteInsertRequestSetNode & w) {
+                            auto use = insertRequestSetNode.use();
+                            bindHashBlob(use, w.hash);
+                            bindBytesBlob(use, w.payload);
+                            use.exec();
+                        },
+                        [&](const WriteInsertAsk & w) {
+                            auto use = insertAsk.use();
+                            bindHashBlob(use, w.selectorHash);
+                            bindHashBlob(use, w.factSetHash);
+                            bindHashBlob(use, w.requestSetHash);
+                            if (w.altRequestSetHash)
+                                bindHashBlob(use, *w.altRequestSetHash);
+                            else
+                                use.bind();
+                            use.exec();
+                        },
+                        [&](const WriteInsertTerminal & w) {
+                            auto use = insertTerminal.use();
+                            bindHashBlob(use, w.selectorHash);
+                            bindHashBlob(use, w.factSetHash);
+                            bindHashBlob(use, w.resultHash);
+                            use.exec();
+                        },
+                        [&](const WriteDeleteAsk & w) {
+                            auto use = deleteAsks.use();
+                            bindHashBlob(use, w.selectorHash);
+                            bindHashBlob(use, w.factSetHash);
+                            bindHashBlob(use, w.requestSetHash);
+                            use.exec();
+                        },
+                    }, op);
+                }
+                txn.commit();
+
+                /* WAL checkpoint so other in-process connections
+                   (readers) see committed data immediately. PASSIVE
+                   doesn't block writers. */
+                db.exec("PRAGMA wal_checkpoint(PASSIVE)");
+
+                processCount.fetch_add(batch.size());
+                {
+                    std::lock_guard<std::mutex> lock(drainMutex);
+                }
+                drainWakeup.notify_all();
+            }
+        } catch (std::exception & e) {
+            ignoreExceptionInDestructor();
+        }
+    }
+};
+
+} // namespace
 
 static const char * decisionGraphSchema = R"sql(
 -- Storage layer: atomic content-addressed pools.
@@ -120,17 +414,29 @@ struct TracingDecisionGraph::State
 {
     SQLite db;
 
-    /* Storage layer */
-    SQLiteStmt insertRequest, insertSelector, insertResult;
+    /* Storage + DG layer — reads. */
     SQLiteStmt selectRequest, selectSelector, selectResult;
-    SQLiteStmt insertObservationSet, selectObservationSet;
-    SQLiteStmt insertRequestSetNode;
+    SQLiteStmt selectObservationSet;
     SQLiteStmt selectRequestSetNode;
     SQLiteStmt countAsks, countTerminals;
+    SQLiteStmt selectAsks;
+    SQLiteStmt selectTerminal;
 
-    /* Decision graph layer */
-    SQLiteStmt insertAsk, selectAsks, deleteAsks;
-    SQLiteStmt insertTerminal, selectTerminal;
+    /* Async writer thread — batches all DG inserts into transactions
+       on its own SQLite connection (WAL allows concurrent writer +
+       readers). Wait/drain lifecycle preserved via
+       std::atexit(WriteQueue::flushAll) in case the enclosing
+       EvalState is GC-allocated and never destroyed. */
+    std::unique_ptr<WriteQueue> writeQueue;
+
+    /* WAL checkpoint on the reader connection. Writer commits on its
+       own connection; PASSIVE checkpoint moves the WAL into the main
+       DB file so this connection's reads see the writer's committed
+       data. Fast if the WAL is already checkpointed. */
+    void checkpoint()
+    {
+        db.exec("PRAGMA wal_checkpoint(PASSIVE)");
+    }
 
     /* In-memory caches of parsed sets and payloads. Populated lazily on
        first read or write so that subsequent operations within the same
@@ -141,6 +447,13 @@ struct TracingDecisionGraph::State
     std::unordered_map<Hash, std::optional<std::vector<TracingDecisionGraph::Fact>>> factSetCache;
     std::unordered_map<Hash, std::optional<std::string>> requestPayloadCache;
     std::unordered_map<Hash, std::optional<std::string>> resultPayloadCache;
+    /* Selector payloads were formerly written PLAIN because SelectorPool
+       tracks in-memory identity and no in-session reader looked up the
+       payload. Under async writing, in-session reads (e.g. tests that
+       round-trip via getSelectorPayload, or any cross-session lookup
+       arriving before the writer commits) must not miss the queued
+       write. Cache the payload on insert, same as Request/Result. */
+    std::unordered_map<Hash, std::optional<std::string>> selectorPayloadCache;
     /* Typed-form caches. `getRequest` / `getResult` decode from CBOR
        once per hash and cache the typed variant. Consumers use the
        typed accessors and never see raw bytes. */
@@ -159,6 +472,15 @@ struct TracingDecisionGraph::State
        RCA::queryApply's O17 similarly), the memo has all children
        populated by the time a parent computes its depth. */
     std::unordered_map<Hash, std::uint32_t> obsSetDepthMemo;
+
+    /* In-memory buffers for the DG-layer edges. Populated lazily on
+       first read (or eagerly on insert/remove), then kept as the
+       authoritative in-session view. Async-writer inserts flush to
+       DB on the writer thread's own connection, but readers use these
+       caches instead of racing the writer via SQL. Cache indexed by
+       (queryHash, factSetHash) — the same key SQLite uses. */
+    std::map<std::pair<Hash, Hash>, std::vector<AskEdge>> askEdgesCache;
+    std::map<std::pair<Hash, Hash>, std::optional<ResultHash>> terminalCache;
 };
 
 /* ─────────────────────────────────────────────────────────────────────
@@ -346,20 +668,12 @@ TracingDecisionGraph::TracingDecisionGraph(const std::filesystem::path & dbPath)
     state->db.isCache();
     state->db.exec(decisionGraphSchema);
 
-    state->insertRequest.create(state->db,
-        "INSERT OR IGNORE INTO Requests(requestHash, payload) VALUES (?, ?)");
-    state->insertSelector.create(state->db,
-        "INSERT OR IGNORE INTO Selectors(selectorHash, payload) VALUES (?, ?)");
-    state->insertResult.create(state->db,
-        "INSERT OR IGNORE INTO Results(resultHash, payload) VALUES (?, ?)");
     state->selectRequest.create(state->db,
         "SELECT payload FROM Requests WHERE requestHash = ?");
     state->selectSelector.create(state->db,
         "SELECT payload FROM Selectors WHERE selectorHash = ?");
     state->selectResult.create(state->db,
         "SELECT payload FROM Results WHERE resultHash = ?");
-    state->insertObservationSet.create(state->db,
-        "INSERT OR IGNORE INTO ObservationSet(setHash, payload) VALUES (?, ?)");
     state->selectObservationSet.create(state->db,
         "SELECT payload FROM ObservationSet WHERE setHash = ?");
     /* Drop obsolete tables from earlier schema versions. */
@@ -368,8 +682,6 @@ TracingDecisionGraph::TracingDecisionGraph(const std::filesystem::path & dbPath)
     state->db.exec("DROP TABLE IF EXISTS SubjectStampSites;");
     state->db.exec("DROP TABLE IF EXISTS ApplyResultProducers;");
 
-    state->insertRequestSetNode.create(state->db,
-        "INSERT OR IGNORE INTO RequestSetNodes(nodeHash, payload) VALUES (?, ?)");
     state->selectRequestSetNode.create(state->db,
         "SELECT payload FROM RequestSetNodes WHERE nodeHash = ?");
 
@@ -389,27 +701,37 @@ TracingDecisionGraph::TracingDecisionGraph(const std::filesystem::path & dbPath)
     } catch (SQLiteError &) {
         /* Column already exists (idempotent re-run). */
     }
-    state->insertAsk.create(state->db,
-        "INSERT OR IGNORE INTO Ask(selectorHash, factSetHash, requestSetHash, altRequestSetHash) VALUES (?, ?, ?, ?)");
     state->selectAsks.create(state->db,
         "SELECT requestSetHash, altRequestSetHash FROM Ask WHERE selectorHash = ? AND factSetHash = ?");
-    state->deleteAsks.create(state->db,
-        "DELETE FROM Ask WHERE selectorHash = ? AND factSetHash = ? AND requestSetHash = ?");
-    state->insertTerminal.create(state->db,
-        "INSERT OR IGNORE INTO Terminal(selectorHash, factSetHash, resultHash) VALUES (?, ?, ?)");
     state->selectTerminal.create(state->db,
         "SELECT resultHash FROM Terminal WHERE selectorHash = ? AND factSetHash = ?");
     state->countAsks.create(state->db,
         "SELECT 1 FROM Ask WHERE selectorHash = ? AND factSetHash = ? LIMIT 1");
     state->countTerminals.create(state->db,
         "SELECT 1 FROM Terminal WHERE selectorHash = ? AND factSetHash = ? LIMIT 1");
+
+    /* Writer thread runs on its own SQLite connection to the same DB
+       file (WAL mode allows concurrent writer + readers). Schema
+       exists by the time the thread first opens; INSERT statements
+       are prepared inside run() against that connection. */
+    state->writeQueue = std::make_unique<WriteQueue>(dbPath);
 }
 
 TracingDecisionGraph::~TracingDecisionGraph() = default;
 
 void TracingDecisionGraph::waitForWrites()
 {
-    /* Synchronous writes for Phase 1; nothing to wait for. */
+    /* Block until every write enqueued before this call has been
+       committed by the writer thread's connection. Not on any read
+       path — reads consult in-memory caches without waiting. Callers
+       who need cross-process visibility (e.g. inspecting the DB file
+       from another tool) use this. */
+    WriteQueue * wq;
+    {
+        auto state(_state->lock());
+        wq = state->writeQueue.get();
+    }
+    wq->waitDrained();
 }
 
 /* ─────────────────────────────────────────────────────────────────────
@@ -422,41 +744,38 @@ void TracingDecisionGraph::waitForWrites()
    the pre-encoded JSON form should record provenance at their
    own level with the JSON payload. This macro just records the
    kind + size. */
-#define ATOM_INSERT_CACHED(NAME, CACHE)                                          \
+#define ATOM_INSERT_CACHED(NAME, CACHE, OP)                                      \
     void TracingDecisionGraph::insert##NAME(const Hash & h, std::string_view p) \
     {                                                                            \
         {                                                                        \
             auto state(_state->lock());                                          \
-            auto use = state->insert##NAME.use();                                \
-            dg_bindBlob(use, dg_hashToBlob(h));                                  \
-            dg_bindBlob(use, p);                                                 \
-            use.exec();                                                          \
-            /* Mirror INSERT OR IGNORE: only the first payload wins. */          \
-            state->CACHE.try_emplace(h, std::optional{std::string(p)});          \
+            /* Mirror INSERT OR IGNORE in memory. On repeat, skip enqueue. */    \
+            auto [it, inserted] = state->CACHE.try_emplace(                      \
+                h, std::optional{std::string(p)});                               \
+            if (!inserted)                                                       \
+                return;                                                          \
+            state->writeQueue->enqueue(OP{h, std::string(p)});                   \
         }                                                                        \
         if (provenanceEnabled())                                                 \
             recordProvenance(h, #NAME "Hash",                                    \
                              {{"payload_len", p.size()}});                       \
     }
 
-#define ATOM_INSERT_PLAIN(NAME)                                                  \
+#define ATOM_INSERT_PLAIN(NAME, OP)                                              \
     void TracingDecisionGraph::insert##NAME(const Hash & h, std::string_view p) \
     {                                                                            \
         {                                                                        \
             auto state(_state->lock());                                          \
-            auto use = state->insert##NAME.use();                                \
-            dg_bindBlob(use, dg_hashToBlob(h));                                  \
-            dg_bindBlob(use, p);                                                 \
-            use.exec();                                                          \
+            state->writeQueue->enqueue(OP{h, std::string(p)});                   \
         }                                                                        \
         if (provenanceEnabled())                                                 \
             recordProvenance(h, #NAME "Hash",                                    \
                              {{"payload_len", p.size()}});                       \
     }
 
-ATOM_INSERT_CACHED(Request, requestPayloadCache)
-ATOM_INSERT_PLAIN(Selector)
-ATOM_INSERT_CACHED(Result, resultPayloadCache)
+ATOM_INSERT_CACHED(Request, requestPayloadCache, WriteInsertRequest)
+ATOM_INSERT_CACHED(Selector, selectorPayloadCache, WriteInsertSelector)
+ATOM_INSERT_CACHED(Result, resultPayloadCache, WriteInsertResult)
 #undef ATOM_INSERT_CACHED
 #undef ATOM_INSERT_PLAIN
 
@@ -489,7 +808,7 @@ ATOM_INSERT_CACHED(Result, resultPayloadCache)
     }
 
 ATOM_GET_CACHED(Request, requestPayloadCache)
-ATOM_GET_PLAIN(Selector)
+ATOM_GET_CACHED(Selector, selectorPayloadCache)
 ATOM_GET_CACHED(Result, resultPayloadCache)
 #undef ATOM_GET_CACHED
 #undef ATOM_GET_PLAIN
@@ -618,10 +937,7 @@ Hash TracingDecisionGraph::insertObservationSet(
 
     {
         auto state(_state->lock());
-        auto use = state->insertObservationSet.use();
-        dg_bindBlob(use, dg_hashToBlob(h));
-        dg_bindBlob(use, payload);
-        use.exec();
+        state->writeQueue->enqueue(WriteInsertObservationSet{h, payload});
         state->obsSetDepthMemo[h] = depth;
     }
 
@@ -753,10 +1069,7 @@ Hash TracingDecisionGraph::insertTrieRecursive(std::vector<Hash> sortedMembers, 
             nodeHash, std::optional{payload});
         if (!inserted)
             return;
-        auto use = state->insertRequestSetNode.use();
-        dg_bindBlob(use, dg_hashToBlob(nodeHash));
-        dg_bindBlob(use, payload);
-        use.exec();
+        state->writeQueue->enqueue(WriteInsertRequestSetNode{nodeHash, payload});
     };
     if (sortedMembers.size() <= TRIE_SPLIT_THRESHOLD) {
         auto payload = dg_trieLeafPayload(sortedMembers);
@@ -828,10 +1141,7 @@ void TracingDecisionGraph::persistRequestSetNode(
         nodeHash, std::optional<std::string>{std::string(payload)});
     if (!inserted)
         return;
-    auto use = state->insertRequestSetNode.use();
-    dg_bindBlob(use, dg_hashToBlob(nodeHash));
-    dg_bindBlob(use, payload);
-    use.exec();
+    state->writeQueue->enqueue(WriteInsertRequestSetNode{nodeHash, std::string(payload)});
 }
 
 /* ──────────────────────────────────────────────────────────────────────
@@ -1048,21 +1358,53 @@ void TracingDecisionGraph::insertAsk(
     const std::optional<SetHash> & altRequestSet)
 {
     auto state(_state->lock());
-    auto use = state->insertAsk.use();
-    dg_bindBlob(use, dg_hashToBlob(q));
-    dg_bindBlob(use, dg_hashToBlob(factSet));
-    dg_bindBlob(use, dg_hashToBlob(requestSet));
-    if (altRequestSet)
-        dg_bindBlob(use, dg_hashToBlob(*altRequestSet));
-    else
-        use.bind(); // NULL
-    use.exec();
+    auto key = std::make_pair(q, factSet);
+    /* Populate cache from DB if not seen yet, then append the new
+       edge. On a cache miss the DB load runs synchronously (no writer
+       thread involvement — this Ask isn't queued yet). Subsequent
+       getAsks / removeAsk / hasAnyEdge see the authoritative state
+       without waiting for the writer. */
+    auto it = state->askEdgesCache.find(key);
+    if (it == state->askEdgesCache.end()) {
+        state->checkpoint();
+        auto query = state->selectAsks.use();
+        dg_bindBlob(query, dg_hashToBlob(q));
+        dg_bindBlob(query, dg_hashToBlob(factSet));
+        std::vector<AskEdge> loaded;
+        while (query.next()) {
+            AskEdge e{dg_blobToHash(query.getBlob(0)), std::nullopt};
+            if (!query.isNull(1))
+                e.altRequestSet = dg_blobToHash(query.getBlob(1));
+            loaded.push_back(std::move(e));
+        }
+        it = state->askEdgesCache.emplace(key, std::move(loaded)).first;
+    }
+    /* Match INSERT OR IGNORE semantics: primary key is
+       (selectorHash, factSetHash, requestSetHash) — altRequestSet is
+       NOT part of the key. A second insertAsk with same primary and
+       different alt is dropped (the first alt sticks). */
+    for (const auto & e : it->second) {
+        if (e.requestSet == requestSet)
+            return;
+    }
+    it->second.push_back(AskEdge{requestSet, altRequestSet});
+    state->writeQueue->enqueue(WriteInsertAsk{q, factSet, requestSet, altRequestSet});
 }
 
 std::vector<TracingDecisionGraph::AskEdge>
 TracingDecisionGraph::getAsks(const QueryHash & q, const SetHash & factSet)
 {
     auto state(_state->lock());
+    auto key = std::make_pair(q, factSet);
+    /* In-memory cache is authoritative for (q, factSet) once populated.
+       Populated lazily on first read from DB, then kept in sync by
+       insertAsk / removeAsk. Avoids blocking readers on the async
+       writer thread. */
+    auto it = state->askEdgesCache.find(key);
+    if (it != state->askEdgesCache.end())
+        return it->second;
+    /* First read: load from DB and cache. */
+    state->checkpoint();
     auto query = state->selectAsks.use();
     dg_bindBlob(query, dg_hashToBlob(q));
     dg_bindBlob(query, dg_hashToBlob(factSet));
@@ -1073,6 +1415,7 @@ TracingDecisionGraph::getAsks(const QueryHash & q, const SetHash & factSet)
             e.altRequestSet = dg_blobToHash(query.getBlob(1));
         out.push_back(std::move(e));
     }
+    state->askEdgesCache.emplace(key, out);
     return out;
 }
 
@@ -1080,11 +1423,20 @@ void TracingDecisionGraph::removeAsk(
     const QueryHash & q, const SetHash & factSet, const SetHash & requestSet)
 {
     auto state(_state->lock());
-    auto use = state->deleteAsks.use();
-    dg_bindBlob(use, dg_hashToBlob(q));
-    dg_bindBlob(use, dg_hashToBlob(factSet));
-    dg_bindBlob(use, dg_hashToBlob(requestSet));
-    use.exec();
+    auto key = std::make_pair(q, factSet);
+    auto it = state->askEdgesCache.find(key);
+    if (it != state->askEdgesCache.end()) {
+        auto & v = it->second;
+        v.erase(std::remove_if(v.begin(), v.end(),
+            [&](const AskEdge & e) { return e.requestSet == requestSet; }),
+            v.end());
+    }
+    /* Note: if the cache isn't populated, the removal still gets
+       queued for the DB. Subsequent getAsks will hit DB, which will
+       reflect the removal after the writer flushes. Missing an
+       in-session cache load here is fine because we don't need to
+       report the removed rows. */
+    state->writeQueue->enqueue(WriteDeleteAsk{q, factSet, requestSet});
 }
 
 void TracingDecisionGraph::insertAskSplitting(
@@ -1230,23 +1582,34 @@ void TracingDecisionGraph::insertTerminal(
     const QueryHash & q, const SetHash & factSet, const ResultHash & result)
 {
     auto state(_state->lock());
-    auto use = state->insertTerminal.use();
-    dg_bindBlob(use, dg_hashToBlob(q));
-    dg_bindBlob(use, dg_hashToBlob(factSet));
-    dg_bindBlob(use, dg_hashToBlob(result));
-    use.exec();
+    auto key = std::make_pair(q, factSet);
+    /* Mirror INSERT OR IGNORE: only the first Terminal wins for a
+       given (q, factSet). If a cached Terminal already exists, don't
+       overwrite it. */
+    auto [it, inserted] = state->terminalCache.try_emplace(key, std::optional<ResultHash>(result));
+    if (!inserted && it->second.has_value())
+        return;
+    it->second = result;
+    state->writeQueue->enqueue(WriteInsertTerminal{q, factSet, result});
 }
 
 std::optional<TracingDecisionGraph::ResultHash>
 TracingDecisionGraph::getTerminal(const QueryHash & q, const SetHash & factSet)
 {
     auto state(_state->lock());
+    auto key = std::make_pair(q, factSet);
+    auto it = state->terminalCache.find(key);
+    if (it != state->terminalCache.end())
+        return it->second;
+    state->checkpoint();
     auto query = state->selectTerminal.use();
     dg_bindBlob(query, dg_hashToBlob(q));
     dg_bindBlob(query, dg_hashToBlob(factSet));
-    if (!query.next())
-        return std::nullopt;
-    return dg_blobToHash(query.getBlob(0));
+    std::optional<ResultHash> result;
+    if (query.next())
+        result = dg_blobToHash(query.getBlob(0));
+    state->terminalCache.emplace(key, result);
+    return result;
 }
 
 /* ─────────────────────────────────────────────────────────────────────
@@ -1361,6 +1724,16 @@ void TracingDecisionGraph::record(
 bool TracingDecisionGraph::hasAnyEdge(const QueryHash & q, const SetHash & factSet)
 {
     auto state(_state->lock());
+    auto key = std::make_pair(q, factSet);
+    /* If either cache has a positive answer, no DB round-trip needed. */
+    if (auto it = state->askEdgesCache.find(key); it != state->askEdgesCache.end() && !it->second.empty())
+        return true;
+    if (auto it = state->terminalCache.find(key); it != state->terminalCache.end() && it->second.has_value())
+        return true;
+    /* Fall back to DB. If either cache is populated with a negative
+       (empty vector or nullopt), we still have to check the OTHER
+       table on disk because the caches are per-table. */
+    state->checkpoint();
     {
         auto check = state->countAsks.use();
         dg_bindBlob(check, dg_hashToBlob(q));

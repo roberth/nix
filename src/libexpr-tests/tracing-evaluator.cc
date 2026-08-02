@@ -12,6 +12,9 @@
 #include "nix/expr/eval-gc.hh"
 #include "nix/fetchers/fetch-settings.hh"
 #include "nix/store/tests/libstore.hh"
+#include "nix/util/file-system.hh"
+
+#include <filesystem>
 
 namespace nix {
 
@@ -34,11 +37,11 @@ class TracingEvaluatorTest : public LibStoreTest
 protected:
     std::shared_ptr<EvalState> state;
     std::shared_ptr<MemoryTraceSink> sink;
-    /* In-memory sqlite so the pool has real DB backing without a temp
-       dir. Under the recursive-Selector migration, building a
-       SelectorGetAttr / SelectorGetListElem requires interning the
-       parent through the pool, which lives on the graph — no graph,
-       no emission from TracingObject getters. */
+    /* Temp-file sqlite so the graph's writer thread (which opens a
+       second SQLite connection to the same DB) shares schema with the
+       reader connection. `:memory:` gives each connection a private
+       empty DB, which would leave the writer with no tables. */
+    std::filesystem::path tempDir;
     std::unique_ptr<TracingDecisionGraph> decisionGraph;
     std::unique_ptr<TracingWriter> writer;
     std::shared_ptr<TracingEvaluator> evaluator;
@@ -62,10 +65,20 @@ protected:
         auto stateRef = make_ref<EvalState>(LookupPath{}, store, fetchSettings, evalSettings, nullptr);
         state = stateRef;
         sink = std::make_shared<MemoryTraceSink>();
-        decisionGraph = std::make_unique<TracingDecisionGraph>(":memory:");
+        tempDir = createTempDir();
+        decisionGraph = std::make_unique<TracingDecisionGraph>(tempDir / "index.sqlite");
         writer = std::make_unique<TracingWriter>(*sink, *decisionGraph);
         auto interpreter = make_ref<Interpreter>(stateRef);
         evaluator = std::make_shared<TracingEvaluator>(*writer, interpreter);
+    }
+
+    void TearDown() override
+    {
+        evaluator.reset();
+        writer.reset();
+        decisionGraph.reset();
+        if (!tempDir.empty())
+            std::filesystem::remove_all(tempDir);
     }
 };
 
