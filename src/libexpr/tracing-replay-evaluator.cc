@@ -71,22 +71,16 @@ TracingReplayEvaluator::walk(
         for (const auto & f : pendingEdgeObservations)
             fingerprint = TracingDecisionGraph::xorHashes(fingerprint, f.elementHash);
         if (committedEdgeFingerprints.insert(fingerprint).second) {
-            /* #183: walker-side attribution — route each fact to
-               its attributionCell (outer probe → arg's cell), or
-               sessionRootCell (env-fact default when null).
-               #187: barrier stamp peeks the writer's current value
-               (walker's commitEdge doesn't bump — outer probe adds
-               go through writer.logOuterObservation which does the
-               bump; env facts don't bump anyway). try_emplace on the
-               cell map means the first stamp wins, so any race with
-               the writer path is idempotent. */
-            auto barrier = writer.peekBarrier();
-            for (const auto & o : pendingEdgeObservations) {
-                auto target = o.attributionCell.lock();
-                if (!target) target = writer.sessionRootCell;
-                if (target)
-                    target->addFact(o.reqHash, o.respHash, barrier);
-            }
+            /* Replay validation must not mutate writer state — recording
+               and replay run through the same TracingWriter but their
+               cells are semantically distinct. Prior code attributed
+               walker-dispatched facts to writer.sessionRootCell (env
+               default) or the writer-side attributionCell, seeding
+               "same probe observed through both flows" duplicates that
+               XOR-cancel in cell.factSetHash and break structural-chain
+               deltas. Walker's fingerprint tracking is sufficient for
+               dedup and validation; writer cells only reflect actual
+               inner-cold interpreter work. */
             tracingCacheLog("dispatch: committed edge (obs=%zu)",
                             pendingEdgeObservations.size());
         } else {
