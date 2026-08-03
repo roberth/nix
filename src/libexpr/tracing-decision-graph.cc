@@ -1316,11 +1316,10 @@ void TracingDecisionGraph::insertAskSplitting(
             /* Keep exUseful for the split-shape check + tail
                construction — its size drives whether we do a "shared
                == existing" collapse or need to insert a separate tail
-               rs. */
-            auto exMembers = getRequestSet(exRsHash);
-            if (!exMembers)
-                continue;
-            auto exUseful = usefulDispatch(*exMembers, dispatchedSoFar);
+               rs. Route through the trie node we already have from
+               getRequestSetNode above — allMembers is memoised on the
+               FrozenNode, so no re-walk on repeat visits. */
+            auto exUseful = usefulDispatch(exNode->allMembers(), dispatchedSoFar);
             if (exUseful.empty())
                 continue;
 
