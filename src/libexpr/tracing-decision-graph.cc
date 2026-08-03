@@ -1,6 +1,5 @@
 #include "nix/expr/tracing-decision-graph.hh"
 #include "nix/expr/tracing-cache-log.hh"
-#include "nix/expr/tracing-cache-provenance.hh"
 #include "nix/expr/tracing-cache-stats.hh"
 #include "nix/store/sqlite.hh"
 #include <sqlite3.h>
@@ -291,10 +290,13 @@ private:
                 }
                 txn.commit();
 
-                /* WAL checkpoint so other in-process connections
-                   (readers) see committed data immediately. PASSIVE
-                   doesn't block writers. */
-                db.exec("PRAGMA wal_checkpoint(PASSIVE)");
+                /* No per-batch wal_checkpoint: in-process readers are
+                   served from in-memory caches (writes update the cache
+                   synchronously before enqueue), and cross-process
+                   visibility can wait for auto-checkpoint / process
+                   exit. Doing PASSIVE per-batch dominated write time
+                   at high batch counts (625k batches in developer
+                   NixOS eval → 625k WAL scans). */
 
                 processCount.fetch_add(batch.size());
                 {
@@ -428,15 +430,6 @@ struct TracingDecisionGraph::State
        std::atexit(WriteQueue::flushAll) in case the enclosing
        EvalState is GC-allocated and never destroyed. */
     std::unique_ptr<WriteQueue> writeQueue;
-
-    /* WAL checkpoint on the reader connection. Writer commits on its
-       own connection; PASSIVE checkpoint moves the WAL into the main
-       DB file so this connection's reads see the writer's committed
-       data. Fast if the WAL is already checkpointed. */
-    void checkpoint()
-    {
-        db.exec("PRAGMA wal_checkpoint(PASSIVE)");
-    }
 
     /* In-memory caches of parsed sets and payloads. Populated lazily on
        first read or write so that subsequent operations within the same
@@ -750,30 +743,20 @@ void TracingDecisionGraph::waitForWrites()
 #define ATOM_INSERT_CACHED(NAME, CACHE, OP)                                      \
     void TracingDecisionGraph::insert##NAME(const Hash & h, std::string_view p) \
     {                                                                            \
-        {                                                                        \
-            auto state(_state->lock());                                          \
-            /* Mirror INSERT OR IGNORE in memory. On repeat, skip enqueue. */    \
-            auto [it, inserted] = state->CACHE.try_emplace(                      \
-                h, std::optional{std::string(p)});                               \
-            if (!inserted)                                                       \
-                return;                                                          \
-            state->writeQueue->enqueue(OP{h, std::string(p)});                   \
-        }                                                                        \
-        if (provenanceEnabled())                                                 \
-            recordProvenance(h, #NAME "Hash",                                    \
-                             {{"payload_len", p.size()}});                       \
+        auto state(_state->lock());                                              \
+        /* Mirror INSERT OR IGNORE in memory. On repeat, skip enqueue. */        \
+        auto [it, inserted] = state->CACHE.try_emplace(                          \
+            h, std::optional{std::string(p)});                                   \
+        if (!inserted)                                                           \
+            return;                                                              \
+        state->writeQueue->enqueue(OP{h, std::string(p)});                       \
     }
 
 #define ATOM_INSERT_PLAIN(NAME, OP)                                              \
     void TracingDecisionGraph::insert##NAME(const Hash & h, std::string_view p) \
     {                                                                            \
-        {                                                                        \
-            auto state(_state->lock());                                          \
-            state->writeQueue->enqueue(OP{h, std::string(p)});                   \
-        }                                                                        \
-        if (provenanceEnabled())                                                 \
-            recordProvenance(h, #NAME "Hash",                                    \
-                             {{"payload_len", p.size()}});                       \
+        auto state(_state->lock());                                              \
+        state->writeQueue->enqueue(OP{h, std::string(p)});                       \
     }
 
 ATOM_INSERT_CACHED(Request, requestPayloadCache, WriteInsertRequest)
@@ -1364,8 +1347,7 @@ void TracingDecisionGraph::insertAsk(
        without waiting for the writer. */
     auto it = state->askEdgesCache.find(key);
     if (it == state->askEdgesCache.end()) {
-        state->checkpoint();
-        auto query = state->selectAsks.use();
+            auto query = state->selectAsks.use();
         dg_bindBlob(query, dg_hashToBlob(q));
         dg_bindBlob(query, dg_hashToBlob(factSet));
         std::vector<AskEdge> loaded;
@@ -1402,7 +1384,6 @@ TracingDecisionGraph::getAsks(const QueryHash & q, const SetHash & factSet)
     if (it != state->askEdgesCache.end())
         return it->second;
     /* First read: load from DB and cache. */
-    state->checkpoint();
     auto query = state->selectAsks.use();
     dg_bindBlob(query, dg_hashToBlob(q));
     dg_bindBlob(query, dg_hashToBlob(factSet));
@@ -1604,7 +1585,6 @@ TracingDecisionGraph::getTerminal(const QueryHash & q, const SetHash & factSet)
                         it->second ? "HIT" : "MISS");
         return it->second;
     }
-    state->checkpoint();
     auto query = state->selectTerminal.use();
     dg_bindBlob(query, dg_hashToBlob(q));
     dg_bindBlob(query, dg_hashToBlob(factSet));
@@ -1740,7 +1720,6 @@ bool TracingDecisionGraph::hasAnyEdge(const QueryHash & q, const SetHash & factS
     /* Fall back to DB. If either cache is populated with a negative
        (empty vector or nullopt), we still have to check the OTHER
        table on disk because the caches are per-table. */
-    state->checkpoint();
     {
         auto check = state->countAsks.use();
         dg_bindBlob(check, dg_hashToBlob(q));

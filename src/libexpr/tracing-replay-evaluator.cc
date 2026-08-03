@@ -12,7 +12,6 @@
 #include "nix/expr/tracing-decision-graph.hh"
 #include "nix/expr/environment.hh"
 #include "nix/expr/tracing-cache-log.hh"
-#include "nix/expr/tracing-cache-provenance.hh"
 #include "nix/util/logging.hh"
 #include "nix/util/util.hh"
 #include "nix/expr/object-type.hh"

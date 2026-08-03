@@ -1,7 +1,6 @@
 #include "nix/expr/tracing-writer.hh"
 #include "nix/expr/observation-set.hh"
 #include "nix/expr/tracing-cache-log.hh"
-#include "nix/expr/tracing-cache-provenance.hh"
 #include "nix/expr/tracing-cache-stats.hh"
 #include "nix/expr/tracing-decision-graph.hh"
 #include "nix/expr/trace-types.hh"
@@ -154,15 +153,6 @@ void TracingWriter::logOuterObservation(
         "  respHash=%s respJSON=%s",
         responseHash.to_string(HashFormat::Base16, false).substr(0, 12),
         resultJson.dump());
-    if (provenanceEnabled()) {
-        recordProvenance(reqHash, "requestHash-d1",
-                         {{"reqJson", reqJson},
-                          {"producer", producerDesc}});
-        recordProvenance(responseHash, "responseHash-d1",
-                         {{"resultJson", resultJson},
-                          {"reqHash", reqHash.to_string(HashFormat::Base16, false)}});
-    }
-
     decisionGraph.insertRequest(reqHash, reqPayload);
 
     /* #183: fact appends to attributionCell's fact set. Ask rows
@@ -222,9 +212,6 @@ void TracingWriter::createCallbackCell(const nlohmann::json & applyQueryPayload)
        full JSON payload was a top perf hotspot in cold-path profiles. */
     auto applyPayloadCbor = jsonToCborString(applyQueryPayload);
     auto applyReqHash = TracingDecisionGraph::computeResponseHash(applyPayloadCbor);
-    if (provenanceEnabled())
-        recordProvenance(applyReqHash, "applyRequestHash",
-                         {{"applyQueryPayload", applyQueryPayload}});
     decisionGraph.insertRequest(applyReqHash, applyPayloadCbor);
 }
 
