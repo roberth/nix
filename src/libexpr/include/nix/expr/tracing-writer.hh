@@ -8,6 +8,7 @@
 #include "nix/expr/arg-cell.hh"
 #include "nix/expr/q-state.hh"
 #include "nix/expr/observation-set.hh"
+#include "nix/expr/request-set-trie.hh"
 #include "nix/expr/trace-sink.hh"
 #include "nix/expr/tracing-cache-log.hh"
 #include "nix/expr/tracing-decision-graph.hh"
@@ -74,9 +75,13 @@ class TracingWriter
     /* request → response lookup, maintained as facts arrive. */
     std::unordered_map<Hash, Hash> responseFor;
 
-    /* Incremental trie of allRequests; gives record() the canonical
-       RequestSet hash for the whole-remaining edge in O(1). */
-    TracingDecisionGraph::TrieBuilder sessionRequestsTrie;
+    /* Incremental trie of all requests observed in this session.
+       Built via the new rst:: MutableNode + FrozenNodeCache pair:
+       inserts are O(depth) with cachedFrozen invalidation walking
+       the modified path; the persist walk at logResult only enqueues
+       subtrees not already known to the cache. */
+    trace::rst::MutableNode sessionRequestsMutable;
+    trace::rst::FrozenNodeCache sessionRequestsCache;
 
 
     /* State-creep canonicalisation record: for every fact that
@@ -594,7 +599,7 @@ public:
            parent's terminalCur from later ones. */
         sessionRootCell->addFact(selectorHash, responseHash, peekBarrier());
         responseFor.emplace(selectorHash, responseHash);
-        sessionRequestsTrie.insert(selectorHash);
+        sessionRequestsMutable.insert(selectorHash);
     }
 
     /**
@@ -660,7 +665,19 @@ public:
         auto resultNodeHash = TracingDecisionGraph::computeResponseHash(resultPayload);
         decisionGraph.insertResult(resultNodeHash, resultPayload);
 
-        sessionRequestsTrie.persist(decisionGraph);
+        {
+            /* Freeze the incrementally-built mutable trie, then walk
+               and enqueue any unpersisted subtree. Both steps reuse
+               unchanged branches via the cachedFrozen / persisted
+               flags, so a second logResult in the same session only
+               does work for facts recorded since the previous one. */
+            auto frozen = sessionRequestsMutable.freeze(sessionRequestsCache);
+            trace::rst::FrozenNodeCache::PersistSink sink =
+                [this](const Hash & h, std::string_view payload) {
+                    decisionGraph.persistRequestSetNode(h, payload);
+                };
+            sessionRequestsCache.persist(frozen, sink);
+        }
 
         Hash finalQ = qh.raw;
         /* #177 pull model: Terminal keyed at the completing Q's

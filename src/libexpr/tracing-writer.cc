@@ -169,7 +169,7 @@ void TracingWriter::logOuterObservation(
        populated obs). Each cell's chain needs its own fact so its
        factSetHash reflects the actual observations attributed to
        it. The writer-global side effects below (responseFor,
-       sessionRequestsTrie) are idempotent primitives, so writer-wide
+       sessionRequestsMutable) are idempotent primitives, so writer-wide
        dedupe falls out for free. */
     if (attributionCell) {
         /* State-creep canonicalisation: if this fact has a getAttr
@@ -198,7 +198,7 @@ void TracingWriter::logOuterObservation(
         bumpBarrier();
     }
     responseFor.emplace(reqHash, responseHash);
-    sessionRequestsTrie.insert(reqHash);
+    sessionRequestsMutable.insert(reqHash);
 }
 
 void TracingWriter::createCallbackCell(const nlohmann::json & applyQueryPayload)
