@@ -11,6 +11,7 @@
 #include <nlohmann/json.hpp>
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstdlib>
 #include <mutex>
@@ -219,6 +220,20 @@ private:
                     auto q = pending.lock();
                     while (q->empty() && !done.load())
                         q.wait(wakeup);
+                    /* Coalesce: if the queue is small, wait briefly for
+                       more work to accumulate before draining. Turns
+                       a stream of one-op batches (avg 1.9 ops/batch was
+                       observed in a NixOS eval) into fewer, larger
+                       transactions — cuts the per-batch BEGIN/COMMIT
+                       overhead proportionally. Timeout is short enough
+                       to not add meaningful latency to interactive
+                       workloads. Skip while done is set so shutdown
+                       stays prompt. */
+                    if (!done.load() && q->size() < 256) {
+                        q.wait_for(wakeup, std::chrono::milliseconds(2), [&] {
+                            return q->size() >= 256 || done.load();
+                        });
+                    }
                     batch = std::move(*q);
                     q->clear();
                 }

@@ -248,6 +248,7 @@ private:
                             "XOR-CANCEL RISK: req=%s appears in cell.facts AND ancestor.facts",
                             req.to_string(HashFormat::Base16, false).substr(0, 12).c_str());
         }
+
         /* Full chain: cell + ancestors, from ∅. */
         std::map<Hash, std::pair<uint64_t, Hash>> allFacts;
         for (auto c = cell.get(); c; c = c->parent.get())
@@ -256,15 +257,66 @@ private:
         insertBarrieredChain(selectorHash,
             TracingDecisionGraph::emptySetHash(), allFacts);
 
-        /* Delta chain: cell's own facts, from parent.terminalCur.
-           Only useful when cell has a parent AND own facts to add;
-           otherwise the delta chain would be either unanchored or empty. */
+        /* Cell-topology delta chain: cell's own facts from
+           parent.terminalCur. Complements the structural chain below
+           — this covers callback-firing nesting where the
+           structural-parent isn't on the same cell. */
         if (cell->parent && !cell->facts.empty()) {
             std::map<Hash, std::pair<uint64_t, Hash>> ownFacts;
             for (auto & [req, entry] : cell->facts)
                 ownFacts.try_emplace(req, entry.barrier, entry.response);
             auto parentCur = cell->parent->factSetHash();
             insertBarrieredChain(selectorHash, parentCur, ownFacts);
+        }
+
+        /* Structural chain (task 1a): pure-getter chain case. If this
+           Selector is a getter (getAttr/getListElem) whose parent is
+           also a getter recorded on this cell, insert a delta chain
+           from parent's oldest terminalCur, folding only facts added
+           after parent's record moment (barrier > barrierAtRecord).
+
+           Additive: the ∅-chain remains, so a walker that isn't already
+           at parent's terminal can still bootstrap from ∅. On big
+           NixOS workloads dropping the ∅-chain when structural fires
+           (task 1b, WIP) cuts Ask count ~60% and cold time ~6x but
+           regresses warm-DISALLOW on real NixOS — walker's trace-
+           continuing isn't yet robust enough to always be at parent's
+           terminal when starting a child's walk.
+
+           Limited to getter→getter to avoid cross-cell interactions
+           at Apply/CallbackApply boundaries. */
+        if (auto sel = decisionGraph.selectorPool.find(selectorHash)) {
+            std::optional<Hash> parentHash;
+            std::visit(overloaded{
+                [&](const trace::SelectorGetAttr & g) {
+                    std::visit(overloaded{
+                        [&](const trace::SelectorGetAttr &)     { parentHash = g.parent->cachedHash; },
+                        [&](const trace::SelectorGetListElem &) { parentHash = g.parent->cachedHash; },
+                        [&](const auto &) {}
+                    }, g.parent->node);
+                },
+                [&](const trace::SelectorGetListElem & g) {
+                    std::visit(overloaded{
+                        [&](const trace::SelectorGetAttr &)     { parentHash = g.parent->cachedHash; },
+                        [&](const trace::SelectorGetListElem &) { parentHash = g.parent->cachedHash; },
+                        [&](const auto &) {}
+                    }, g.parent->node);
+                },
+                [&](const auto &) {}
+            }, (**sel).node);
+            if (parentHash) {
+                auto it = cell->firstTerminalCurs.find(*parentHash);
+                if (it != cell->firstTerminalCurs.end()) {
+                    std::map<Hash, std::pair<uint64_t, Hash>> deltaFacts;
+                    for (auto c = cell.get(); c; c = c->parent.get())
+                        for (auto & [req, entry] : c->facts)
+                            if (entry.barrier > it->second.barrierAtRecord)
+                                deltaFacts.try_emplace(req, entry.barrier, entry.response);
+                    if (!deltaFacts.empty())
+                        insertBarrieredChain(selectorHash,
+                            it->second.terminalCur, deltaFacts);
+                }
+            }
         }
     }
 
@@ -463,8 +515,13 @@ public:
            group (one value probe per group). Walker dispatches each
            edge's requestSet live, folds, reaches next cur; a divergent
            live response at any barrier misses cleanly there. */
-        if (cell)
+        if (cell) {
             insertBarrieredAskChain(qh.raw, cell);
+            /* task 1a: record oldest terminalCur per Selector on the
+               cell so descendant Qs can anchor structural chains here. */
+            cell->firstTerminalCurs.try_emplace(qh.raw,
+                ArgCell::FirstTerminalRecord{terminalCur, peekBarrier()});
+        }
         decisionGraph.insertTerminal(qh.raw, terminalCur, resultNodeHash);
         tracingCacheLog(
             "writer logQueryResult: Q=%s anchor=%s -> result=%s",
@@ -600,8 +657,13 @@ public:
         /* #187 principle 9: barrier-based Ask chain (see comment on
            insertBarrieredAskChain). One Ask edge per barrier group,
            each carrying at most one value probe. */
-        if (cell)
+        if (cell) {
             insertBarrieredAskChain(finalQ, cell);
+            /* task 1a: record oldest terminalCur per Selector on the
+               cell so descendant Qs can anchor structural chains here. */
+            cell->firstTerminalCurs.try_emplace(finalQ,
+                ArgCell::FirstTerminalRecord{terminalCur, peekBarrier()});
+        }
         decisionGraph.insertTerminal(finalQ, terminalCur, resultNodeHash);
 
         return TriePosition{

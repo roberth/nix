@@ -111,6 +111,30 @@ struct ArgCell : std::enable_shared_from_this<ArgCell>
         const pointer. */
     mutable std::map<Hash, FactEntry> facts;
 
+    /** Per-Selector oldest recorded terminalCur on this cell — used
+        as an anchor for structural-parent-based landing chains.
+        Populated by logResult/logQueryResult on the cell the Q's
+        Terminal is written to; each Selector stores its FIRST
+        (chronologically oldest) terminalCur so structural chains
+        for later child Qs on the same cell anchor at a state the
+        walker can reach cheaply.
+
+        `barrierAtRecord` snapshots writer.peekBarrier() at Q's
+        record moment. A child Q's structural delta chain includes
+        only facts with barrier > barrierAtRecord — facts folded
+        into parent's terminalCur are excluded, avoiding XOR-cancel.
+
+        Lives on the cell (not global) because the same Selector on
+        different argument cells resolves to different terminalCurs.
+
+        Mutable for the same reason as `facts`. */
+    struct FirstTerminalRecord
+    {
+        TracingDecisionGraph::SetHash terminalCur;
+        uint64_t barrierAtRecord;
+    };
+    mutable std::map<Hash, FirstTerminalRecord> firstTerminalCurs;
+
     /** Insert a (request, response) fact with an optional barrier
         stamp. Idempotent per request key (first stamp wins).
 
