@@ -11,14 +11,14 @@ namespace nix::trace::rst {
 class RequestSetTrieTest : public ::testing::Test
 {
 protected:
-    static Hash h(uint64_t seed)
+    static TracingHash h(uint64_t seed)
     {
-        return tracingHash("req#" + std::to_string(seed)).toNixHash();
+        return tracingHash("req#" + std::to_string(seed));
     }
 
-    static std::vector<Hash> hashes(size_t n)
+    static std::vector<TracingHash> hashes(size_t n)
     {
-        std::vector<Hash> out;
+        std::vector<TracingHash> out;
         out.reserve(n);
         for (size_t i = 0; i < n; ++i)
             out.push_back(h(i));
@@ -26,13 +26,11 @@ protected:
     }
 
     /* XOR-fold a set of member hashes into an identity value. */
-    static Hash xorMembers(const std::vector<Hash> & members)
+    static TracingHash xorMembers(const std::vector<TracingHash> & members)
     {
-        Hash acc(HashAlgorithm::SHA256);
-        acc.hashSize = tracingHashSize;
+        TracingHash acc = TracingHash::zero();
         for (const auto & m : members)
-            for (size_t i = 0; i < tracingHashSize; ++i)
-                acc.hash[i] ^= m.hash[i];
+            acc.xorInPlace(m);
         return acc;
     }
 };
@@ -145,8 +143,8 @@ TEST_F(RequestSetTrieTest, IdentityInvariantUnderInsertOrder)
 {
     FrozenNodeCache cache;
     /* Same set, different insertion orders → same interned pointer. */
-    std::vector<Hash> forward = hashes(300);
-    std::vector<Hash> reverse(forward.rbegin(), forward.rend());
+    std::vector<TracingHash> forward = hashes(300);
+    std::vector<TracingHash> reverse(forward.rbegin(), forward.rend());
     auto a = cache.internSet(forward);
     auto b = cache.internSet(reverse);
     EXPECT_EQ(a, b);
@@ -413,7 +411,7 @@ TEST_F(RequestSetTrieTest, DifferenceSameSetIsEmpty)
 TEST_F(RequestSetTrieTest, DifferenceProperSubsetLosesShared)
 {
     FrozenNodeCache cache;
-    std::vector<Hash> full, sub;
+    std::vector<TracingHash> full, sub;
     for (size_t i = 0; i < 30; ++i) full.push_back(h(i));
     for (size_t i = 0; i < 10; ++i) sub.push_back(h(i));
     auto fullN = cache.internSet(full);
@@ -447,7 +445,7 @@ TEST_F(RequestSetTrieTest, IntersectionSameSetIsSelf)
 TEST_F(RequestSetTrieTest, IntersectionDisjointIsEmpty)
 {
     FrozenNodeCache cache;
-    std::vector<Hash> aM, bM;
+    std::vector<TracingHash> aM, bM;
     for (size_t i = 0; i < 20; ++i) aM.push_back(h(i));
     for (size_t i = 100; i < 120; ++i) bM.push_back(h(i));
     auto a = cache.internSet(aM);
@@ -460,7 +458,7 @@ TEST_F(RequestSetTrieTest, IntersectionDisjointIsEmpty)
 TEST_F(RequestSetTrieTest, IntersectionSubsetReturnsSubset)
 {
     FrozenNodeCache cache;
-    std::vector<Hash> full, sub;
+    std::vector<TracingHash> full, sub;
     for (size_t i = 0; i < 30; ++i) full.push_back(h(i));
     for (size_t i = 0; i < 10; ++i) sub.push_back(h(i));
     auto fullN = cache.internSet(full);
@@ -472,7 +470,7 @@ TEST_F(RequestSetTrieTest, IntersectionSubsetReturnsSubset)
 TEST_F(RequestSetTrieTest, IntersectionPartialOverlap)
 {
     FrozenNodeCache cache;
-    std::vector<Hash> aM, bM;
+    std::vector<TracingHash> aM, bM;
     for (size_t i = 0; i < 30; ++i) aM.push_back(h(i));
     for (size_t i = 25; i < 60; ++i) bM.push_back(h(i));
     auto a = cache.internSet(aM);
@@ -503,7 +501,7 @@ TEST_F(RequestSetTrieTest, UnionWithEmptyIsSelf)
 TEST_F(RequestSetTrieTest, UnionDisjointCombines)
 {
     FrozenNodeCache cache;
-    std::vector<Hash> aM, bM;
+    std::vector<TracingHash> aM, bM;
     for (size_t i = 0; i < 20; ++i) aM.push_back(h(i));
     for (size_t i = 100; i < 120; ++i) bM.push_back(h(i));
     auto a = cache.internSet(aM);
@@ -518,7 +516,7 @@ TEST_F(RequestSetTrieTest, UnionDisjointCombines)
 TEST_F(RequestSetTrieTest, UnionSupersetSubsetIsSuperset)
 {
     FrozenNodeCache cache;
-    std::vector<Hash> full, sub;
+    std::vector<TracingHash> full, sub;
     for (size_t i = 0; i < 30; ++i) full.push_back(h(i));
     for (size_t i = 0; i < 10; ++i) sub.push_back(h(i));
     auto fullN = cache.internSet(full);
@@ -531,7 +529,7 @@ TEST_F(RequestSetTrieTest, InsertMembersEmptyIsIdentity)
 {
     FrozenNodeCache cache;
     auto root = cache.internSet(hashes(50));
-    std::vector<Hash> empty;
+    std::vector<TracingHash> empty;
     EXPECT_EQ(insertSortedMembers(root, empty, cache), root);
 }
 
@@ -549,7 +547,7 @@ TEST_F(RequestSetTrieTest, InsertMembersEqualsInternSetOfUnion)
     FrozenNodeCache cache;
     auto base = hashes(80);
     auto baseNode = cache.internSet(base);
-    std::vector<Hash> extras;
+    std::vector<TracingHash> extras;
     for (uint64_t i = 1000; i < 1030; ++i) extras.push_back(h(i));
     std::sort(extras.begin(), extras.end());
     auto viaInsert = insertSortedMembers(baseNode, extras, cache);
@@ -567,13 +565,13 @@ TEST_F(RequestSetTrieTest, InsertMembersProducesNodesReadyToPersist)
        the sink. */
     FrozenNodeCache cache;
     auto base = cache.internSet(hashes(200));
-    std::vector<Hash> initialWrites;
+    std::vector<TracingHash> initialWrites;
     FrozenNodeCache::PersistSink sink =
-        [&](const Hash & h, std::string_view) { initialWrites.push_back(h); };
+        [&](const TracingHash & h, std::string_view) { initialWrites.push_back(h); };
     cache.persist(base, sink);
     auto initialCount = initialWrites.size();
 
-    std::vector<Hash> extras;
+    std::vector<TracingHash> extras;
     for (uint64_t i = 1000; i < 1005; ++i) extras.push_back(h(i));
     std::sort(extras.begin(), extras.end());
     auto extended = insertSortedMembers(base, extras, cache);
@@ -588,7 +586,7 @@ TEST_F(RequestSetTrieTest, InsertMembersProducesNodesReadyToPersist)
 TEST_F(RequestSetTrieTest, UnionCommutative)
 {
     FrozenNodeCache cache;
-    std::vector<Hash> aM, bM;
+    std::vector<TracingHash> aM, bM;
     for (size_t i = 0; i < 40; ++i) aM.push_back(h(i));
     for (size_t i = 20; i < 60; ++i) bM.push_back(h(i));
     auto a = cache.internSet(aM);
@@ -600,7 +598,7 @@ TEST_F(RequestSetTrieTest, IntersectionCommutative)
 {
     FrozenNodeCache cache;
     auto a = cache.internSet(hashes(50));
-    std::vector<Hash> bM;
+    std::vector<TracingHash> bM;
     for (size_t i = 3; i < 45; ++i) bM.push_back(h(i));
     auto b = cache.internSet(bM);
     EXPECT_EQ(intersection(a, b, cache), intersection(b, a, cache));
@@ -625,9 +623,9 @@ TEST_F(RequestSetTrieTest, PersistWalksTreeOnce)
     };
     count(*root, count);
 
-    std::vector<Hash> writes;
+    std::vector<TracingHash> writes;
     FrozenNodeCache::PersistSink sink =
-        [&](const Hash & h, std::string_view) { writes.push_back(h); };
+        [&](const TracingHash & h, std::string_view) { writes.push_back(h); };
     cache.persist(root, sink);
     EXPECT_EQ(writes.size(), total);
 
@@ -641,9 +639,9 @@ TEST_F(RequestSetTrieTest, PersistIncrementalOnlyWritesNewSubtrees)
 {
     FrozenNodeCache cache;
     auto rootA = cache.internSet(hashes(200));
-    std::vector<Hash> initialWrites;
+    std::vector<TracingHash> initialWrites;
     FrozenNodeCache::PersistSink sink =
-        [&](const Hash & h, std::string_view) { initialWrites.push_back(h); };
+        [&](const TracingHash & h, std::string_view) { initialWrites.push_back(h); };
     cache.persist(rootA, sink);
     auto initialCount = initialWrites.size();
 

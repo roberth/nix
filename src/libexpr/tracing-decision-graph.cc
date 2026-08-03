@@ -475,7 +475,7 @@ struct TracingDecisionGraph::State
        subtrees (via content addressing) hit the same node hashes;
        caching per-node lets second-and-later getRequestSet calls reuse
        the SQLite reads from the first. */
-    std::unordered_map<Hash, std::optional<std::string>> requestSetNodePayloadCache;
+    std::unordered_map<TracingHash, std::optional<std::string>> requestSetNodePayloadCache;
 
     /* In-memory RequestSet trie cache. Shared across all insertRequestSet
        callers so structurally-overlapping request sets reuse identical
@@ -968,16 +968,12 @@ bool TracingDecisionGraph::isApplyRequest(const RequestHash & h)
 trace::rst::FrozenNodePtr
 TracingDecisionGraph::internRequestSet(std::vector<RequestHash> members)
 {
-    std::vector<Hash> hashMembers;
-    hashMembers.reserve(members.size());
-    for (const auto & m : members)
-        hashMembers.push_back(m.toNixHash());
     auto state(_state->lock());
-    return state->requestSetTrieCache.internSet(std::move(hashMembers));
+    return state->requestSetTrieCache.internSet(std::move(members));
 }
 
 std::optional<trace::rst::FrozenNodePtr>
-TracingDecisionGraph::tryFindRequestSet(const Hash & identity)
+TracingDecisionGraph::tryFindRequestSet(const TracingHash & identity)
 {
     auto state(_state->lock());
     return state->requestSetTrieCache.lookup(identity);
@@ -988,13 +984,9 @@ TracingDecisionGraph::insertSortedMembers(
     const trace::rst::FrozenNodePtr & node,
     std::span<const RequestHash> sortedMembers)
 {
-    std::vector<Hash> hashMembers;
-    hashMembers.reserve(sortedMembers.size());
-    for (const auto & m : sortedMembers)
-        hashMembers.push_back(m.toNixHash());
     auto state(_state->lock());
     return trace::rst::insertSortedMembers(
-        node, std::span<const Hash>(hashMembers), state->requestSetTrieCache);
+        node, sortedMembers, state->requestSetTrieCache);
 }
 
 TracingDecisionGraph::SetHash
@@ -1004,16 +996,16 @@ TracingDecisionGraph::insertRequestSet(trace::rst::FrozenNodePtr node)
         return emptySetHash();
     auto state(_state->lock());
     trace::rst::FrozenNodeCache::PersistSink sink =
-        [&](const Hash & nodeHash, std::string_view payload) {
+        [&](const TracingHash & nodeHash, std::string_view payload) {
             auto [it, inserted] = state->requestSetNodePayloadCache.try_emplace(
                 nodeHash, std::optional<std::string>{std::string(payload)});
             if (!inserted)
                 return;
             state->writeQueue->enqueue(
-                WriteInsertRequestSetNode{nodeHash, std::string(payload)});
+                WriteInsertRequestSetNode{nodeHash.toNixHash(), std::string(payload)});
         };
     state->requestSetTrieCache.persist(node, sink);
-    return TracingHash::of(node->hash);
+    return node->hash;
 }
 
 TracingDecisionGraph::SetHash
@@ -1040,14 +1032,14 @@ TracingHash TracingDecisionGraph::xorFactIntoHash(
 }
 
 void TracingDecisionGraph::persistRequestSetNode(
-    const Hash & nodeHash, std::string_view payload)
+    const TracingHash & nodeHash, std::string_view payload)
 {
     auto state(_state->lock());
     auto [it, inserted] = state->requestSetNodePayloadCache.try_emplace(
         nodeHash, std::optional<std::string>{std::string(payload)});
     if (!inserted)
         return;
-    state->writeQueue->enqueue(WriteInsertRequestSetNode{nodeHash, std::string(payload)});
+    state->writeQueue->enqueue(WriteInsertRequestSetNode{nodeHash.toNixHash(), std::string(payload)});
 }
 
 TracingDecisionGraph::SetHash
@@ -1062,7 +1054,7 @@ TracingDecisionGraph::extendRequestSet(const SetHash & parent, const std::vector
     if (parentNode)
         mut = trace::rst::MutableNode(*parentNode);
     for (const auto & e : extras)
-        mut.insert(e.toNixHash());
+        mut.insert(e);
     auto node = [&] {
         auto state(_state->lock());
         return mut.freeze(state->requestSetTrieCache);
@@ -1083,7 +1075,7 @@ TracingDecisionGraph::extendFactSet(const SetHash & parent, const std::vector<Fa
    makes shared subtrees (the dominant case) free after the first
    visit, regardless of which RequestSet root they were reached
    through. */
-std::optional<std::string> TracingDecisionGraph::getRequestSetNodePayload(const Hash & nodeHash)
+std::optional<std::string> TracingDecisionGraph::getRequestSetNodePayload(const TracingHash & nodeHash)
 {
     {
         auto state(_state->lock());
@@ -1095,7 +1087,7 @@ std::optional<std::string> TracingDecisionGraph::getRequestSetNodePayload(const 
     {
         auto state(_state->lock());
         auto query = state->selectRequestSetNode.use();
-        dg_bindBlob(query, dg_hashToBlob(nodeHash));
+        dg_bindBlob(query, dg_hashToBlob(nodeHash.toNixHash()));
         if (query.next())
             payload = query.getBlob(0);
     }
@@ -1118,12 +1110,7 @@ TracingDecisionGraph::getRequestSet(const SetHash & h)
     auto node = getRequestSetNode(h);
     if (!node)
         return std::nullopt;
-    auto raw = (*node)->allMembers();
-    std::vector<RequestHash> out;
-    out.reserve(raw.size());
-    for (const auto & m : raw)
-        out.push_back(TracingHash::of(m));
-    return out;
+    return (*node)->allMembers();
 }
 
 std::optional<trace::rst::FrozenNodePtr>
@@ -1134,16 +1121,15 @@ TracingDecisionGraph::getRequestSetNode(const SetHash & h)
         auto state(_state->lock());
         return state->requestSetTrieCache.internSet({});
     }
-    auto hNix = h.toNixHash();
     auto state(_state->lock());
     /* Quick hit: node already in the trie cache. */
-    if (auto existing = state->requestSetTrieCache.lookup(hNix))
+    if (auto existing = state->requestSetTrieCache.lookup(h))
         return *existing;
     /* Load top-down: fetch our payload, recursively load children (so
        they're interned before we intern ourselves — required by
        FrozenNodeCache::intern's contract). */
-    std::function<std::optional<trace::rst::FrozenNodePtr>(const Hash &)> loadNode;
-    loadNode = [&](const Hash & nodeHash) -> std::optional<trace::rst::FrozenNodePtr> {
+    std::function<std::optional<trace::rst::FrozenNodePtr>(const TracingHash &)> loadNode;
+    loadNode = [&](const TracingHash & nodeHash) -> std::optional<trace::rst::FrozenNodePtr> {
         if (auto existing = state->requestSetTrieCache.lookup(nodeHash))
             return *existing;
         /* Fetch payload from the payload cache (populated on write) or
@@ -1156,7 +1142,7 @@ TracingDecisionGraph::getRequestSetNode(const SetHash & h)
             payload = it->second;
         else {
             auto query = state->selectRequestSetNode.use();
-            dg_bindBlob(query, dg_hashToBlob(nodeHash));
+            dg_bindBlob(query, dg_hashToBlob(nodeHash.toNixHash()));
             if (query.next())
                 payload = query.getBlob(0);
             state->requestSetNodePayloadCache.emplace(nodeHash, payload);
@@ -1170,7 +1156,7 @@ TracingDecisionGraph::getRequestSetNode(const SetHash & h)
                 return std::nullopt;
         return state->requestSetTrieCache.intern(nodeHash, *payload);
     };
-    return loadNode(hNix);
+    return loadNode(h);
 }
 
 std::optional<std::vector<TracingDecisionGraph::Fact>>
@@ -1336,7 +1322,7 @@ void TracingDecisionGraph::insertAskSplitting(
            identity is already cached (heavy reuse under matching-until-
            divergence). */
         trace::rst::FrozenNodePtr remainingNode = [&] {
-            if (auto existing = tryFindRequestSet(remainingXor.toNixHash()))
+            if (auto existing = tryFindRequestSet(remainingXor))
                 return *existing;
             std::vector<RequestHash> vec;
             vec.reserve(remaining.size());
@@ -1369,12 +1355,7 @@ void TracingDecisionGraph::insertAskSplitting(
                rs. Route through the trie node we already have from
                getRequestSetNode above — allMembers is memoised on the
                FrozenNode, so no re-walk on repeat visits. */
-            std::vector<RequestHash> exAllMembers;
-            {
-                auto raw = exNode->allMembers();
-                exAllMembers.reserve(raw.size());
-                for (const auto & h : raw) exAllMembers.push_back(TracingHash::of(h));
-            }
+            auto exAllMembers = exNode->allMembers();
             auto exUseful = usefulDispatch(exAllMembers, dispatchedSoFar);
             if (exUseful.empty())
                 continue;
@@ -1398,7 +1379,7 @@ void TracingDecisionGraph::insertAskSplitting(
             std::vector<Fact> tailNew;
             tailNew.reserve(remaining.size() - sharedSize);
             for (const auto & f : remaining) {
-                if (sharedNode->contains(f.request.toNixHash())) {
+                if (sharedNode->contains(f.request)) {
                     intermediate = xorFactIntoHash(intermediate, f.request, f.response);
                     consumedXor.xorInPlace(f.request);
                 } else {
@@ -1430,14 +1411,14 @@ void TracingDecisionGraph::insertAskSplitting(
                    identity shows up across splits and hits often. */
                 TracingHash tailXor = emptySetHash();
                 for (const auto & req : exUseful)
-                    if (!sharedNode->contains(req.toNixHash()))
+                    if (!sharedNode->contains(req))
                         tailXor.xorInPlace(req);
-                auto tailNode = tryFindRequestSet(tailXor.toNixHash());
+                auto tailNode = tryFindRequestSet(tailXor);
                 if (!tailNode) {
                     std::vector<RequestHash> tail;
                     tail.reserve(exUseful.size() - sharedSize);
                     for (const auto & req : exUseful)
-                        if (!sharedNode->contains(req.toNixHash()))
+                        if (!sharedNode->contains(req))
                             tail.push_back(req);
                     tailNode = internRequestSet(std::move(tail));
                 }
@@ -1480,7 +1461,7 @@ void TracingDecisionGraph::insertAskSplitting(
         return;
     /* XOR-first-lookup fast path — remainingXor is maintained
        incrementally by the trySplitOne loop, so we already have it. */
-    auto newNode = tryFindRequestSet(remainingXor.toNixHash());
+    auto newNode = tryFindRequestSet(remainingXor);
     if (!newNode) {
         std::vector<RequestHash> newReqs;
         newReqs.reserve(remaining.size());

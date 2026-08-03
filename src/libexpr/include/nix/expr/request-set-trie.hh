@@ -23,6 +23,7 @@
  */
 
 #include "nix/expr/tracing-decision-graph.hh"
+#include "nix/expr/trace-ids.hh"
 #include "nix/util/fun.hh"
 #include "nix/util/hash.hh"
 #include "nix/util/ref.hh"
@@ -49,10 +50,10 @@ constexpr size_t RADIX = 1u << RADIX_BITS;
 constexpr size_t LEAF_MAX_MEMBERS = RADIX;
 
 /** Slot index for `h` at HAMT depth `d`. Depth 0 uses the top nibble
-    of hash[0]; depth 1 uses the low nibble; depth 2 the top nibble of
-    hash[1]; and so on. Callers walking down the tree pass their
+    of bytes[0]; depth 1 uses the low nibble; depth 2 the top nibble of
+    bytes[1]; and so on. Callers walking down the tree pass their
     current depth. */
-size_t slotFor(const Hash & h, size_t depth);
+size_t slotFor(const TracingHash & h, size_t depth);
 
 class FrozenNode;
 /** Non-nullable shared reference to a FrozenNode. Held wherever a
@@ -68,7 +69,7 @@ public:
     /** Flat sorted (lex-ascending) member list. Size ≤ LEAF_MAX_MEMBERS. */
     struct Leaf
     {
-        std::vector<Hash> members;
+        std::vector<TracingHash> members;
     };
 
     /** Sparse RADIX-slot array. Empty slots are `nullptr`. Slot index
@@ -92,7 +93,7 @@ public:
     };
 
     std::variant<Leaf, Internal> body;
-    Hash hash{HashAlgorithm::SHA256};
+    TracingHash hash{};
 
     /** Set true by `FrozenNodeCache::persist` once the payload has been
         enqueued for the writer thread. Already-persisted subtrees
@@ -102,7 +103,7 @@ public:
     /** Memoized flat member list. Populated on first `allMembers()`
         call and reused thereafter — since FrozenNodes are interned,
         one materialisation per unique set. */
-    mutable std::optional<std::vector<Hash>> cachedAllMembers;
+    mutable std::optional<std::vector<TracingHash>> cachedAllMembers;
 
     bool isLeaf() const noexcept { return std::holds_alternative<Leaf>(body); }
     const Leaf & asLeaf() const { return std::get<Leaf>(body); }
@@ -112,7 +113,7 @@ public:
     size_t size() const noexcept;
 
     /** Membership check by hash. O(depth) — walks slot-by-slot. */
-    bool contains(const Hash & h) const noexcept;
+    bool contains(const TracingHash & h) const noexcept;
 
     /** Serialize to DB payload bytes.
         Leaf:     [0x00] hash_1 hash_2 ... hash_n
@@ -124,12 +125,12 @@ public:
     /** Materialize all members into a flat vector via recursive walk.
         Order is lex-ascending because slot indices at every depth
         preserve the top-bit ordering. */
-    std::vector<Hash> allMembers() const;
+    std::vector<TracingHash> allMembers() const;
 
     FrozenNode() = default;
 };
 
-/** Global cache mapping `Hash → FrozenNodePtr`. Deduplicates across
+/** Global cache mapping `TracingHash → FrozenNodePtr`. Deduplicates across
     both freshly-built subtrees (writer) and payload-decoded subtrees
     (DB read). */
 class FrozenNodeCache
@@ -137,21 +138,21 @@ class FrozenNodeCache
 public:
     /** Returns the cached FrozenNodePtr for `hash`, or nullopt if not
         cached. */
-    std::optional<FrozenNodePtr> lookup(const Hash & hash) const;
+    std::optional<FrozenNodePtr> lookup(const TracingHash & hash) const;
 
     /** Reconstitute a node from DB payload bytes and its precomputed
         hash. Throws if the payload references child hashes that
         aren't already cached (readers walk children-before-parent). */
-    FrozenNodePtr intern(const Hash & hash, std::string_view payload);
+    FrozenNodePtr intern(const TracingHash & hash, std::string_view payload);
 
     /** Build (or reuse) a HAMT-shaped set from the given members.
         Sorts + dedups internally. */
-    FrozenNodePtr internSet(std::vector<Hash> members);
+    FrozenNodePtr internSet(std::vector<TracingHash> members);
 
     /** Intern a Leaf from an already-sorted, dedup'd member list.
         Used by MutableNode::freeze to intern a mutable leaf without
         the internSet sort/dedup pass. */
-    FrozenNodePtr internLeafFromSorted(std::vector<Hash> sortedMembers);
+    FrozenNodePtr internLeafFromSorted(std::vector<TracingHash> sortedMembers);
 
     /** Intern an Internal from a pre-frozen slot array at the given
         depth. Used by MutableNode::freeze. Slots that are `nullptr`
@@ -170,16 +171,16 @@ public:
     /** Walk `root` post-order and call `sink(hash, payload)` for each
         node whose `persisted` bit is false, flipping it true. Already-
         persisted subtrees short-circuit. */
-    using PersistSink = fun<void(const Hash &, std::string_view)>;
+    using PersistSink = fun<void(const TracingHash &, std::string_view)>;
     void persist(const FrozenNodePtr & root, PersistSink & sink);
 
 private:
-    std::unordered_map<Hash, FrozenNodePtr> byHash;
+    std::unordered_map<TracingHash, FrozenNodePtr> byHash;
     size_t internAttemptCount = 0;
 
     /** Internal helper: build a subtree from a member range at the
         given HAMT depth. */
-    FrozenNodePtr build(std::vector<Hash> members, size_t depth);
+    FrozenNodePtr build(std::vector<TracingHash> members, size_t depth);
 };
 
 /** Mutable HAMT — an insertion buffer with COW from a frozen seed.
@@ -205,8 +206,8 @@ public:
         immediate copy, only the modified slot-path clones on insert. */
     explicit MutableNode(FrozenNodePtr root);
 
-    void insert(const Hash & h);
-    bool contains(const Hash & h) const noexcept;
+    void insert(const TracingHash & h);
+    bool contains(const TracingHash & h) const noexcept;
     size_t size() const noexcept;
 
     /** Freeze into a shared FrozenNodePtr; identity is the XOR of
@@ -219,7 +220,7 @@ private:
 };
 
 /** A \ B — members present in A but not in B. */
-std::vector<Hash> difference(const FrozenNode & a, const FrozenNode & b);
+std::vector<TracingHash> difference(const FrozenNode & a, const FrozenNode & b);
 
 /** A ⊆ B — every member of A is a member of B. */
 bool isSubset(const FrozenNode & a, const FrozenNode & b);
@@ -241,7 +242,7 @@ FrozenNodePtr union_(const FrozenNodePtr & a, const FrozenNodePtr & b, FrozenNod
     empty. Used by DB loaders that walk children-before-parent to
     satisfy `FrozenNodeCache::intern`'s "children must be cached"
     precondition. */
-std::vector<Hash> childHashesInPayload(std::string_view payload);
+std::vector<TracingHash> childHashesInPayload(std::string_view payload);
 
 /** Insert `sortedMembers` (**must be sorted lex-ascending and deduped**)
     into `node`, returning the resulting FrozenNodePtr. Walks the target
@@ -261,7 +262,7 @@ std::vector<Hash> childHashesInPayload(std::string_view payload);
     sorted-deduped member vectors in this codebase. */
 FrozenNodePtr insertSortedMembers(
     const FrozenNodePtr & node,
-    std::span<const Hash> sortedMembers,
+    std::span<const TracingHash> sortedMembers,
     FrozenNodeCache & cache);
 
 } // namespace nix::trace::rst

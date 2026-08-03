@@ -208,7 +208,7 @@ public:
        vector) can try this first — under matching-until-divergence,
        many rs identities are reused across chains, and a hit skips
        the vector build + internSet entirely. */
-    std::optional<trace::rst::FrozenNodePtr> tryFindRequestSet(const Hash & identity);
+    std::optional<trace::rst::FrozenNodePtr> tryFindRequestSet(const TracingHash & identity);
 
     /* Insert `sortedMembers` (sorted+deduped) into `node`, producing a
        new FrozenNodePtr with `persisted=false` on newly-created nodes.
@@ -395,7 +395,7 @@ public:
     /* Persist one trie node by hash. Idempotent (INSERT OR IGNORE +
        in-process cache short-circuit). Called from the request-set
        trie's persist walk (see request-set-trie.hh). */
-    void persistRequestSetNode(const Hash & nodeHash, std::string_view payload);
+    void persistRequestSetNode(const TracingHash & nodeHash, std::string_view payload);
 
     /* ─────────────────────────────────────────────────────────────────
        Maintenance
@@ -412,7 +412,7 @@ public:
     /* Fetch a raw stored RequestSet node payload by its hash. Callers
        are typically the rst layer's DB loader; not intended for
        general use. */
-    std::optional<std::string> getRequestSetNodePayload(const Hash & nodeHash);
+    std::optional<std::string> getRequestSetNodePayload(const TracingHash & nodeHash);
 };
 
 template<typename Q>

@@ -209,7 +209,7 @@ private:
             }
             if (anySubstituted) {
                 trace::rst::FrozenNodePtr altNode = [&] {
-                    if (auto existing = decisionGraph.tryFindRequestSet(altXor.toNixHash()))
+                    if (auto existing = decisionGraph.tryFindRequestSet(altXor))
                         return *existing;
                     /* Miss: materialise the vector and intern. */
                     std::vector<TracingHash> altReqHashes;
@@ -610,7 +610,7 @@ public:
            parent's terminalCur from later ones. */
         sessionRootCell->addFact(selectorHash, responseHash, peekBarrier());
         responseFor.emplace(selectorHash, responseHash);
-        sessionRequestsMutable.insert(selectorHash.toNixHash());
+        sessionRequestsMutable.insert(selectorHash);
     }
 
     /**
@@ -684,7 +684,7 @@ public:
                does work for facts recorded since the previous one. */
             auto frozen = sessionRequestsMutable.freeze(sessionRequestsCache);
             trace::rst::FrozenNodeCache::PersistSink sink =
-                [this](const Hash & h, std::string_view payload) {
+                [this](const TracingHash & h, std::string_view payload) {
                     decisionGraph.persistRequestSetNode(h, payload);
                 };
             sessionRequestsCache.persist(frozen, sink);

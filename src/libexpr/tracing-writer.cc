@@ -198,7 +198,7 @@ void TracingWriter::logOuterObservation(
         bumpBarrier();
     }
     responseFor.emplace(reqHash, responseHash);
-    sessionRequestsMutable.insert(reqHash.toNixHash());
+    sessionRequestsMutable.insert(reqHash);
 }
 
 void TracingWriter::createCallbackCell(const nlohmann::json & applyQueryPayload)

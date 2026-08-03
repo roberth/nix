@@ -10,31 +10,18 @@ namespace nix::trace::rst {
    Bit-group / identity primitives
    ───────────────────────────────────────────────────────────────────── */
 
-size_t slotFor(const Hash & h, size_t depth)
+size_t slotFor(const TracingHash & h, size_t depth)
 {
     /* Each level consumes RADIX_BITS=4 bits, starting from the top of
-       hash[0]. Depth 0 → top nibble of byte 0; depth 1 → low nibble;
+       bytes[0]. Depth 0 → top nibble of byte 0; depth 1 → low nibble;
        depth 2 → top nibble of byte 1; etc. */
     size_t byte = depth / 2;
     bool highNibble = (depth % 2) == 0;
-    unsigned char b = h.hash[byte];
+    unsigned char b = h.bytes[byte];
     return highNibble ? (b >> 4) : (b & 0x0F);
 }
 
-static Hash zeroHash()
-{
-    Hash z(HashAlgorithm::SHA256);
-    z.hashSize = tracingHashSize;
-    return z;
-}
-
-static void xorInto(Hash & acc, const Hash & other)
-{
-    for (size_t i = 0; i < tracingHashSize; ++i)
-        acc.hash[i] ^= other.hash[i];
-}
-
-static std::vector<Hash> sortAndDedup(std::vector<Hash> members)
+static std::vector<TracingHash> sortAndDedup(std::vector<TracingHash> members)
 {
     std::sort(members.begin(), members.end());
     members.erase(std::unique(members.begin(), members.end()), members.end());
@@ -45,13 +32,13 @@ static std::vector<Hash> sortAndDedup(std::vector<Hash> members)
    Payload encoding
    ───────────────────────────────────────────────────────────────────── */
 
-static std::string leafPayload(const std::vector<Hash> & sortedMembers)
+static std::string leafPayload(const std::vector<TracingHash> & sortedMembers)
 {
     std::string out;
-    out.reserve(1 + sortedMembers.size() * tracingHashSize);
+    out.reserve(1 + sortedMembers.size() * TracingHash::size);
     out.push_back(char(0x00));
     for (const auto & m : sortedMembers)
-        out.append(reinterpret_cast<const char *>(m.hash), m.hashSize);
+        out.append(reinterpret_cast<const char *>(m.bytes.data()), TracingHash::size);
     return out;
 }
 
@@ -68,15 +55,15 @@ static std::string internalPayload(uint8_t depth, const FrozenNode::Internal & i
             ++populated;
         }
     std::string out;
-    out.reserve(4 + populated * tracingHashSize);
+    out.reserve(4 + populated * TracingHash::size);
     out.push_back(char(0x01));
     out.push_back(char(depth));
     out.push_back(char(bitmap & 0xFF));
     out.push_back(char((bitmap >> 8) & 0xFF));
     for (size_t i = 0; i < RADIX; ++i)
         if (inter.slots[i])
-            out.append(reinterpret_cast<const char *>(inter.slots[i]->hash.hash),
-                       inter.slots[i]->hash.hashSize);
+            out.append(reinterpret_cast<const char *>(inter.slots[i]->hash.bytes.data()),
+                       TracingHash::size);
     return out;
 }
 
@@ -95,7 +82,7 @@ size_t FrozenNode::size() const noexcept
     return n;
 }
 
-bool FrozenNode::contains(const Hash & h) const noexcept
+bool FrozenNode::contains(const TracingHash & h) const noexcept
 {
     if (isLeaf()) {
         const auto & m = asLeaf().members;
@@ -115,11 +102,11 @@ std::string FrozenNode::toPayload() const
     return internalPayload(asInternal().depth, asInternal());
 }
 
-std::vector<Hash> FrozenNode::allMembers() const
+std::vector<TracingHash> FrozenNode::allMembers() const
 {
     if (cachedAllMembers)
         return *cachedAllMembers;
-    std::vector<Hash> out;
+    std::vector<TracingHash> out;
     out.reserve(size());
     auto walk = [&](const FrozenNode & node, auto & self) -> void {
         if (node.isLeaf()) {
@@ -140,7 +127,7 @@ std::vector<Hash> FrozenNode::allMembers() const
    FrozenNodeCache — lookup / intern / build
    ───────────────────────────────────────────────────────────────────── */
 
-std::optional<FrozenNodePtr> FrozenNodeCache::lookup(const Hash & hash) const
+std::optional<FrozenNodePtr> FrozenNodeCache::lookup(const TracingHash & hash) const
 {
     auto it = byHash.find(hash);
     if (it == byHash.end())
@@ -148,7 +135,7 @@ std::optional<FrozenNodePtr> FrozenNodeCache::lookup(const Hash & hash) const
     return it->second;
 }
 
-FrozenNodePtr FrozenNodeCache::intern(const Hash & hash, std::string_view payload)
+FrozenNodePtr FrozenNodeCache::intern(const TracingHash & hash, std::string_view payload)
 {
     if (auto existing = lookup(hash))
         return *existing;
@@ -158,14 +145,13 @@ FrozenNodePtr FrozenNodeCache::intern(const Hash & hash, std::string_view payloa
     sp->hash = hash;
     if (payload[0] == char(0x00)) {
         FrozenNode::Leaf leaf;
-        const size_t hs = tracingHashSize;
+        const size_t hs = TracingHash::size;
         if ((payload.size() - 1) % hs != 0)
             throw Error("rst: malformed frozen leaf (size=%d)", payload.size());
         leaf.members.reserve((payload.size() - 1) / hs);
         for (size_t i = 1; i + hs <= payload.size(); i += hs) {
-            Hash h(HashAlgorithm::SHA256);
-            h.hashSize = hs;
-            std::memcpy(h.hash, payload.data() + i, hs);
+            TracingHash h;
+            std::memcpy(h.bytes.data(), payload.data() + i, hs);
             leaf.members.push_back(h);
         }
         sp->body = std::move(leaf);
@@ -177,16 +163,15 @@ FrozenNodePtr FrozenNodeCache::intern(const Hash & hash, std::string_view payloa
                         | (static_cast<uint8_t>(payload[3]) << 8);
         FrozenNode::Internal inter;
         inter.depth = depth;
-        const size_t hs = tracingHashSize;
+        const size_t hs = TracingHash::size;
         size_t off = 4;
         for (size_t i = 0; i < RADIX; ++i) {
             if (!(bitmap & (uint16_t(1) << i)))
                 continue;
             if (off + hs > payload.size())
                 throw Error("rst: malformed frozen internal (truncated at slot %d)", i);
-            Hash childHash(HashAlgorithm::SHA256);
-            childHash.hashSize = hs;
-            std::memcpy(childHash.hash, payload.data() + off, hs);
+            TracingHash childHash;
+            std::memcpy(childHash.bytes.data(), payload.data() + off, hs);
             off += hs;
             auto childPtr = lookup(childHash);
             if (!childPtr)
@@ -204,16 +189,16 @@ FrozenNodePtr FrozenNodeCache::intern(const Hash & hash, std::string_view payloa
     return r;
 }
 
-FrozenNodePtr FrozenNodeCache::internSet(std::vector<Hash> members)
+FrozenNodePtr FrozenNodeCache::internSet(std::vector<TracingHash> members)
 {
     return build(sortAndDedup(std::move(members)), 0);
 }
 
-FrozenNodePtr FrozenNodeCache::internLeafFromSorted(std::vector<Hash> sortedMembers)
+FrozenNodePtr FrozenNodeCache::internLeafFromSorted(std::vector<TracingHash> sortedMembers)
 {
     ++internAttemptCount;
-    Hash id = zeroHash();
-    for (const auto & m : sortedMembers) xorInto(id, m);
+    TracingHash id = TracingHash::zero();
+    for (const auto & m : sortedMembers) id.xorInPlace(m);
     if (auto existing = lookup(id)) return *existing;
     auto sp = std::make_shared<FrozenNode>();
     sp->hash = id;
@@ -228,9 +213,9 @@ FrozenNodePtr FrozenNodeCache::internInternalFromSlots(
     const std::array<std::shared_ptr<const FrozenNode>, RADIX> & slots)
 {
     ++internAttemptCount;
-    Hash id = zeroHash();
+    TracingHash id = TracingHash::zero();
     for (const auto & s : slots)
-        if (s) xorInto(id, s->hash);
+        if (s) id.xorInPlace(s->hash);
     if (auto existing = lookup(id)) return *existing;
     auto sp = std::make_shared<FrozenNode>();
     sp->hash = id;
@@ -243,15 +228,15 @@ FrozenNodePtr FrozenNodeCache::internInternalFromSlots(
     return r;
 }
 
-FrozenNodePtr FrozenNodeCache::build(std::vector<Hash> members, size_t depth)
+FrozenNodePtr FrozenNodeCache::build(std::vector<TracingHash> members, size_t depth)
 {
     ++internAttemptCount;
 
     if (members.size() <= LEAF_MAX_MEMBERS) {
         /* Leaf identity = XOR of members. */
-        Hash id = zeroHash();
+        TracingHash id = TracingHash::zero();
         for (const auto & m : members)
-            xorInto(id, m);
+            id.xorInPlace(m);
         if (auto existing = lookup(id))
             return *existing;
         auto sp = std::make_shared<FrozenNode>();
@@ -268,7 +253,7 @@ FrozenNodePtr FrozenNodeCache::build(std::vector<Hash> members, size_t depth)
        skipping strips that representational entropy — two references
        to a subtree that would produce equivalent content always
        produce the exact same tree shape. Members are dedup'd, so
-       divergence exists at some depth < 8 * tracingHashSize / RADIX_BITS. */
+       divergence exists at some depth < 8 * TracingHash::size / RADIX_BITS. */
     while (true) {
         size_t firstSlot = slotFor(members.front(), depth);
         bool diverges = false;
@@ -285,7 +270,7 @@ FrozenNodePtr FrozenNodeCache::build(std::vector<Hash> members, size_t depth)
     /* Partition into 16 buckets by slot at this depth. Sort is preserved
        within each bucket because slotFor is a top-bit-group extract on
        byte-lex-sorted input. */
-    std::array<std::vector<Hash>, RADIX> buckets;
+    std::array<std::vector<TracingHash>, RADIX> buckets;
     for (auto & m : members) {
         auto s = slotFor(m, depth);
         buckets[s].push_back(std::move(m));
@@ -293,12 +278,12 @@ FrozenNodePtr FrozenNodeCache::build(std::vector<Hash> members, size_t depth)
 
     FrozenNode::Internal inter;
     inter.depth = static_cast<uint8_t>(depth);
-    Hash id = zeroHash();
+    TracingHash id = TracingHash::zero();
     for (size_t i = 0; i < RADIX; ++i) {
         if (buckets[i].empty())
             continue;
         auto child = build(std::move(buckets[i]), depth + 1);
-        xorInto(id, child->hash);
+        id.xorInPlace(child->hash);
         inter.slots[i] = child.get_ptr();
     }
     if (auto existing = lookup(id))
@@ -355,7 +340,7 @@ void FrozenNodeCache::persist(const FrozenNodePtr & root, PersistSink & sink)
 
 struct MutableNodeBody
 {
-    struct Leaf { std::vector<Hash> members; }; // sorted
+    struct Leaf { std::vector<TracingHash> members; }; // sorted
     struct Internal
     {
         uint8_t depth;
@@ -366,22 +351,22 @@ struct MutableNodeBody
         std::array<Slot, RADIX> slots;
     };
     std::variant<Leaf, Internal> shape;
-    Hash identity{HashAlgorithm::SHA256};
+    TracingHash identity{};
     size_t memberCount = 0;
     /* Valid iff no mutation since last freeze. */
     std::shared_ptr<const FrozenNode> cachedFrozen;
 };
 
-/* Fill `identity` with `hashSize` so XORs stay in bounds. */
+/* Fill `identity` with zero so XORs stay in bounds. */
 static void initEmptyBody(MutableNodeBody & b)
 {
-    b.identity = zeroHash();
+    b.identity = TracingHash::zero();
     b.memberCount = 0;
     b.shape = MutableNodeBody::Leaf{};
 }
 
 /* Descend leftmost populated path of a FrozenNode to grab any member. */
-static Hash firstMemberOf(const FrozenNode & n)
+static TracingHash firstMemberOf(const FrozenNode & n)
 {
     const FrozenNode * cur = &n;
     while (!cur->isLeaf()) {
@@ -392,10 +377,10 @@ static Hash firstMemberOf(const FrozenNode & n)
 }
 
 static void promoteLeafInPlace(MutableNodeBody & b);
-static bool bodyInsert(MutableNodeBody & b, const Hash & h);
+static bool bodyInsert(MutableNodeBody & b, const TracingHash & h);
 
 /* Create a fresh MutableLeaf holding {h}. */
-static std::unique_ptr<MutableNodeBody> makeSingletonLeaf(const Hash & h)
+static std::unique_ptr<MutableNodeBody> makeSingletonLeaf(const TracingHash & h)
 {
     auto b = std::make_unique<MutableNodeBody>();
     b->shape = MutableNodeBody::Leaf{{h}};
@@ -433,7 +418,7 @@ materializeFrozenTop(const std::shared_ptr<const FrozenNode> & fp)
    the insert was novel (member newly added). */
 static bool insertIntoSlot(
     MutableNodeBody::Internal::Slot & slot,
-    const Hash & h,
+    const TracingHash & h,
     size_t parentDepth)
 {
     /* Empty slot — create fresh leaf. */
@@ -456,7 +441,7 @@ static bool insertIntoSlot(
         /* Frozen internal at deeper depth (skip-single-slot chain
            collapsed). Check whether h shares the prefix; if not, split. */
         size_t fpDepth = fp->asInternal().depth;
-        Hash anchor = firstMemberOf(*fp);
+        TracingHash anchor = firstMemberOf(*fp);
         size_t divergeDepth = parentDepth + 1;
         while (divergeDepth < fpDepth
                && slotFor(h, divergeDepth) == slotFor(anchor, divergeDepth))
@@ -477,7 +462,7 @@ static bool insertIntoSlot(
         inter.slots[slotFor(h, divergeDepth)] = makeSingletonLeaf(h);
         split->shape = std::move(inter);
         split->identity = fp->hash;
-        xorInto(split->identity, h);
+        split->identity.xorInPlace(h);
         split->memberCount = fp->size() + 1;
         slot = std::move(split);
         return true;
@@ -488,7 +473,7 @@ static bool insertIntoSlot(
     return bodyInsert(*child, h);
 }
 
-static bool leafInsert(MutableNodeBody & b, const Hash & h)
+static bool leafInsert(MutableNodeBody & b, const TracingHash & h)
 {
     auto & leaf = std::get<MutableNodeBody::Leaf>(b.shape);
     auto it = std::lower_bound(leaf.members.begin(), leaf.members.end(), h);
@@ -500,19 +485,19 @@ static bool leafInsert(MutableNodeBody & b, const Hash & h)
     return true;
 }
 
-static bool internalInsert(MutableNodeBody & b, const Hash & h)
+static bool internalInsert(MutableNodeBody & b, const TracingHash & h)
 {
     auto & inter = std::get<MutableNodeBody::Internal>(b.shape);
     return insertIntoSlot(inter.slots[slotFor(h, inter.depth)], h, inter.depth);
 }
 
-static bool bodyInsert(MutableNodeBody & b, const Hash & h)
+static bool bodyInsert(MutableNodeBody & b, const TracingHash & h)
 {
     bool novel = std::holds_alternative<MutableNodeBody::Leaf>(b.shape)
         ? leafInsert(b, h)
         : internalInsert(b, h);
     if (novel) {
-        xorInto(b.identity, h);
+        b.identity.xorInPlace(h);
         ++b.memberCount;
         b.cachedFrozen = nullptr;
     }
@@ -537,7 +522,7 @@ static void promoteLeafInPlace(MutableNodeBody & b)
         ++depth;
     }
 
-    std::array<std::vector<Hash>, RADIX> buckets;
+    std::array<std::vector<TracingHash>, RADIX> buckets;
     for (const auto & m : members)
         buckets[slotFor(m, depth)].push_back(m);
 
@@ -548,8 +533,8 @@ static void promoteLeafInPlace(MutableNodeBody & b)
         auto sub = std::make_unique<MutableNodeBody>();
         sub->shape = MutableNodeBody::Leaf{std::move(buckets[i])};
         auto & sm = std::get<MutableNodeBody::Leaf>(sub->shape).members;
-        sub->identity = zeroHash();
-        for (const auto & m : sm) xorInto(sub->identity, m);
+        sub->identity = TracingHash::zero();
+        for (const auto & m : sm) sub->identity.xorInPlace(m);
         sub->memberCount = sm.size();
         if (sm.size() > LEAF_MAX_MEMBERS)
             promoteLeafInPlace(*sub);
@@ -559,7 +544,7 @@ static void promoteLeafInPlace(MutableNodeBody & b)
     /* identity / memberCount unchanged — same member set. */
 }
 
-static bool bodyContains(const MutableNodeBody & b, const Hash & h)
+static bool bodyContains(const MutableNodeBody & b, const TracingHash & h)
 {
     if (std::holds_alternative<MutableNodeBody::Leaf>(b.shape)) {
         const auto & leaf = std::get<MutableNodeBody::Leaf>(b.shape);
@@ -622,12 +607,12 @@ MutableNode::MutableNode(FrozenNodePtr root)
     : body(materializeFrozenTop(root.get_ptr()))
 {}
 
-void MutableNode::insert(const Hash & h)
+void MutableNode::insert(const TracingHash & h)
 {
     bodyInsert(*body, h);
 }
 
-bool MutableNode::contains(const Hash & h) const noexcept
+bool MutableNode::contains(const TracingHash & h) const noexcept
 {
     return bodyContains(*body, h);
 }
@@ -646,7 +631,7 @@ FrozenNodePtr MutableNode::freeze(FrozenNodeCache & cache)
    Set operations
    ───────────────────────────────────────────────────────────────────── */
 
-static void diffWalk(const FrozenNode & a, const FrozenNode & b, std::vector<Hash> & out)
+static void diffWalk(const FrozenNode & a, const FrozenNode & b, std::vector<TracingHash> & out)
 {
     /* Hash-equal subtree short-circuit — same members, nothing to add.
        Fires at any depth where two subtrees happen to be structurally
@@ -691,9 +676,9 @@ static void diffWalk(const FrozenNode & a, const FrozenNode & b, std::vector<Has
     }
 }
 
-std::vector<Hash> difference(const FrozenNode & a, const FrozenNode & b)
+std::vector<TracingHash> difference(const FrozenNode & a, const FrozenNode & b)
 {
-    std::vector<Hash> out;
+    std::vector<TracingHash> out;
     diffWalk(a, b, out);
     return out;
 }
@@ -720,7 +705,7 @@ FrozenNodePtr intersection(const FrozenNodePtr & a, const FrozenNodePtr & b, Fro
        structural parallel walk over slots is a follow-up optimization. */
     const FrozenNodePtr & smaller = (a->size() <= b->size()) ? a : b;
     const FrozenNodePtr & larger  = (a->size() <= b->size()) ? b : a;
-    std::vector<Hash> keep;
+    std::vector<TracingHash> keep;
     for (const auto & m : smaller->allMembers())
         if (larger->contains(m))
             keep.push_back(m);
@@ -732,7 +717,7 @@ FrozenNodePtr intersection(const FrozenNodePtr & a, const FrozenNodePtr & b, Fro
    merges and re-canonicalises via internSet. */
 FrozenNodePtr insertSortedMembers(
     const FrozenNodePtr & node,
-    std::span<const Hash> members,
+    std::span<const TracingHash> members,
     FrozenNodeCache & cache)
 {
     if (members.empty())
@@ -745,7 +730,7 @@ FrozenNodePtr insertSortedMembers(
        depth. */
     if (node->isLeaf()) {
         const auto & leafMembers = node->asLeaf().members;
-        std::vector<Hash> merged;
+        std::vector<TracingHash> merged;
         merged.reserve(leafMembers.size() + members.size());
         std::set_union(leafMembers.begin(), leafMembers.end(),
                        members.begin(), members.end(),
@@ -771,7 +756,6 @@ FrozenNodePtr insertSortedMembers(
        case (recursive call landed here because parent partition
        already established the prefix match), this check is O(1) per
        incoming member. */
-    Hash anchor = members.front();  // any member; skip-single-slot depths compared against the first
     /* (Nothing to check when node came from a call where depth already
        matches — that's the invariant callers below maintain. Explicit
        check would be per-caller; we rely on canonicalisation via
@@ -785,7 +769,7 @@ FrozenNodePtr insertSortedMembers(
         size_t j = i + 1;
         while (j < members.size() && slotFor(members[j], depth) == slot)
             ++j;
-        std::span<const Hash> slotMembers(members.data() + i, j - i);
+        std::span<const TracingHash> slotMembers(members.data() + i, j - i);
         if (newSlots[slot]) {
             auto old = newSlots[slot];
             /* Recurse into the existing subtree. Note: if the child
@@ -803,7 +787,7 @@ FrozenNodePtr insertSortedMembers(
         } else {
             /* Fresh subtree from just these members. internSet
                canonicalises to the correct depth automatically. */
-            std::vector<Hash> ms(slotMembers.begin(), slotMembers.end());
+            std::vector<TracingHash> ms(slotMembers.begin(), slotMembers.end());
             newSlots[slot] = cache.internSet(std::move(ms)).get_ptr();
             anyChange = true;
         }
@@ -814,7 +798,7 @@ FrozenNodePtr insertSortedMembers(
     return cache.internInternalFromSlots(depth, newSlots);
 }
 
-std::vector<Hash> childHashesInPayload(std::string_view payload)
+std::vector<TracingHash> childHashesInPayload(std::string_view payload)
 {
     if (payload.empty() || payload[0] != char(0x01))
         return {};
@@ -822,17 +806,16 @@ std::vector<Hash> childHashesInPayload(std::string_view payload)
         throw Error("rst: malformed frozen internal payload (size=%d)", payload.size());
     uint16_t bitmap = static_cast<uint8_t>(payload[2])
                     | (static_cast<uint8_t>(payload[3]) << 8);
-    const size_t hs = tracingHashSize;
-    std::vector<Hash> out;
+    const size_t hs = TracingHash::size;
+    std::vector<TracingHash> out;
     size_t off = 4;
     for (size_t i = 0; i < RADIX; ++i) {
         if (!(bitmap & (uint16_t(1) << i)))
             continue;
         if (off + hs > payload.size())
             throw Error("rst: malformed frozen internal payload (truncated at slot %d)", i);
-        Hash h(HashAlgorithm::SHA256);
-        h.hashSize = hs;
-        std::memcpy(h.hash, payload.data() + off, hs);
+        TracingHash h;
+        std::memcpy(h.bytes.data(), payload.data() + off, hs);
         out.push_back(h);
         off += hs;
     }
