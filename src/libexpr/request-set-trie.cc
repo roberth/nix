@@ -643,17 +643,55 @@ FrozenNodePtr MutableNode::freeze(FrozenNodeCache & cache)
    Set operations
    ───────────────────────────────────────────────────────────────────── */
 
+static void diffWalk(const FrozenNode & a, const FrozenNode & b, std::vector<Hash> & out)
+{
+    /* Hash-equal subtree short-circuit — same members, nothing to add.
+       Fires at any depth where two subtrees happen to be structurally
+       equal (canonical HAMT + XOR identity = same content means same
+       cached FrozenNode). */
+    if (a.hash == b.hash)
+        return;
+    if (a.isLeaf()) {
+        for (const auto & m : a.asLeaf().members)
+            if (!b.contains(m))
+                out.push_back(m);
+        return;
+    }
+    /* a is Internal. If b is a Leaf or an Internal at a different depth
+       (skip-single-slot means depths can differ across subtrees), fall
+       back to walking a and filtering via b.contains — still cheaper
+       than materialising all members up-front. */
+    if (b.isLeaf() || b.asInternal().depth != a.asInternal().depth) {
+        for (const auto & slot : a.asInternal().slots)
+            if (slot)
+                diffWalk(*slot, b, out);
+        return;
+    }
+    /* Both Internal at the same depth: parallel slot walk. Slots aligned
+       by content bits, so slot i on each side holds members with the
+       same bit-group. */
+    const auto & aInter = a.asInternal();
+    const auto & bInter = b.asInternal();
+    for (size_t i = 0; i < RADIX; ++i) {
+        const auto & aSlot = aInter.slots[i];
+        if (!aSlot)
+            continue;
+        const auto & bSlot = bInter.slots[i];
+        if (!bSlot) {
+            /* b has no slot i, so everything under a's slot i is in
+               the difference. Flatten and dump. */
+            auto members = aSlot->allMembers();
+            out.insert(out.end(), members.begin(), members.end());
+        } else {
+            diffWalk(*aSlot, *bSlot, out);
+        }
+    }
+}
+
 std::vector<Hash> difference(const FrozenNode & a, const FrozenNode & b)
 {
-    /* Hash-equal short-circuit at any depth: same XOR identity means
-       same member set (barring astronomical XOR collision), so diff is
-       empty. */
-    if (a.hash == b.hash)
-        return {};
     std::vector<Hash> out;
-    for (const auto & m : a.allMembers())
-        if (!b.contains(m))
-            out.push_back(m);
+    diffWalk(a, b, out);
     return out;
 }
 
