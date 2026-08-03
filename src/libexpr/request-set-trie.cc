@@ -50,6 +50,40 @@ static std::vector<Hash> sortAndDedup(std::vector<Hash> members)
     return members;
 }
 
+/* Identity primitive: XOR two tracing hashes byte-wise. Zero is the
+   identity element (XOR-fold over an empty set → zero hash). */
+static Hash xorHashes(const Hash & a, const Hash & b)
+{
+    Hash out(HashAlgorithm::SHA256);
+    out.hashSize = tracingHashSize;
+    for (size_t i = 0; i < tracingHashSize; ++i)
+        out.hash[i] = a.hash[i] ^ b.hash[i];
+    return out;
+}
+
+static Hash zeroHash()
+{
+    Hash z(HashAlgorithm::SHA256);
+    z.hashSize = tracingHashSize;
+    return z;  // hash bytes zero-initialised by the array default
+}
+
+static Hash xorOfLeafMembers(const std::vector<Hash> & members)
+{
+    Hash acc = zeroHash();
+    for (const auto & m : members)
+        acc = xorHashes(acc, m);
+    return acc;
+}
+
+static Hash xorOfChildren(const std::vector<std::pair<uint8_t, FrozenNodePtr>> & children)
+{
+    Hash acc = zeroHash();
+    for (const auto & [_, c] : children)
+        acc = xorHashes(acc, c->hash);
+    return acc;
+}
+
 /* ─────────────────────────────────────────────────────────────────────
    FrozenNode
    ───────────────────────────────────────────────────────────────────── */
@@ -169,8 +203,12 @@ FrozenNodePtr FrozenNodeCache::internLeaf(std::vector<Hash> members)
 {
     ++internAttemptCount;
     auto sorted = sortAndDedup(std::move(members));
-    auto payload = leafPayload(sorted);
-    auto hash = tracingHash(payload);
+    /* Identity = XOR of leaf members. Same value for any subtree with
+       these members, regardless of whether it's stored as a flat leaf
+       or has been split into an internal — enables sharing across
+       structural transitions and short-circuit at any depth in
+       diff/intersect. */
+    auto hash = xorOfLeafMembers(sorted);
     if (auto existing = lookup(hash))
         return *existing;
     auto sp = std::make_shared<FrozenNode>();
@@ -186,8 +224,11 @@ FrozenNodePtr FrozenNodeCache::internInternal(std::vector<std::pair<uint8_t, Fro
     ++internAttemptCount;
     std::sort(children.begin(), children.end(),
         [](const auto & a, const auto & b) { return a.first < b.first; });
-    auto payload = internalPayload(children);
-    auto hash = tracingHash(payload);
+    /* Identity = XOR of children's identities. Since each child's
+       identity is XOR-of-its-members, this transitively equals XOR
+       of all leaf request hashes in the subtree — same rule as leaf
+       nodes. */
+    auto hash = xorOfChildren(children);
     if (auto existing = lookup(hash))
         return *existing;
     auto sp = std::make_shared<FrozenNode>();

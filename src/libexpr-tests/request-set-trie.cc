@@ -288,17 +288,86 @@ TEST_F(RequestSetTrieTest, DifferenceSameFrozenPointerShortCircuits)
    Interop with existing DB payload format
    ───────────────────────────────────────────────────────────────────── */
 
-TEST_F(RequestSetTrieTest, HashMatchesDbPayloadForSingleton)
+/* ─────────────────────────────────────────────────────────────────────
+   XOR identity — the key structural property that makes sharing +
+   diff/intersect short-circuit work
+   ───────────────────────────────────────────────────────────────────── */
+
+/* Helper: XOR-fold a set of hashes into an identity value. */
+static Hash xorMembers(const std::vector<Hash> & members)
+{
+    Hash acc(HashAlgorithm::SHA256);
+    acc.hashSize = tracingHashSize;
+    for (const auto & m : members)
+        for (size_t i = 0; i < tracingHashSize; ++i)
+            acc.hash[i] ^= m.hash[i];
+    return acc;
+}
+
+TEST_F(RequestSetTrieTest, IdentityIsXorOfLeafMembers)
 {
     FrozenNodeCache cache;
-    auto leaf = cache.internLeaf({h(1)});
-    /* The hash should be sha256 of the byte payload:
-       [0x00] || h(1).hash */
-    std::string expectedPayload;
-    expectedPayload.push_back(0x00);
-    expectedPayload.append(reinterpret_cast<const char *>(h(1).hash), tracingHashSize);
-    auto expectedHash = tracingHash(expectedPayload);
-    EXPECT_EQ(leaf->hash, expectedHash);
+    auto members = hashes(5);
+    auto leaf = cache.internLeaf(members);
+    EXPECT_EQ(leaf->hash, xorMembers(members));
+}
+
+TEST_F(RequestSetTrieTest, IdentityIsXorOfSubtreeMembersAtAnyDepth)
+{
+    FrozenNodeCache cache;
+    /* 100 members forces internal + sub-nodes. Root identity must
+       equal XOR of all 100 leaf hashes. */
+    auto members = hashes(100);
+    auto root = cache.internSet(members);
+    ASSERT_FALSE(root->isLeaf());
+    EXPECT_EQ(root->hash, xorMembers(members));
+    /* And each sub-node's identity is XOR of its own subtree's leaves. */
+    auto walk = [&](const FrozenNode & n, auto & self) -> void {
+        auto sub = n.allMembers();
+        EXPECT_EQ(n.hash, xorMembers(sub))
+            << "sub-node identity should equal XOR of its members";
+        if (!n.isLeaf())
+            for (const auto & [_, c] : n.asInternal().children)
+                self(*c, self);
+    };
+    walk(*root, walk);
+}
+
+TEST_F(RequestSetTrieTest, SplitDoesNotChangeIdentity)
+{
+    /* A leaf with 16 members and an internal that holds those same
+       16 members (via bucket-and-recurse) must have identical
+       identity — same XOR of the same set. Add a 17th to force the
+       split; the identity of the resulting internal equals the leaf's
+       identity XOR the 17th hash. */
+    FrozenNodeCache cache;
+    auto leafMembers = hashes(TRIE_SPLIT_THRESHOLD);
+    auto leaf = cache.internLeaf(leafMembers);
+    EXPECT_TRUE(leaf->isLeaf());
+
+    auto expanded = leafMembers;
+    expanded.push_back(h(TRIE_SPLIT_THRESHOLD));
+    auto internal = cache.internSet(expanded);
+    EXPECT_FALSE(internal->isLeaf());
+
+    /* internal.hash = leaf.hash XOR h(threshold). */
+    Hash expected = leaf->hash;
+    for (size_t i = 0; i < tracingHashSize; ++i)
+        expected.hash[i] ^= h(TRIE_SPLIT_THRESHOLD).hash[i];
+    EXPECT_EQ(internal->hash, expected);
+}
+
+TEST_F(RequestSetTrieTest, IdentityInvariantUnderInsertOrder)
+{
+    /* Insertion order shouldn't affect final identity. */
+    FrozenNodeCache cache;
+    MutableNode a, b;
+    for (uint64_t i = 0; i < 50; ++i) a.insert(h(i));
+    for (uint64_t i = 50; i-- > 0; ) b.insert(h(i));  // reverse
+    auto af = a.freeze(cache);
+    auto bf = b.freeze(cache);
+    EXPECT_EQ(af, bf);
+    EXPECT_EQ(af->hash, xorMembers(hashes(50)));
 }
 
 /* ─────────────────────────────────────────────────────────────────────
