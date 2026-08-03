@@ -71,9 +71,22 @@ public:
     };
 
     /** Sparse RADIX-slot array. Empty slots are `nullptr`. Slot index
-        for a member `m` in a node at depth `d` is `slotFor(m, d)`. */
+        for a member `m` at this Internal's depth is `slotFor(m, depth)`.
+
+        Depth may exceed (parent's depth + 1). When all of this
+        subtree's members share the same nibble at some intermediate
+        depth, we skip the "wrap" level rather than materialize a
+        single-slot Internal. The wrap Internal would be redundant
+        with its lone child — the same member set represented two ways
+        (once with an outer envelope, once without). Skipping strips
+        that representational entropy so a given member set always
+        reduces to exactly one subtree shape. Diff, intersection, and
+        subset can then short-circuit whenever two references point at
+        subtrees with equivalent content, since matching content
+        implies matching identity. */
     struct Internal
     {
+        uint8_t depth;
         std::array<std::shared_ptr<const FrozenNode>, RADIX> slots;
     };
 
