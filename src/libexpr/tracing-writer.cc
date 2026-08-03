@@ -215,9 +215,13 @@ void TracingWriter::createCallbackCell(const nlohmann::json & applyQueryPayload)
 {
     /* Insert the apply-request payload into the Requests pool.
        Pending-payload storage lives on cell.callbackState (populated
-       by the caller). */
-    auto applyReqHash = trace::tracingHash(applyQueryPayload.dump());
+       by the caller).
+
+       Hash the CBOR bytes rather than the JSON dump — same rationale
+       as computeSelectorHash (trace-types.cc): dump_escaped over the
+       full JSON payload was a top perf hotspot in cold-path profiles. */
     auto applyPayloadCbor = jsonToCborString(applyQueryPayload);
+    auto applyReqHash = TracingDecisionGraph::computeResponseHash(applyPayloadCbor);
     if (provenanceEnabled())
         recordProvenance(applyReqHash, "applyRequestHash",
                          {{"applyQueryPayload", applyQueryPayload}});

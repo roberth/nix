@@ -166,31 +166,27 @@ TracingReplayEvaluator::walk(
            by any real writer emission). */
         /* Buffer facts for this in-flight Asks edge; the
            history-loop commits them via onEdgeCommitted on success. */
-        /* Decode for diffing: render the full request + response JSON
-           bytes. Diffing these strings between cold and warm is what
-           isolates which exact (q, r) differs. */
-        std::string reqJsonStr = std::visit([](const auto & r) {
-            return nlohmann::json(r).dump();
-        }, *req);
-        std::string respJsonStr;
-        try {
-            respJsonStr = cborStringToJson(*currentResp).dump();
-        } catch (...) {
-            respJsonStr = "(unparseable)";
-        }
         if (isQueryRequest) {
             /* Outer-probe facts fold into cells exclusively via logOuterObservation
                (from the outer's queryFn attributing to callerCell = arg's own
                cell). The walker's commitEdge path handles env facts only, never
                outer probes — matches pre-migration behavior where fromHashOf's
-               dead-code guard kept this equivalent branch dormant. */
+               dead-code guard kept this equivalent branch dormant.
+
+               The reqJSON/respJSON dumps are constructed inline as macro
+               args so they only run when tracingCacheLog is enabled; the
+               nlohmann JSON tree + dump_escaped are the dominant cost of
+               cold runs otherwise. */
             tracingCacheLog(
                 "dispatch outer: req=%s payload=%s resp=%s\n  reqJSON=%s\n  respJSON=%s",
                 requestHash.to_string(HashFormat::Base16, false).substr(0, 12),
                 queryDescription,
                 h.to_string(HashFormat::Base16, false).substr(0, 12),
-                reqJsonStr,
-                respJsonStr);
+                std::visit([](const auto & r) { return nlohmann::json(r).dump(); }, *req),
+                [&]() -> std::string {
+                    try { return cborStringToJson(*currentResp).dump(); }
+                    catch (...) { return "(unparseable)"; }
+                }());
         } else {
             /* #183: env facts default to sessionRootCell (attrCell
                left null — commitEdge routes null to sessionRootCell). */
