@@ -6,13 +6,11 @@
  *
  * - ValueHandle: JSON trace correlation handle (TraceSink)
  * - OuterId:   a Subject-derived state hash used in payloads referring
- *                to outer values. Alias for Hash; distinguishes
- *                Subject-state-hash uses from other Hash uses at call
- *                sites. Not a registry key — outer Objects flow
+ *                to outer values. Alias for TracingHash; distinguishes
+ *                Subject-state-hash uses from other TracingHash uses at
+ *                call sites. Not a registry key — outer Objects flow
  *                directly through queryFn/applyFn.
  */
-
-#include "nix/util/hash.hh"
 
 #include <array>
 #include <compare>
@@ -32,16 +30,16 @@ namespace nix {
  * helps).
  *
  * Every tracing atom key (Request/Response/Query/Result/SetHash), every
- * cell state hash, every rst FrozenNode identity should be a
- * TracingHash. The wider nix::Hash (~80 bytes: hashSize + 64B buffer +
- * algorithm tag) is only needed at the SHA-256 computation boundary —
- * construct via `TracingHash::compute(bytes)`, convert back via
- * `toNixHash()` where legacy code still expects the full form.
+ * cell state hash, every rst FrozenNode identity is a TracingHash.
+ * Construct via `TracingHash::compute(bytes)` — that boundary is the
+ * only place SHA-256 (or a future BLAKE3) leaks in. Tracing code never
+ * sees nix::Hash; the tracing world and the general nix::Hash world
+ * are separate.
  *
  * Wins over storing nix::Hash: 5× smaller (16 vs ~80 bytes), simpler
  * memcmp path, better cache-line packing for the hash-keyed containers
  * that dominate memory. The SHA-256 → BLAKE3 swap becomes a single-line
- * change at `compute()` — no algorithm tag to propagate downstream.
+ * change at `compute()`.
  */
 struct TracingHash
 {
@@ -56,14 +54,6 @@ struct TracingHash
 
     /** Parse 32 lowercase hex characters. Throws on malformed input. */
     static TracingHash parseHex(std::string_view hex);
-
-    /** Truncating conversion from a full nix::Hash (first 16 bytes).
-        Precondition: h.hashSize >= 16. Explicit — callers must ask. */
-    static TracingHash of(const Hash & h);
-
-    /** Reconstruct a full nix::Hash (algo=SHA-256, hashSize=16). Only
-        needed for interop with code that still expects nix::Hash. */
-    Hash toNixHash() const;
 
     /** Lowercase 32-character hex. */
     std::string toHex() const;

@@ -575,22 +575,6 @@ TracingHash TracingHash::compute(std::string_view input)
     return r;
 }
 
-TracingHash TracingHash::of(const Hash & h)
-{
-    assert(h.hashSize >= TracingHash::size);
-    TracingHash r;
-    std::memcpy(r.bytes.data(), h.hash, TracingHash::size);
-    return r;
-}
-
-Hash TracingHash::toNixHash() const
-{
-    Hash h(HashAlgorithm::SHA256);
-    h.hashSize = TracingHash::size;
-    std::memcpy(h.hash, bytes.data(), TracingHash::size);
-    return h;
-}
-
 static char tracingHexDigit(uint8_t v)
 {
     return v < 10 ? char('0' + v) : char('a' + (v - 10));

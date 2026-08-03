@@ -201,22 +201,6 @@ TEST(TracingHashTest, ComputeIsStable)
     EXPECT_EQ(a, b);
 }
 
-TEST(TracingHashTest, TruncatesFromNixHash)
-{
-    /* compute() and of(tracingHash) agree on the first 16 bytes. */
-    auto direct = nix::TracingHash::compute("some content");
-    auto viaHash = nix::TracingHash::of(tracingHash("some content").toNixHash());
-    EXPECT_EQ(direct, viaHash);
-}
-
-TEST(TracingHashTest, NixHashRoundTrip)
-{
-    auto h = nix::TracingHash::compute("round-trip");
-    auto n = h.toNixHash();
-    EXPECT_EQ(n.hashSize, nix::TracingHash::size);
-    EXPECT_EQ(nix::TracingHash::of(n), h);
-}
-
 TEST(TracingHashTest, HexRoundTrip)
 {
     auto h = nix::TracingHash::compute("hex-test");
