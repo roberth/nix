@@ -1,4 +1,5 @@
 #include "nix/expr/tracing-decision-graph.hh"
+#include "nix/expr/request-set-trie.hh"
 #include "nix/expr/tracing-cache-log.hh"
 #include "nix/expr/tracing-cache-stats.hh"
 #include "nix/store/sqlite.hh"
@@ -472,6 +473,13 @@ struct TracingDecisionGraph::State
        caching per-node lets second-and-later getRequestSet calls reuse
        the SQLite reads from the first. */
     std::unordered_map<Hash, std::optional<std::string>> requestSetNodePayloadCache;
+
+    /* In-memory RequestSet trie cache. Shared across all insertRequestSet
+       callers so structurally-overlapping request sets reuse identical
+       subtrees without re-hashing / re-persisting. persistedFlag on each
+       FrozenNode short-circuits the persist walk for already-enqueued
+       subtrees. */
+    trace::rst::FrozenNodeCache requestSetTrieCache;
     /* ObservationSet SCA-nesting-depth memo. Populated at
        insertObservationSet time: depth = 1 + max depth over argObsSets
        of any SelectorCallbackApply in the set (0 if none). Since
@@ -1050,61 +1058,36 @@ bool TracingDecisionGraph::isApplyRequest(const RequestHash & h)
     return std::holds_alternative<trace::SelectorApply>(ovr->query->node);
 }
 
-/* Recursively build the trie and INSERT each visited node, returning
-   the root node's hash. Same shape as dg_trieRootHash but with the
-   side effect of persisting nodes (idempotent via INSERT OR IGNORE
-   on (nodeHash); identical subtrees dedupe automatically). */
-Hash TracingDecisionGraph::insertTrieRecursive(std::vector<Hash> sortedMembers, int depth)
-{
-    auto persist = [&](const Hash & nodeHash, const std::string & payload) {
-        auto state(_state->lock());
-        /* If we've already cached or persisted this node, skip the
-           SQLite write. INSERT OR IGNORE makes the write itself
-           idempotent, but the cache check saves the trip. */
-        auto [it, inserted] = state->requestSetNodePayloadCache.try_emplace(
-            nodeHash, std::optional{payload});
-        if (!inserted)
-            return;
-        state->writeQueue->enqueue(WriteInsertRequestSetNode{nodeHash, payload});
-    };
-    if (sortedMembers.size() <= TRIE_SPLIT_THRESHOLD) {
-        auto payload = dg_trieLeafPayload(sortedMembers);
-        auto nodeHash = trace::tracingHash(payload);
-        persist(nodeHash, payload);
-        return nodeHash;
-    }
-    std::vector<std::vector<Hash>> buckets(TRIE_RADIX);
-    for (auto & h : sortedMembers)
-        buckets[dg_bucketAt(h, depth)].push_back(std::move(h));
-    std::vector<std::pair<uint8_t, Hash>> children;
-    for (uint8_t i = 0; i < TRIE_RADIX; ++i) {
-        if (buckets[i].empty())
-            continue;
-        children.emplace_back(i, insertTrieRecursive(std::move(buckets[i]), depth + 1));
-    }
-    auto payload = dg_trieInternalPayload(children);
-    auto nodeHash = trace::tracingHash(payload);
-    persist(nodeHash, payload);
-    return nodeHash;
-}
-
 TracingDecisionGraph::SetHash
 TracingDecisionGraph::insertRequestSet(std::vector<RequestHash> members)
 {
     if (members.empty())
         return emptySetHash();
-    auto canonical = dg_sortAndDedup(std::move(members));
-    if (canonical.empty())
+    /* Route through the shared in-memory trie: internSet builds (or
+       reuses via content hash) the FrozenNode tree; persist walks
+       the tree flagging unpersisted subtrees and forwarding them to
+       the writer thread. The FrozenNodeCache is held under the same
+       lock as the rest of DG state — no separate synchronisation. */
+    auto state(_state->lock());
+    auto rootPtr = state->requestSetTrieCache.internSet(members);
+    if (rootPtr->size() == 0)
         return emptySetHash();
-    /* Snapshot for the in-process member cache so getRequestSet can
-       short-circuit the trie traversal within the same process. */
-    auto cachedMembers = canonical;
-    auto rootHash = insertTrieRecursive(std::move(canonical), 0);
-    {
-        auto state(_state->lock());
-        state->requestSetCache.try_emplace(rootHash, std::optional{std::move(cachedMembers)});
-    }
-    return rootHash;
+    trace::rst::FrozenNodeCache::PersistSink sink =
+        [&](const Hash & nodeHash, std::string_view payload) {
+            /* Populate the payload cache and enqueue the DB write. */
+            auto [it, inserted] = state->requestSetNodePayloadCache.try_emplace(
+                nodeHash, std::optional<std::string>{std::string(payload)});
+            if (!inserted)
+                return;
+            state->writeQueue->enqueue(
+                WriteInsertRequestSetNode{nodeHash, std::string(payload)});
+        };
+    state->requestSetTrieCache.persist(rootPtr, sink);
+    /* Snapshot the full member list at the root for getRequestSet's
+       fast path (existing consumers expect vector<Hash> members). */
+    state->requestSetCache.try_emplace(rootPtr->hash,
+        std::optional<std::vector<Hash>>{rootPtr->allMembers()});
+    return rootPtr->hash;
 }
 
 TracingDecisionGraph::SetHash

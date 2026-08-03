@@ -372,7 +372,6 @@ private:
 
     /* RequestSet trie internals — see schema comment and definitions
        in tracing-decision-graph.cc. */
-    Hash insertTrieRecursive(std::vector<Hash> sortedMembers, int depth);
     bool collectTrieMembers(const Hash & nodeHash, std::vector<RequestHash> & out);
 public:
     /* Public so `collectTrieMembers` and other in-file helpers can
