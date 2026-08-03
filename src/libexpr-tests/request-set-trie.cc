@@ -39,7 +39,7 @@ TEST_F(RequestSetTrieTest, EmptyLeafPayloadRoundTrip)
 {
     FrozenNodeCache cache;
     auto leaf = cache.internLeaf({});
-    ASSERT_NE(leaf, nullptr);
+    /* leaf is ref<>, non-null by construction */
     EXPECT_TRUE(leaf->isLeaf());
     EXPECT_EQ(leaf->size(), 0u);
     auto payload = leaf->toPayload();
@@ -53,7 +53,7 @@ TEST_F(RequestSetTrieTest, SingletonLeafPayloadRoundTrip)
 {
     FrozenNodeCache cache;
     auto leaf = cache.internLeaf({h(1)});
-    ASSERT_NE(leaf, nullptr);
+    /* leaf is ref<>, non-null by construction */
     EXPECT_TRUE(leaf->isLeaf());
     EXPECT_EQ(leaf->size(), 1u);
     EXPECT_TRUE(leaf->contains(h(1)));
@@ -69,7 +69,7 @@ TEST_F(RequestSetTrieTest, LeafSortedIndependentOfInsertOrder)
     FrozenNodeCache cache;
     auto a = cache.internLeaf({h(5), h(2), h(9)});
     auto b = cache.internLeaf({h(9), h(5), h(2)});
-    ASSERT_NE(a, nullptr);
+    /* a is ref<>, non-null by construction */
     /* Same members via different orders → same interned pointer. */
     EXPECT_EQ(a, b);
 }
@@ -91,7 +91,7 @@ TEST_F(RequestSetTrieTest, AboveThresholdBuildsInternal)
 {
     FrozenNodeCache cache;
     auto root = cache.internSet(hashes(TRIE_SPLIT_THRESHOLD + 1));
-    ASSERT_NE(root, nullptr);
+    /* root is ref<>, non-null by construction */
     /* With 17 members and 16-way radix, the root is very likely
        internal (near-certain given uniform hash distribution). */
     EXPECT_FALSE(root->isLeaf());
@@ -103,7 +103,7 @@ TEST_F(RequestSetTrieTest, InternalPreservesAllMembers)
     FrozenNodeCache cache;
     auto members = hashes(100);
     auto root = cache.internSet(members);
-    ASSERT_NE(root, nullptr);
+    /* root is ref<>, non-null by construction */
     EXPECT_EQ(root->size(), 100u);
     for (const auto & m : members)
         EXPECT_TRUE(root->contains(m)) << "missing member from full set";
@@ -115,7 +115,7 @@ TEST_F(RequestSetTrieTest, InternalPayloadRoundTrip)
 {
     FrozenNodeCache cache;
     auto root = cache.internSet(hashes(50));
-    ASSERT_NE(root, nullptr);
+    /* root is ref<>, non-null by construction */
     ASSERT_FALSE(root->isLeaf());
     auto payload = root->toPayload();
     EXPECT_EQ(payload[0], 0x01);
@@ -158,7 +158,7 @@ TEST_F(RequestSetTrieTest, MutableFreezeEqualsInternSet)
     for (auto & m : hashes(25))
         mut.insert(m);
     auto frozen = mut.freeze(cache);
-    ASSERT_NE(frozen, nullptr);
+    /* frozen is ref<>, non-null by construction */
     auto direct = cache.internSet(hashes(25));
     EXPECT_EQ(frozen, direct);
 }
@@ -279,7 +279,7 @@ TEST_F(RequestSetTrieTest, DifferenceSameFrozenPointerShortCircuits)
        large set (walking would be expensive if not short-circuited). */
     FrozenNodeCache cache;
     auto root = cache.internSet(hashes(500));
-    ASSERT_NE(root, nullptr);
+    /* root is ref<>, non-null by construction */
     EXPECT_TRUE(difference(*root, *root).empty());
     EXPECT_TRUE(isSubset(*root, *root));
 }
@@ -312,7 +312,7 @@ TEST_F(RequestSetTrieTest, MultiLevelTrieAllMembersPresent)
        500/16 = 31 → each level-1 bucket also splits). */
     auto members = hashes(500);
     auto root = cache.internSet(members);
-    ASSERT_NE(root, nullptr);
+    /* root is ref<>, non-null by construction */
     ASSERT_FALSE(root->isLeaf());
     EXPECT_EQ(root->size(), 500u);
     for (const auto & m : members)
@@ -481,19 +481,21 @@ TEST_F(RequestSetTrieTest, IncrementalInsertAndFreezeReusesUnchangedSubtrees)
        Correctness assertions on each step, and count the total intern
        work — a well-designed freeze reuses unchanged subtrees, so the
        cost per step is bounded by tree depth, not tree size. */
-    FrozenNodePtr last;
+    /* ref<> has no default-construct, so hold the running "last" via
+       shared_ptr and rewrap when we compare against ref returns. */
+    std::shared_ptr<const FrozenNode> last;
     for (uint64_t i = 0; i < 500; ++i) {
         mut.insert(h(i));
         auto frozen = mut.freeze(cache);
-        ASSERT_NE(frozen, nullptr);
+        /* frozen is ref<>, non-null by construction */
         EXPECT_EQ(frozen->size(), i + 1);
         EXPECT_TRUE(frozen->contains(h(i)));
-        last = frozen;
+        last = frozen;  // ref → shared_ptr
     }
     /* Final tree matches the all-at-once build. */
     auto before = cache.internAttempts();
     auto direct = cache.internSet(hashes(500));
-    EXPECT_EQ(last, direct);
+    EXPECT_EQ(last, FrozenNodePtr(direct).get_ptr());
     auto internSetCost = cache.internAttempts() - before;
     /* Recording the "reference cost" of building the whole set once,
        from scratch, so we can compare against the amortised
@@ -502,7 +504,7 @@ TEST_F(RequestSetTrieTest, IncrementalInsertAndFreezeReusesUnchangedSubtrees)
     /* Freeze-with-no-mutation is free — cached at each mutable node. */
     auto attemptsBeforeReFreeze = cache.internAttempts();
     auto again = mut.freeze(cache);
-    EXPECT_EQ(again, last);
+    EXPECT_EQ(std::shared_ptr<const FrozenNode>(again), last);
     EXPECT_EQ(cache.internAttempts(), attemptsBeforeReFreeze)
         << "no-op freeze must not re-hash any node";
 
@@ -540,7 +542,8 @@ TEST_F(RequestSetTrieTest, PersistWalksTreeAndEnqueuesEachNodeOnce)
 
     /* Capture what would be sent to the DB writer. */
     std::vector<std::pair<Hash, std::string>> writes;
-    auto sink = [&](const Hash & h, std::string_view p) { writes.emplace_back(h, std::string(p)); };
+    FrozenNodeCache::PersistSink sink =
+        [&](const Hash & h, std::string_view p) { writes.emplace_back(h, std::string(p)); };
 
     cache.persist(root, sink);
 
@@ -569,7 +572,8 @@ TEST_F(RequestSetTrieTest, PersistIncrementalOnlyEnqueuesNewSubtrees)
     /* Freeze + persist a 100-member tree. */
     auto rootA = cache.internSet(hashes(100));
     std::vector<Hash> writeHashes;
-    auto sink = [&](const Hash & h, std::string_view) { writeHashes.push_back(h); };
+    FrozenNodeCache::PersistSink sink =
+        [&](const Hash & h, std::string_view) { writeHashes.push_back(h); };
     cache.persist(rootA, sink);
     auto persistedBefore = writeHashes.size();
 

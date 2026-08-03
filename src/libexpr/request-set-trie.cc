@@ -125,8 +125,8 @@ FrozenNodePtr FrozenNodeCache::intern(const Hash & hash, std::string_view payloa
         return *existing;
     if (payload.empty())
         throw Error("rst: malformed frozen node payload (empty)");
-    auto node = std::make_shared<FrozenNode>();
-    node->hash = hash;
+    auto sp = std::make_shared<FrozenNode>();
+    sp->hash = hash;
     if (payload[0] == 0x00) {
         FrozenNode::Leaf leaf;
         const size_t hs = tracingHashSize;
@@ -139,7 +139,7 @@ FrozenNodePtr FrozenNodeCache::intern(const Hash & hash, std::string_view payloa
             std::memcpy(h.hash, payload.data() + i, hs);
             leaf.members.push_back(h);
         }
-        node->body = std::move(leaf);
+        sp->body = std::move(leaf);
     } else if (payload[0] == 0x01) {
         FrozenNode::Internal inter;
         const size_t hs = tracingHashSize;
@@ -156,12 +156,13 @@ FrozenNodePtr FrozenNodeCache::intern(const Hash & hash, std::string_view payloa
                 throw Error("rst: intern of internal node references child not yet cached");
             inter.children.emplace_back(bucket, *childPtr);
         }
-        node->body = std::move(inter);
+        sp->body = std::move(inter);
     } else {
         throw Error("rst: malformed frozen node (unknown tag %d)", (int) (unsigned char) payload[0]);
     }
-    byHash.emplace(hash, node);
-    return node;
+    FrozenNodePtr r(std::static_pointer_cast<const FrozenNode>(sp));
+    byHash.emplace(hash, r);
+    return r;
 }
 
 FrozenNodePtr FrozenNodeCache::internLeaf(std::vector<Hash> members)
@@ -172,11 +173,12 @@ FrozenNodePtr FrozenNodeCache::internLeaf(std::vector<Hash> members)
     auto hash = tracingHash(payload);
     if (auto existing = lookup(hash))
         return *existing;
-    auto node = std::make_shared<FrozenNode>();
-    node->hash = hash;
-    node->body = FrozenNode::Leaf{std::move(sorted)};
-    byHash.emplace(hash, node);
-    return node;
+    auto sp = std::make_shared<FrozenNode>();
+    sp->hash = hash;
+    sp->body = FrozenNode::Leaf{std::move(sorted)};
+    FrozenNodePtr r(std::static_pointer_cast<const FrozenNode>(sp));
+    byHash.emplace(hash, r);
+    return r;
 }
 
 FrozenNodePtr FrozenNodeCache::internInternal(std::vector<std::pair<uint8_t, FrozenNodePtr>> children)
@@ -188,16 +190,17 @@ FrozenNodePtr FrozenNodeCache::internInternal(std::vector<std::pair<uint8_t, Fro
     auto hash = tracingHash(payload);
     if (auto existing = lookup(hash))
         return *existing;
-    auto node = std::make_shared<FrozenNode>();
-    node->hash = hash;
-    node->body = FrozenNode::Internal{std::move(children)};
-    byHash.emplace(hash, node);
-    return node;
+    auto sp = std::make_shared<FrozenNode>();
+    sp->hash = hash;
+    sp->body = FrozenNode::Internal{std::move(children)};
+    FrozenNodePtr r(std::static_pointer_cast<const FrozenNode>(sp));
+    byHash.emplace(hash, r);
+    return r;
 }
 
-void FrozenNodeCache::persist(const FrozenNodePtr & root, const PersistSink & sink)
+void FrozenNodeCache::persist(const FrozenNodePtr & root, PersistSink & sink)
 {
-    if (!root || root->persisted)
+    if (root->persisted)
         return;
     auto walk = [&](const FrozenNode & n, auto & self) -> void {
         if (n.persisted)
@@ -251,15 +254,15 @@ bool MutableNode::Child::contains(const Hash & h, int depth) const noexcept
 
 MutableNode::MutableNode(FrozenNodePtr root)
 {
-    /* Fresh mutable that references the frozen root. We store frozen
-       as an Internal with one child... no, that doesn't fit. Simplest
-       approach: eagerly materialize the top level. Leaf → copy members.
-       Internal → wrap each child as a Child{.frozen=childPtr}. */
+    /* Fresh mutable that references the frozen root. Eagerly
+       materialize the top level: Leaf → copy members. Internal →
+       wrap each child as a Child{.frozen=childPtr}. */
     if (root->isLeaf()) {
         body = Leaf{root->asLeaf().members};
     } else {
         Internal inter;
         for (const auto & [bucket, child] : root->asInternal().children) {
+            /* ref → shared_ptr via implicit conversion. */
             inter.children[bucket].frozen = child;
         }
         body = std::move(inter);
@@ -301,7 +304,7 @@ void MutableNode::insertAtDepth(const Hash & h, int depth)
        the ancestor chain of the modified leaf sees invalidation;
        untouched sibling subtrees keep their `cachedFrozen` and are
        reused wholesale on the next freeze. */
-    cachedFrozen.reset();
+    cachedFrozen = nullptr;
     if (auto * leaf = std::get_if<Leaf>(&body)) {
         auto pos = std::lower_bound(leaf->members.begin(), leaf->members.end(), h);
         if (pos != leaf->members.end() && *pos == h)
@@ -322,7 +325,7 @@ void MutableNode::insertAtDepth(const Hash & h, int depth)
     if (child.frozen) {
         /* COW: materialize the frozen child into a mutable copy. */
         auto frozen = std::move(child.frozen);
-        child.mut = std::make_unique<MutableNode>(frozen);
+        child.mut = std::make_unique<MutableNode>(FrozenNodePtr(frozen));
     }
     child.mut->insertAtDepth(h, depth + 1);
 }
@@ -345,10 +348,11 @@ FrozenNodePtr MutableNode::freeze(FrozenNodeCache & cache)
 {
     /* Fast path: this node hasn't mutated since the last freeze. */
     if (cachedFrozen)
-        return cachedFrozen;
+        return FrozenNodePtr(cachedFrozen);
     if (auto * leaf = std::get_if<Leaf>(&body)) {
-        cachedFrozen = cache.internLeaf(leaf->members);
-        return cachedFrozen;
+        auto r = cache.internLeaf(leaf->members);
+        cachedFrozen = r;  // ref → shared_ptr
+        return r;
     }
     auto & inter = std::get<Internal>(body);
     std::vector<std::pair<uint8_t, FrozenNodePtr>> frozenChildren;
@@ -358,11 +362,12 @@ FrozenNodePtr MutableNode::freeze(FrozenNodeCache & cache)
         /* Frozen child: reuse directly. Mutable child: recurse — its
            own `cachedFrozen` short-circuits sibling subtrees that
            didn't change. */
-        FrozenNodePtr child = c.frozen ? c.frozen : c.mut->freeze(cache);
+        FrozenNodePtr child = c.frozen ? FrozenNodePtr(c.frozen) : c.mut->freeze(cache);
         frozenChildren.emplace_back(i, std::move(child));
     }
-    cachedFrozen = cache.internInternal(std::move(frozenChildren));
-    return cachedFrozen;
+    auto r = cache.internInternal(std::move(frozenChildren));
+    cachedFrozen = r;
+    return r;
 }
 
 /* ─────────────────────────────────────────────────────────────────────

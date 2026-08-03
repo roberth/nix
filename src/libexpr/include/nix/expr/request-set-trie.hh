@@ -23,10 +23,11 @@
  */
 
 #include "nix/expr/tracing-decision-graph.hh"
+#include "nix/util/fun.hh"
 #include "nix/util/hash.hh"
+#include "nix/util/ref.hh"
 
 #include <array>
-#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -46,7 +47,13 @@ constexpr size_t TRIE_SPLIT_THRESHOLD = 16;
 uint8_t bucketAt(const Hash & h, int depth);
 
 class FrozenNode;
-using FrozenNodePtr = std::shared_ptr<const FrozenNode>;
+/** Non-nullable shared reference to a FrozenNode. Used at every site
+    that holds a definite reference (return of intern/freeze, child
+    slots in the internal-node representation, etc.). Nullable slots
+    (empty bucket in a MutableNode, uninitialised cache) use
+    `std::optional<FrozenNodePtr>` or plain `std::shared_ptr<const
+    FrozenNode>` where nullability is intrinsic. */
+using FrozenNodePtr = ref<const FrozenNode>;
 
 /** Content-addressed trie node. Immutable after construction. Instances
     are shared via `FrozenNodePtr`; the identity is `hash`, computed at
@@ -140,8 +147,8 @@ public:
         parent (matches TrieBuilder::persistTree semantics; readers
         that walk internal nodes' child refs find them already
         persisted). */
-    using PersistSink = std::function<void(const Hash &, std::string_view)>;
-    void persist(const FrozenNodePtr & root, const PersistSink & sink);
+    using PersistSink = fun<void(const Hash &, std::string_view)>;
+    void persist(const FrozenNodePtr & root, PersistSink & sink);
 
 private:
     std::unordered_map<Hash, FrozenNodePtr> byHash;
@@ -165,11 +172,12 @@ public:
 
     /** Child slot in an internal node. At most one of `mut` / `frozen`
         is populated. Absent slot (both null) = no members in that
-        bucket. */
+        bucket. `frozen` is nullable-by-design (empty bucket), so it's
+        `shared_ptr`, not `ref`. */
     struct Child
     {
         std::unique_ptr<MutableNode> mut;
-        FrozenNodePtr frozen;
+        std::shared_ptr<const FrozenNode> frozen;
 
         bool empty() const noexcept { return !mut && !frozen; }
         size_t size() const noexcept;
@@ -186,8 +194,9 @@ public:
     /** Cached result of the last freeze, if still valid (no mutation
         since). Invalidated at the top of every insert. Set at the end
         of every freeze. Enables O(depth) freeze after O(depth) insert
-        when the caller freezes after every step. */
-    mutable FrozenNodePtr cachedFrozen;
+        when the caller freezes after every step. Nullable-by-design
+        (unset before first freeze / after invalidation). */
+    mutable std::shared_ptr<const FrozenNode> cachedFrozen;
 
     /** Fresh empty mutable tree (empty leaf). */
     MutableNode() = default;
