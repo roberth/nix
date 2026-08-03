@@ -36,7 +36,7 @@ TracingReplayEvaluator::TracingReplayEvaluator(
 
 std::optional<TracingReplayEvaluator::WalkResult>
 TracingReplayEvaluator::walk(
-    const Hash & selectorHash,
+    const TracingHash & selectorHash,
     std::shared_ptr<Object> currentProxy,
     std::shared_ptr<const ArgCell> cell)
 {
@@ -52,7 +52,7 @@ TracingReplayEvaluator::walk(
        active walk's cell is the state carrier (parent-chain reachable
        from currentProxy). Switching walks = switching active cell. */
     std::shared_ptr<QState> qState = std::make_shared<QState>();
-    qState->currentQ = selectorHash;
+    qState->currentQ = selectorHash.toNixHash();
     if (cell) {
         cell->qState = qState;
         /* #177: back-pointer to the cell so writer-side cell.factSetHash()
@@ -70,7 +70,7 @@ TracingReplayEvaluator::walk(
         TracingHash fingerprint = TracingHash::zero();
         for (const auto & f : pendingEdgeObservations)
             fingerprint = TracingDecisionGraph::xorHashes(fingerprint, f.elementHash);
-        if (committedEdgeFingerprints.insert(fingerprint.toNixHash()).second) {
+        if (committedEdgeFingerprints.insert(fingerprint).second) {
             /* Replay validation must not mutate writer state — recording
                and replay run through the same TracingWriter but their
                cells are semantically distinct. Prior code attributed
@@ -117,8 +117,8 @@ TracingReplayEvaluator::walk(
             },
         }, *req);
         if (!willMoveStateHash) {
-            if (auto it = responseFor.find(requestHash.toNixHash()); it != responseFor.end())
-                return TracingHash::of(it->second);
+            if (auto it = responseFor.find(requestHash); it != responseFor.end())
+                return it->second;
         }
         /* Cell-migration Phase B: SelectorApply is now walkable (its
            Terminal is inserted by TracingEvaluator::apply after
@@ -146,7 +146,7 @@ TracingReplayEvaluator::walk(
            substitute on DISPATCH FAILURE (see the block above), not
            on mismatch. */
         if (!willMoveStateHash)
-            responseFor.emplace(requestHash.toNixHash(), h.toNixHash());
+            responseFor.emplace(requestHash, h);
         /* Walker-side dispatch is validation, not new recording.
            The observation being validated was already emitted by the
            original interpreter run (via logResponse or
@@ -214,8 +214,8 @@ TracingReplayEvaluator::walk(
     committedEdgeFingerprints.clear();
     struct WalkScope
     {
-        std::unordered_set<Hash> & committedEdgeFingerprints;
-        std::unordered_set<Hash> savedFingerprints;
+        std::unordered_set<TracingHash> & committedEdgeFingerprints;
+        std::unordered_set<TracingHash> savedFingerprints;
         ~WalkScope()
         {
             committedEdgeFingerprints = std::move(savedFingerprints);
@@ -234,7 +234,7 @@ TracingReplayEvaluator::walk(
        writer keys Terminals at cell.factSetHash(); walker's startCur
        must match. */
     TracingHash cellAnchor = cell ? cell->factSetHash() : TracingDecisionGraph::emptySetHash();
-    walkHit = decisionGraph.walk(TracingHash::of(selectorHash), dispatch,
+    walkHit = decisionGraph.walk(selectorHash, dispatch,
         [&](bool committed, const std::vector<TracingHash> & useful) {
             if (committed) commitEdge();
             else commitRejected(useful);
@@ -258,7 +258,7 @@ TracingReplayEvaluator::walk(
                                 structuralAnchor.toHex().substr(0, 12).c_str());
                 pendingEdgeObservations.clear();
                 rejectedObs.clear();
-                walkHit = decisionGraph.walk(TracingHash::of(selectorHash), dispatch,
+                walkHit = decisionGraph.walk(selectorHash, dispatch,
                     [&](bool committed, const std::vector<TracingHash> & useful) {
                         if (committed) commitEdge();
                         else commitRejected(useful);
@@ -276,7 +276,7 @@ TracingReplayEvaluator::walk(
         tracingCacheLog("walk fallback: retrying from ∅");
         pendingEdgeObservations.clear();
         rejectedObs.clear();
-        walkHit = decisionGraph.walk(TracingHash::of(selectorHash), dispatch,
+        walkHit = decisionGraph.walk(selectorHash, dispatch,
             [&](bool committed, const std::vector<TracingHash> & useful) {
                 if (committed) commitEdge();
                 else commitRejected(useful);
@@ -426,7 +426,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveIdentity(const std::strin
         auto resolved = trace::resolveFromJson(reqJson, decisionGraph.selectorPool);
         auto * cba = resolved ? std::get_if<trace::SelectorCallbackApply>(&(*resolved)->node) : nullptr;
         if (!cba) return nullptr;
-        auto obsSet = decisionGraph.getObservationSet(cba->argObsSet.toNixHash());
+        auto obsSet = decisionGraph.getObservationSet(cba->argObsSet);
         if (!obsSet) {
             tracingCacheLog(
                 "resolve %s: callbackApply obsSet=%s not in pool",
@@ -597,7 +597,7 @@ std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nl
                    subject-navigation, invoke fn->queryApply(replayArg),
                    return the applyResult's WHNF. */
                 std::string fnHex = q.parent->cachedHash.toHex();
-                auto obsSet = decisionGraph.getObservationSet(q.argObsSet.toNixHash());
+                auto obsSet = decisionGraph.getObservationSet(q.argObsSet);
                 if (!obsSet) {
                     tracingCacheLog(
                         "callbackApply: obsSet=%s not in pool — miss",
@@ -722,7 +722,7 @@ TracingReplayEvaluator::lookup(const Q & query, std::shared_ptr<Object> currentP
        Phase F: forward the cell so walker's per-walk state lives on
        cell.qState. Callers with a cell (evalFile/evalExpr root cell,
        apply's applyResult cell) pass it; others pass nullptr. */
-    auto walkResult = walk(selectorHash.toNixHash(), std::move(currentProxy), std::move(cell));
+    auto walkResult = walk(selectorHash, std::move(currentProxy), std::move(cell));
     if (!walkResult)
         return std::nullopt;
     tracingCacheLog("replay hit: %s", Q::tag);

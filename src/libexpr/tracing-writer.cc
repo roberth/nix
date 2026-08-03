@@ -44,7 +44,7 @@ std::optional<CanonicaliseResult> tryStateCreepCanonicalise(
     auto * incCBA = std::get_if<trace::SelectorCallbackApply>(&incGA->parent->node);
     if (!incCBA) return std::nullopt;
 
-    auto incomingObsSet = dg.getObservationSet(incCBA->argObsSet.toNixHash());
+    auto incomingObsSet = dg.getObservationSet(incCBA->argObsSet);
     if (!incomingObsSet) return std::nullopt;
 
     /* Scan cell's facts for a matching predicate + response. Each
@@ -64,7 +64,7 @@ std::optional<CanonicaliseResult> tryStateCreepCanonicalise(
         if (exCBA->parent->cachedHash != incCBA->parent->cachedHash) continue;
         if (exCBA->argObsSet == incCBA->argObsSet) continue;
 
-        auto existingObsSet = dg.getObservationSet(exCBA->argObsSet.toNixHash());
+        auto existingObsSet = dg.getObservationSet(exCBA->argObsSet);
         if (!existingObsSet) continue;
 
         /* Intersect: keep entries present in both, matched by

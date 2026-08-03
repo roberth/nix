@@ -66,14 +66,14 @@ struct QState
     /** Dedup committed edges within this walk (XOR-fold of
         element hashes within the edge). addFact is idempotent, so
         this is a perf shortcut to skip the drain loop on repeats. */
-    std::unordered_set<Hash> committedEdgeFingerprints;
+    std::unordered_set<TracingHash> committedEdgeFingerprints;
 
     /** Memoize requestHash -> responseHash for stable requests within
         this walk (file reads, env vars — no `from` state, response is
         a pure function of request). Skipped for outer-value requests
         whose `from` is pre-response and can produce different
         responses under matching-until-divergence divergence. */
-    std::unordered_map<Hash, Hash> responseFor;
+    std::unordered_map<TracingHash, TracingHash> responseFor;
 };
 
 } // namespace nix

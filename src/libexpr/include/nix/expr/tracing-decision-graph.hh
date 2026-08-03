@@ -172,7 +172,7 @@ public:
         }
     };
     Hash insertObservationSet(std::vector<InlineFact> members);
-    std::optional<std::vector<InlineFact>> getObservationSet(const Hash & h);
+    std::optional<std::vector<InlineFact>> getObservationSet(const TracingHash & h);
 
 
     /* ─────────────────────────────────────────────────────────────────

@@ -118,7 +118,7 @@ class TracingReplayEvaluator : public Evaluator
         chain grounds outer-value id resolution during dispatch (null
         at top-level entry points). Returns nullopt on miss. */
     std::optional<WalkResult> walk(
-        const Hash & selectorHash,
+        const TracingHash & selectorHash,
         std::shared_ptr<Object> currentProxy = nullptr,
         std::shared_ptr<const ArgCell> cell = nullptr);
 

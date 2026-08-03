@@ -310,7 +310,7 @@ std::shared_ptr<Object> ReplayCallbackArg::queryApply(std::shared_ptr<Object> ar
         if (!sca) continue;
         if (sca->parent->cachedHash != producer->cachedHash) continue;
 
-        auto layer2Obs = decisionGraph.getObservationSet(sca->argObsSet.toNixHash());
+        auto layer2Obs = decisionGraph.getObservationSet(sca->argObsSet);
         if (!layer2Obs) continue;
 
         bool allMatch = true;
@@ -329,7 +329,7 @@ std::shared_ptr<Object> ReplayCallbackArg::queryApply(std::shared_ptr<Object> ar
                 if (auto * nestedSca = std::get_if<trace::SelectorCallbackApply>(
                         &(*probeSelOpt)->node)) {
                     auto nestedObsSet = decisionGraph.getObservationSet(
-                        nestedSca->argObsSet.toNixHash());
+                        nestedSca->argObsSet);
                     if (!nestedObsSet) { allMatch = false; break; }
                     auto nestedObsMap = std::make_shared<std::map<Hash, std::string>>();
                     for (const auto & obs : *nestedObsSet)
