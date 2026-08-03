@@ -625,6 +625,14 @@ struct DgTrieNode
 
 static DgTrieNode dg_parseTrieNode(std::string_view payload)
 {
+    /* Mirror of trace::rst::FrozenNodeCache::intern's payload layout —
+       kept here so decision-graph-side traversal (member collection,
+       recursive top-down load) doesn't need to intern into the rst
+       cache. Layout:
+         Leaf:     [0x00] hash_1 ... hash_n
+         Internal: [0x01] depth bitmap_lo bitmap_hi child_hash_1 ... child_hash_k
+       The bucket byte we surface in `children` is the slot index recovered
+       from the bitmap. */
     if (payload.empty())
         throw Error("decision-graph: malformed RequestSet node (empty)");
     const size_t hs = trace::tracingHashSize;
@@ -636,13 +644,21 @@ static DgTrieNode dg_parseTrieNode(std::string_view payload)
         for (size_t i = 1; i + hs <= payload.size(); i += hs)
             out.members.push_back(dg_blobToHash(payload.substr(i, hs)));
     } else {
-        const size_t entrySize = 1 + hs;
-        if ((payload.size() - 1) % entrySize != 0)
+        if (payload.size() < 4)
             throw Error("decision-graph: malformed RequestSet internal node (size=%d)", payload.size());
-        for (size_t i = 1; i + entrySize <= payload.size(); i += entrySize) {
-            uint8_t bucket = static_cast<uint8_t>(payload[i]);
-            out.children.emplace_back(bucket, dg_blobToHash(payload.substr(i + 1, hs)));
+        uint16_t bitmap = static_cast<uint8_t>(payload[2])
+                        | (static_cast<uint8_t>(payload[3]) << 8);
+        size_t off = 4;
+        for (uint8_t slot = 0; slot < 16; ++slot) {
+            if (!(bitmap & (uint16_t(1) << slot)))
+                continue;
+            if (off + hs > payload.size())
+                throw Error("decision-graph: malformed RequestSet internal node (truncated at slot %d)", slot);
+            out.children.emplace_back(slot, dg_blobToHash(payload.substr(off, hs)));
+            off += hs;
         }
+        if (off != payload.size())
+            throw Error("decision-graph: trailing bytes in RequestSet internal payload");
     }
     return out;
 }
