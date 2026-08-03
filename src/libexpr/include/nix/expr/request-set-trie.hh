@@ -233,4 +233,11 @@ std::vector<Hash> difference(const FrozenNode & a, const FrozenNode & b);
 /** A ⊆ B — every member of A is a member of B. */
 bool isSubset(const FrozenNode & a, const FrozenNode & b);
 
+/** A ∩ B — members present in both, returned as an interned
+    FrozenNodePtr. Parallel walk short-circuits at hash-equal
+    subtrees (returns that subtree pointer directly, no rebuild).
+    Takes FrozenNodePtrs so the short-circuit case can hand back
+    the caller's own reference. */
+FrozenNodePtr intersection(const FrozenNodePtr & a, const FrozenNodePtr & b, FrozenNodeCache & cache);
+
 } // namespace nix::trace::rst

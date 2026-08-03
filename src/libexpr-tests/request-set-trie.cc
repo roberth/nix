@@ -522,6 +522,75 @@ TEST_F(RequestSetTrieTest, IncrementalInsertAndFreezeReusesUnchangedSubtrees)
 }
 
 /* ─────────────────────────────────────────────────────────────────────
+   Intersection
+   ───────────────────────────────────────────────────────────────────── */
+
+TEST_F(RequestSetTrieTest, IntersectionSameSetIsSelf)
+{
+    FrozenNodeCache cache;
+    auto a = cache.internSet(hashes(30));
+    auto both = intersection(a, a, cache);
+    EXPECT_EQ(both, a);
+}
+
+TEST_F(RequestSetTrieTest, IntersectionDisjointIsEmpty)
+{
+    FrozenNodeCache cache;
+    std::vector<Hash> aMembers, bMembers;
+    for (size_t i = 0; i < 20; ++i) aMembers.push_back(h(i));
+    for (size_t i = 100; i < 120; ++i) bMembers.push_back(h(i));
+    auto a = cache.internSet(aMembers);
+    auto b = cache.internSet(bMembers);
+    auto ab = intersection(a, b, cache);
+    EXPECT_EQ(ab->size(), 0u);
+    EXPECT_TRUE(ab->isLeaf());
+}
+
+TEST_F(RequestSetTrieTest, IntersectionSubsetReturnsSubset)
+{
+    FrozenNodeCache cache;
+    std::vector<Hash> allM, subM;
+    for (size_t i = 0; i < 30; ++i) allM.push_back(h(i));
+    for (size_t i = 0; i < 10; ++i) subM.push_back(h(i));
+    auto full = cache.internSet(allM);
+    auto sub  = cache.internSet(subM);
+    auto both = intersection(full, sub, cache);
+    EXPECT_EQ(both, sub);
+    /* Symmetric. */
+    auto both2 = intersection(sub, full, cache);
+    EXPECT_EQ(both2, sub);
+}
+
+TEST_F(RequestSetTrieTest, IntersectionPartialOverlap)
+{
+    FrozenNodeCache cache;
+    std::vector<Hash> aM, bM;
+    for (size_t i = 0; i < 30; ++i) aM.push_back(h(i));
+    for (size_t i = 25; i < 60; ++i) bM.push_back(h(i));
+    auto a = cache.internSet(aM);
+    auto b = cache.internSet(bM);
+    auto ab = intersection(a, b, cache);
+    /* Overlap is [25..30) — 5 members. */
+    EXPECT_EQ(ab->size(), 5u);
+    for (size_t i = 25; i < 30; ++i) EXPECT_TRUE(ab->contains(h(i)));
+    for (size_t i = 0; i < 25; ++i)  EXPECT_FALSE(ab->contains(h(i)));
+    for (size_t i = 30; i < 60; ++i) EXPECT_FALSE(ab->contains(h(i)));
+}
+
+TEST_F(RequestSetTrieTest, IntersectionCommutative)
+{
+    FrozenNodeCache cache;
+    auto a = cache.internSet(hashes(50));
+    /* Skip a few members to give a distinct b. */
+    std::vector<Hash> bM;
+    for (size_t i = 3; i < 45; ++i) bM.push_back(h(i));
+    auto b = cache.internSet(bM);
+    auto ab = intersection(a, b, cache);
+    auto ba = intersection(b, a, cache);
+    EXPECT_EQ(ab, ba);
+}
+
+/* ─────────────────────────────────────────────────────────────────────
    Persistence
    ───────────────────────────────────────────────────────────────────── */
 

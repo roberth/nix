@@ -422,6 +422,51 @@ std::vector<Hash> difference(const FrozenNode & a, const FrozenNode & b)
     return out;
 }
 
+FrozenNodePtr intersection(const FrozenNodePtr & a, const FrozenNodePtr & b, FrozenNodeCache & cache)
+{
+    /* Recursive: return the shared subtree pointer directly when
+       hashes match (this is the whole point — no rebuild, no
+       re-hash). Empty results converge on the interned empty leaf. */
+    auto walk = [&](const FrozenNodePtr & na, const FrozenNodePtr & nb, auto & self) -> FrozenNodePtr {
+        if (na->hash == nb->hash)
+            return na; // could be either — pick one
+        if (na->isLeaf() && nb->isLeaf()) {
+            const auto & am = na->asLeaf().members;
+            const auto & bm = nb->asLeaf().members;
+            std::vector<Hash> intersected;
+            std::set_intersection(am.begin(), am.end(), bm.begin(), bm.end(),
+                std::back_inserter(intersected));
+            return cache.internLeaf(std::move(intersected));
+        }
+        if (na->isLeaf()) {
+            std::vector<Hash> intersected;
+            for (const auto & m : na->asLeaf().members)
+                if (nb->contains(m))
+                    intersected.push_back(m);
+            return cache.internLeaf(std::move(intersected));
+        }
+        if (nb->isLeaf())
+            return self(nb, na, self); // symmetric
+        /* Both internal — parallel bucket walk. */
+        const auto & ac = na->asInternal().children;
+        const auto & bc = nb->asInternal().children;
+        std::vector<std::pair<uint8_t, FrozenNodePtr>> outChildren;
+        size_t i = 0, j = 0;
+        while (i < ac.size() && j < bc.size()) {
+            if (ac[i].first < bc[j].first) { ++i; continue; }
+            if (bc[j].first < ac[i].first) { ++j; continue; }
+            auto childInter = self(ac[i].second, bc[j].second, self);
+            if (childInter->size() > 0)
+                outChildren.emplace_back(ac[i].first, std::move(childInter));
+            ++i; ++j;
+        }
+        if (outChildren.empty())
+            return cache.internLeaf({});
+        return cache.internInternal(std::move(outChildren));
+    };
+    return walk(a, b, walk);
+}
+
 bool isSubset(const FrozenNode & a, const FrozenNode & b)
 {
     auto walk = [&](const FrozenNode & na, const FrozenNode & nb, auto & self) -> bool {
