@@ -168,6 +168,7 @@ sources = files(
   'replay-callback-arg.cc',
   'tracing-cache-stats.cc',
   'tracing-environment.cc',
+  'request-set-trie.cc',
   'tracing-decision-graph.cc',
   'tracing-evaluator.cc',
   'tracing-callback-arg.cc',

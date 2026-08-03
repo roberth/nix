@@ -76,6 +76,7 @@ sources = files(
   'path-equivalent.cc',
   'path-ordering.cc',
   'primops.cc',
+  'request-set-trie.cc',
   'search-path.cc',
   'source-root.cc',
   'tostring-path-context.cc',
