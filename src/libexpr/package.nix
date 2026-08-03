@@ -12,6 +12,7 @@
   nix-fetchers,
   boost,
   boehmgc,
+  libblake3,
   nlohmann_json,
   sqlite,
   toml11,
@@ -65,6 +66,7 @@ mkMesonLibrary (finalAttrs: {
   ];
 
   buildInputs = [
+    libblake3
     sqlite
     toml11
   ]

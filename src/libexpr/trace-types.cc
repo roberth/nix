@@ -5,6 +5,8 @@
 #include "nix/util/logging.hh"
 #include "nix/util/util.hh"
 
+#include <blake3.h>
+
 #include <cstring>
 #include <map>
 
@@ -565,13 +567,16 @@ namespace nix {
 
 TracingHash TracingHash::compute(std::string_view input)
 {
-    /* Delegate to SHA-256 via the existing pipeline; truncate to the
-       first 16 bytes. This is the single line to swap when moving to
-       BLAKE3 — everything downstream consumes TracingHash bytes with
-       no algorithm knowledge. */
-    Hash h = hashString(HashAlgorithm::SHA256, input);
+    /* BLAKE3 called directly — no nix::Hash allocation, no algorithm
+       tag, no dispatch. BLAKE3 is chosen for speed (multi-GB/s on
+       commodity hardware, single-core SIMD path). It's an XOF: we
+       request exactly `size` (16) output bytes; no truncation of a
+       wider digest, no wasted work. */
+    blake3_hasher h;
+    blake3_hasher_init(&h);
+    blake3_hasher_update(&h, input.data(), input.size());
     TracingHash r;
-    std::memcpy(r.bytes.data(), h.hash, TracingHash::size);
+    blake3_hasher_finalize(&h, r.bytes.data(), TracingHash::size);
     return r;
 }
 
