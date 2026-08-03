@@ -355,6 +355,34 @@ TEST_F(RequestSetTrieTest, MutableFreezeIsCached)
     EXPECT_EQ(f1, f2);
 }
 
+TEST_F(RequestSetTrieTest, MutableIncrementalFreezeReusesFrozenSubtrees)
+{
+    /* 500 insert+freeze cycles. Under the COW mutable impl each freeze
+       walks only the modified slot-path (O(depth)) — unchanged sibling
+       subtrees stay as frozen refs and don't intern. Total intern
+       attempts should therefore scale with steps × depth, not with
+       total tree size. A bulk-rebuild MutableNode would cost roughly
+       steps × N/16 ≈ 500 * 31 ≈ 15k intern calls; the COW impl
+       should be far below that. */
+    FrozenNodeCache cache;
+    MutableNode mut;
+    for (uint64_t i = 0; i < 500; ++i) {
+        mut.insert(h(i));
+        auto frozen = mut.freeze(cache);
+        EXPECT_EQ(frozen->size(), i + 1);
+        EXPECT_TRUE(frozen->contains(h(i)));
+    }
+    auto perCycle = static_cast<double>(cache.internAttempts()) / 500.0;
+    EXPECT_LT(perCycle, 12.0)
+        << "COW freeze should touch O(depth) nodes per insert; per-cycle="
+        << perCycle << " total=" << cache.internAttempts();
+    /* And a re-freeze without mutation is free (cachedFrozen hits). */
+    auto attemptsBefore = cache.internAttempts();
+    auto again = mut.freeze(cache);
+    EXPECT_EQ(again->size(), 500u);
+    EXPECT_EQ(cache.internAttempts(), attemptsBefore);
+}
+
 TEST_F(RequestSetTrieTest, MutableSeededFromFrozen)
 {
     FrozenNodeCache cache;

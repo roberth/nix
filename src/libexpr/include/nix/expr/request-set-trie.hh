@@ -142,6 +142,20 @@ public:
         Sorts + dedups internally. */
     FrozenNodePtr internSet(std::vector<Hash> members);
 
+    /** Intern a Leaf from an already-sorted, dedup'd member list.
+        Used by MutableNode::freeze to intern a mutable leaf without
+        the internSet sort/dedup pass. */
+    FrozenNodePtr internLeafFromSorted(std::vector<Hash> sortedMembers);
+
+    /** Intern an Internal from a pre-frozen slot array at the given
+        depth. Used by MutableNode::freeze. Slots that are `nullptr`
+        are treated as empty. If exactly one slot is populated the
+        caller is expected to skip-single-slot beforehand (freeze
+        does). */
+    FrozenNodePtr internInternalFromSlots(
+        uint8_t depth,
+        const std::array<std::shared_ptr<const FrozenNode>, RADIX> & slots);
+
     /** Count of node-construction operations. Tests use this to
         verify that freeze reuses cached subtrees rather than
         rebuilding. */
@@ -170,6 +184,9 @@ private:
     FrozenNodePtr.
 
     NOT thread-safe. */
+/* Pimpl body for MutableNode. Definition lives in request-set-trie.cc. */
+struct MutableNodeBody;
+
 class MutableNode
 {
 public:
@@ -192,9 +209,7 @@ public:
     FrozenNodePtr freeze(FrozenNodeCache & cache);
 
 private:
-    /* Implementation-defined; see request-set-trie.cc. */
-    struct Body;
-    std::unique_ptr<Body> body;
+    std::unique_ptr<MutableNodeBody> body;
 };
 
 /** A \ B — members present in A but not in B. */
