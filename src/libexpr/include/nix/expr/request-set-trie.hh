@@ -30,6 +30,7 @@
 #include <array>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <unordered_map>
 #include <variant>
@@ -241,5 +242,26 @@ FrozenNodePtr union_(const FrozenNodePtr & a, const FrozenNodePtr & b, FrozenNod
     satisfy `FrozenNodeCache::intern`'s "children must be cached"
     precondition. */
 std::vector<Hash> childHashesInPayload(std::string_view payload);
+
+/** Insert `sortedMembers` (**must be sorted lex-ascending and deduped**)
+    into `node`, returning the resulting FrozenNodePtr. Walks the target
+    slot path top-down and interns exactly the new FrozenNodes along the
+    way — no MutableNode intermediate, no freeze step. Newly-created
+    FrozenNodes have `persisted=false`, so a subsequent
+    `FrozenNodeCache::persist(new_root, sink)` walk enqueues them to the
+    writer thread.
+
+    Members already present in `node` are silently absorbed (idempotent).
+    Members are partitioned by slot at each level; each slot's members
+    are handled in a single recursive call, so batch insert of a small
+    set costs O(depth × distinct-slots-touched), not O(|members| × depth).
+
+    The precondition matches the output shape of `rst::difference` and
+    `FrozenNode::allMembers`, which are the two natural sources of
+    sorted-deduped member vectors in this codebase. */
+FrozenNodePtr insertSortedMembers(
+    const FrozenNodePtr & node,
+    std::span<const Hash> sortedMembers,
+    FrozenNodeCache & cache);
 
 } // namespace nix::trace::rst

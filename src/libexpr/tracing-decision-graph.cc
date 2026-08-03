@@ -966,6 +966,15 @@ TracingDecisionGraph::internRequestSet(std::vector<RequestHash> members)
     return state->requestSetTrieCache.internSet(std::move(members));
 }
 
+trace::rst::FrozenNodePtr
+TracingDecisionGraph::insertSortedMembers(
+    const trace::rst::FrozenNodePtr & node,
+    std::span<const RequestHash> sortedMembers)
+{
+    auto state(_state->lock());
+    return trace::rst::insertSortedMembers(node, sortedMembers, state->requestSetTrieCache);
+}
+
 TracingDecisionGraph::SetHash
 TracingDecisionGraph::insertRequestSet(trace::rst::FrozenNodePtr node)
 {
@@ -1278,11 +1287,8 @@ void TracingDecisionGraph::insertAskSplitting(
         for (const auto & f : remaining) remainingReqsVec.push_back(f.request);
         trace::rst::FrozenNodePtr remainingNode = [&] {
             auto state(_state->lock());
-            return state->requestSetTrieCache.internSet(remainingReqsVec);
+            return state->requestSetTrieCache.internSet(std::move(remainingReqsVec));
         }();
-        std::unordered_set<Hash> remainingReqs;
-        remainingReqs.reserve(remainingReqsVec.size());
-        for (const auto & r : remainingReqsVec) remainingReqs.insert(r);
 
         for (const auto & edge : getAsks(q, cur)) {
             auto exRsHash = edge.requestSet;
@@ -1473,13 +1479,20 @@ static void dg_recordImpl(
         return allRequests.count(req) && !dispatchedSoFar.count(req);
     };
 
-    auto extendCur = [&](const std::vector<Hash> & reqs) {
+    auto extendCurFromReqs = [&](const std::vector<Hash> & reqs) {
         for (const auto & req : reqs) {
             assert(!dispatchedSoFar.count(req));
             auto it = responseFor.find(req);
             assert(it != responseFor.end());
             cur = dg_xorHash(cur, dg_factElementHash(req, it->second));
             dispatchedSoFar.insert(req);
+        }
+    };
+    auto extendCurFromFacts = [&](const std::vector<TracingDecisionGraph::Fact> & facts) {
+        for (const auto & f : facts) {
+            assert(!dispatchedSoFar.count(f.request));
+            cur = dg_xorHash(cur, dg_factElementHash(f.request, f.response));
+            dispatchedSoFar.insert(f.request);
         }
     };
 
@@ -1508,28 +1521,22 @@ static void dg_recordImpl(
         }
 
         if (followUseful) {
-            extendCur(*followUseful);
+            extendCurFromReqs(*followUseful);
         } else {
             /* Build the (req, resp) facts for the current remaining and
                route through insertAskSplitting so any partial overlap
                with an existing Ask at (q, cur) gets factored via
-               Patricia split. The fast-path fold cur → factSetHash
-               remains, but we can't jump straight to it any more —
-               splitting may distribute the insert across multiple curs.
-               (Fast-path re-optimisation is a follow-up.) */
+               Patricia split. */
             std::vector<TracingDecisionGraph::Fact> remainingFacts;
             remainingFacts.reserve(allRequests.size() - dispatchedSoFar.size());
-            std::vector<Hash> remainingVec;
-            remainingVec.reserve(allRequests.size() - dispatchedSoFar.size());
             for (const auto & req : allRequests)
                 if (!dispatchedSoFar.count(req)) {
                     auto it = responseFor.find(req);
                     assert(it != responseFor.end());
                     remainingFacts.push_back({req, it->second});
-                    remainingVec.push_back(req);
                 }
             g.insertAskSplitting(q, cur, remainingFacts, dispatchedSoFar);
-            extendCur(remainingVec);
+            extendCurFromFacts(remainingFacts);
         }
     }
 

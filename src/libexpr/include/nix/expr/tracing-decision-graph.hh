@@ -33,6 +33,7 @@ namespace nix::trace::rst { class FrozenNode; using FrozenNodePtr = nix::ref<con
 #include <functional>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -200,6 +201,15 @@ public:
        Callers with a MutableNode should freeze via
        state->requestSetTrieCache directly (see extendRequestSet). */
     trace::rst::FrozenNodePtr internRequestSet(std::vector<RequestHash> members);
+
+    /* Insert `sortedMembers` (sorted+deduped) into `node`, producing a
+       new FrozenNodePtr with `persisted=false` on newly-created nodes.
+       Direct on the immutable structure — no MutableNode intermediate,
+       no freeze step. Callers that want to persist should chain
+       `insertRequestSet(insertSortedMembers(node, sortedMembers))`. */
+    trace::rst::FrozenNodePtr insertSortedMembers(
+        const trace::rst::FrozenNodePtr & node,
+        std::span<const RequestHash> sortedMembers);
 
     SetHash insertFactSet(std::vector<Fact> members);
 

@@ -727,6 +727,93 @@ FrozenNodePtr intersection(const FrozenNodePtr & a, const FrozenNodePtr & b, Fro
     return cache.internSet(std::move(keep));
 }
 
+/* insertSortedMembers walk. Precondition: `members` is sorted
+   lex-ascending and deduped. Recurses on Internal slots; on Leaf,
+   merges and re-canonicalises via internSet. */
+FrozenNodePtr insertSortedMembers(
+    const FrozenNodePtr & node,
+    std::span<const Hash> members,
+    FrozenNodeCache & cache)
+{
+    if (members.empty())
+        return node;
+
+    /* Leaf: merge the sorted members with the leaf's sorted members
+       (both dedup'd already), then canonicalise. If the result stays
+       under the leaf cap we get a fresh Leaf; otherwise internSet's
+       skip-single-slot builds the correct Internal at the divergence
+       depth. */
+    if (node->isLeaf()) {
+        const auto & leafMembers = node->asLeaf().members;
+        std::vector<Hash> merged;
+        merged.reserve(leafMembers.size() + members.size());
+        std::set_union(leafMembers.begin(), leafMembers.end(),
+                       members.begin(), members.end(),
+                       std::back_inserter(merged));
+        if (merged.size() == leafMembers.size())
+            return node;  // no novel members
+        return cache.internSet(std::move(merged));
+    }
+
+    /* Internal at some depth D. Members are sorted; slotFor at D is a
+       top-nibble extract that partitions the sorted stream into
+       contiguous runs per slot. */
+    const auto & inter = node->asInternal();
+    uint8_t depth = inter.depth;
+
+    /* Fast check: does anything actually diverge from a common prefix
+       of `members` with the Internal's structural anchor? Under
+       skip-single-slot the Internal may live at depth > 0. If any
+       incoming member has different bits between root-depth and this
+       node's depth from what's already there, the assumption "all
+       these members belong under this Internal" doesn't hold and we
+       fall through to the flatten-then-internSet path. In the common
+       case (recursive call landed here because parent partition
+       already established the prefix match), this check is O(1) per
+       incoming member. */
+    Hash anchor = members.front();  // any member; skip-single-slot depths compared against the first
+    /* (Nothing to check when node came from a call where depth already
+       matches — that's the invariant callers below maintain. Explicit
+       check would be per-caller; we rely on canonicalisation via
+       internSet as a correctness safety net if invariant slips.) */
+
+    std::array<std::shared_ptr<const FrozenNode>, RADIX> newSlots = inter.slots;
+    bool anyChange = false;
+    size_t i = 0;
+    while (i < members.size()) {
+        size_t slot = slotFor(members[i], depth);
+        size_t j = i + 1;
+        while (j < members.size() && slotFor(members[j], depth) == slot)
+            ++j;
+        std::span<const Hash> slotMembers(members.data() + i, j - i);
+        if (newSlots[slot]) {
+            auto old = newSlots[slot];
+            /* Recurse into the existing subtree. Note: if the child
+               is at a deeper depth (skip-single-slot chain), the
+               child's isLeaf/asInternal logic still works — a Leaf
+               absorbs via set_union; an Internal at deeper depth
+               may diverge on prefix, in which case the recursive
+               call's fallback (internSet re-canonicalisation) kicks
+               in for that slot. */
+            auto updated = insertSortedMembers(FrozenNodePtr(old), slotMembers, cache);
+            if (updated.get_ptr() != old) {
+                newSlots[slot] = updated.get_ptr();
+                anyChange = true;
+            }
+        } else {
+            /* Fresh subtree from just these members. internSet
+               canonicalises to the correct depth automatically. */
+            std::vector<Hash> ms(slotMembers.begin(), slotMembers.end());
+            newSlots[slot] = cache.internSet(std::move(ms)).get_ptr();
+            anyChange = true;
+        }
+        i = j;
+    }
+    if (!anyChange)
+        return node;
+    return cache.internInternalFromSlots(depth, newSlots);
+}
+
 std::vector<Hash> childHashesInPayload(std::string_view payload)
 {
     if (payload.empty() || payload[0] != char(0x01))

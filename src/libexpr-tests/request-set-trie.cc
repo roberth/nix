@@ -527,6 +527,64 @@ TEST_F(RequestSetTrieTest, UnionSupersetSubsetIsSuperset)
     EXPECT_EQ(union_(subN, fullN, cache), fullN);
 }
 
+TEST_F(RequestSetTrieTest, InsertMembersEmptyIsIdentity)
+{
+    FrozenNodeCache cache;
+    auto root = cache.internSet(hashes(50));
+    std::vector<Hash> empty;
+    EXPECT_EQ(insertSortedMembers(root, empty, cache), root);
+}
+
+TEST_F(RequestSetTrieTest, InsertMembersAlreadyPresentIsIdentity)
+{
+    FrozenNodeCache cache;
+    auto root = cache.internSet(hashes(50));
+    auto subset = hashes(10);  // sorted, subset of hashes(50) ... well, hashes returns h(0..n-1)
+    std::sort(subset.begin(), subset.end());
+    EXPECT_EQ(insertSortedMembers(root, subset, cache), root);
+}
+
+TEST_F(RequestSetTrieTest, InsertMembersEqualsInternSetOfUnion)
+{
+    FrozenNodeCache cache;
+    auto base = hashes(80);
+    auto baseNode = cache.internSet(base);
+    std::vector<Hash> extras;
+    for (uint64_t i = 1000; i < 1030; ++i) extras.push_back(h(i));
+    std::sort(extras.begin(), extras.end());
+    auto viaInsert = insertSortedMembers(baseNode, extras, cache);
+    auto combined = base;
+    combined.insert(combined.end(), extras.begin(), extras.end());
+    auto viaInternSet = cache.internSet(std::move(combined));
+    EXPECT_EQ(viaInsert, viaInternSet);
+}
+
+TEST_F(RequestSetTrieTest, InsertMembersProducesNodesReadyToPersist)
+{
+    /* Freshly-created FrozenNodes have persisted=false. persist walks
+       and enqueues each. If we insertSortedMembers into an already-persisted
+       tree, only the new nodes on the mutated path should show up in
+       the sink. */
+    FrozenNodeCache cache;
+    auto base = cache.internSet(hashes(200));
+    std::vector<Hash> initialWrites;
+    FrozenNodeCache::PersistSink sink =
+        [&](const Hash & h, std::string_view) { initialWrites.push_back(h); };
+    cache.persist(base, sink);
+    auto initialCount = initialWrites.size();
+
+    std::vector<Hash> extras;
+    for (uint64_t i = 1000; i < 1005; ++i) extras.push_back(h(i));
+    std::sort(extras.begin(), extras.end());
+    auto extended = insertSortedMembers(base, extras, cache);
+
+    initialWrites.clear();
+    cache.persist(extended, sink);
+    EXPECT_GT(initialWrites.size(), 0u);
+    EXPECT_LT(initialWrites.size(), initialCount)
+        << "insertSortedMembers should only produce the new modified-path nodes";
+}
+
 TEST_F(RequestSetTrieTest, UnionCommutative)
 {
     FrozenNodeCache cache;
