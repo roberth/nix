@@ -18,7 +18,7 @@ namespace nix {
    distinct names to avoid ODR collisions. */
 static std::string tracingLocalFromOf(OuterId id)
 {
-    return id.to_string(HashFormat::Base16, false);
+    return id.toHex();
 }
 
 TracingCallbackArg::TracingCallbackArg(
@@ -254,7 +254,7 @@ void TracingCallbackArg::recordObservation(ref<const trace::Selector> query, con
     auto & dg = writer.getDecisionGraph();
     nlohmann::json qJson = trace::toJson(*query);
     dg.insertRequest(qh, jsonToCborString(qJson));
-    argCell->callbackState->runningObsSet.push_back({qh.toNixHash(), rPayload});
+    argCell->callbackState->runningObsSet.push_back({qh, rPayload});
 }
 
 std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> argObj)
@@ -305,7 +305,7 @@ std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> a
             [](const auto & r) -> nlohmann::json { return r; }, qr.result);
         auto rPayload = jsonToCborString(rJson);
         dg.insertRequest(q->cachedHash, jsonToCborString(trace::toJson(*q)));
-        layer2Cell->callbackState->runningObsSet.push_back({q->cachedHash.toNixHash(), rPayload});
+        layer2Cell->callbackState->runningObsSet.push_back({q->cachedHash, rPayload});
         return qr;
     };
 
@@ -352,7 +352,7 @@ std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> a
                 [](const auto & r) -> nlohmann::json { return r; }, qr.result);
             auto rPayload = jsonToCborString(rJson);
             dg.insertRequest(q->cachedHash, jsonToCborString(trace::toJson(*q)));
-            nestedCell->callbackState->runningObsSet.push_back({q->cachedHash.toNixHash(), rPayload});
+            nestedCell->callbackState->runningObsSet.push_back({q->cachedHash, rPayload});
             return qr;
         };
 
@@ -379,7 +379,7 @@ std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> a
             auto obsSetHash = dg.insertObservationSet(
                 nestedCell->callbackState->runningObsSet);
             return dg.selectorPool.intern(
-                trace::SelectorCallbackApply{TracingHash::of(obsSetHash), fnProducer});
+                trace::SelectorCallbackApply{obsSetHash, fnProducer});
         };
         return OuterApplyResult{
             .applyResult = std::move(applyResultObj),
@@ -412,10 +412,10 @@ std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> a
         layer2Cell->callbackState->runningObsSet);
     tracingCacheLog(
         "TCA::queryApply: layer-2 obsSet=%s (%zu probes)",
-        layer2ObsHash.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
+        layer2ObsHash.toHex().substr(0, 12).c_str(),
         layer2Cell->callbackState->runningObsSet.size());
     auto scaSel = dg.selectorPool.intern(
-        trace::SelectorCallbackApply{TracingHash::of(layer2ObsHash), producer});
+        trace::SelectorCallbackApply{layer2ObsHash, producer});
     recordObservation(scaSel, applyResultWhnf);
 
     /* H2: wrap the applyResult in a TCA with producer=scaSel and

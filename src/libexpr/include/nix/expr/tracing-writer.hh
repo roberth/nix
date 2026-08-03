@@ -399,7 +399,7 @@ public:
                     fnRef = *found;
             } catch (...) {}
             auto qcaSel = decisionGraph.selectorPool.intern(trace::SelectorCallbackApply{
-                TracingHash::of(obsSetHash), fnRef});
+                obsSetHash, fnRef});
             std::shared_ptr<const ArgCell> attrCell = callbackCell ? callbackCell->parent : nullptr;
             logOuterObservation(
                 qcaSel,
@@ -445,7 +445,7 @@ public:
             selectorHash.toHex().substr(0, 12),
             qj.dump());
         auto qState = std::make_shared<QState>();
-        qState->currentQ = selectorHash.toNixHash();
+        qState->currentQ = selectorHash;
         if (cell) {
             /* Cross-link both directions atomically. QState needs the
                back-ref for cell->factSetHash() lookups during Ask/Terminal
@@ -476,7 +476,7 @@ public:
             qj.dump());
         SelectorHandle qh{selectorHash};
         auto qState = std::make_shared<QState>();
-        qState->currentQ = selectorHash.toNixHash();
+        qState->currentQ = selectorHash;
         if (cell) {
             /* Cross-link both directions atomically. QState needs the
                back-ref for cell->factSetHash() lookups during Ask/Terminal
@@ -525,7 +525,7 @@ public:
         sink.logResult(valueNum, result);
         nlohmann::json j = result;
         auto resultPayload = jsonToCborString(j);
-        auto resultNodeHash = TracingHash::of(TracingDecisionGraph::computeResponseHash(resultPayload));
+        auto resultNodeHash = TracingDecisionGraph::computeResponseHash(resultPayload);
         /* #182: if a cell is provided (getter was pushed via logQuery),
            write Terminal at the LIVE post-fold cell.factSetHash() —
            not the pre-fold anchor snapshot. Then pop the matching
@@ -592,7 +592,7 @@ public:
         nlohmann::json respJson = resp.response;
         auto selectorHash = TracingDecisionGraph::computeSelectorHash(resp.request);
         auto responsePayload = jsonToCborString(respJson);
-        auto responseHash = TracingHash::of(TracingDecisionGraph::computeResponseHash(responsePayload));
+        auto responseHash = TracingDecisionGraph::computeResponseHash(responsePayload);
         decisionGraph.insertRequest(selectorHash, jsonToCborString(reqJson));
         auto factHash = TracingDecisionGraph::xorFactIntoHash(
             trace::tracingZeroHash(), selectorHash, responseHash);
@@ -673,7 +673,7 @@ public:
 
         nlohmann::json j = result;
         auto resultPayload = jsonToCborString(j);
-        auto resultNodeHash = TracingHash::of(TracingDecisionGraph::computeResponseHash(resultPayload));
+        auto resultNodeHash = TracingDecisionGraph::computeResponseHash(resultPayload);
         decisionGraph.insertResult(resultNodeHash, resultPayload);
 
         {

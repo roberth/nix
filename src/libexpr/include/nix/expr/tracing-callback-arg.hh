@@ -45,7 +45,7 @@ class TracingCallbackArg : public Object
     ref<SourceRoot> rootFSRoot;
 
     /** This local's Q hash. */
-    OuterId localId() const { return producer->cachedHash.toNixHash(); }
+    OuterId localId() const { return producer->cachedHash; }
 
     /* The argCell cell this local belongs to. Navigation children
        share the parent's cell. Used for scope-graph topology only;
@@ -112,7 +112,7 @@ public:
 
     std::optional<std::string> getSelectorHashHex() const override
     {
-        return localId().to_string(HashFormat::Base16, false);
+        return localId().toHex();
     }
 };
 

@@ -84,7 +84,7 @@ public:
     static QueryHash computeSelectorHash(const Q & query);
 
     /* Compute the canonical Response hash for a serialised payload. */
-    static Hash computeResponseHash(const std::string & payload);
+    static TracingHash computeResponseHash(const std::string & payload);
 
     /* Open or create a decision-graph index at the default location.
        Default: ~/.cache/nix/eval-tracing-decision-graph/index.sqlite
@@ -153,7 +153,7 @@ public:
        member list. Idempotent via INSERT OR IGNORE. */
     struct InlineFact
     {
-        Hash reqHash = trace::tracingZeroHash().toNixHash();
+        TracingHash reqHash = trace::tracingZeroHash();
         /* CBOR bytes of the observed response (a
            `trace::ResultVariant`). Used by the walker at replay to
            serve callback probes via an obsSet-answering proxy. */
@@ -171,7 +171,7 @@ public:
             return responsePayload < o.responsePayload;
         }
     };
-    Hash insertObservationSet(std::vector<InlineFact> members);
+    TracingHash insertObservationSet(std::vector<InlineFact> members);
     std::optional<std::vector<InlineFact>> getObservationSet(const TracingHash & h);
 
 

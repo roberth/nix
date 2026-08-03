@@ -33,7 +33,7 @@ void TracingCallbackApplyResult::recordD2(ref<const trace::Selector> query, cons
         [](const auto & r) -> nlohmann::json { return r; },
         result);
     auto rPayload = jsonToCborString(rJson);
-    callbackCell->callbackState->runningObsSet.push_back({qh.toNixHash(), rPayload});
+    callbackCell->callbackState->runningObsSet.push_back({qh, rPayload});
 }
 
 std::shared_ptr<Object> TracingCallbackApplyResult::maybeGetAttr(const std::string & name)

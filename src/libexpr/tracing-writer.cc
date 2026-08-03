@@ -82,7 +82,7 @@ std::optional<CanonicaliseResult> tryStateCreepCanonicalise(
 
         auto canonicalObsSetHash = dg.insertObservationSet(intersected);
         auto canonicalCbaSel = dg.selectorPool.intern(trace::SelectorCallbackApply{
-            TracingHash::of(canonicalObsSetHash), incCBA->parent});
+            canonicalObsSetHash, incCBA->parent});
         dg.insertRequest(canonicalCbaSel->cachedHash,
                          jsonToCborString(trace::toJson(*canonicalCbaSel)));
         auto canonicalGetterSel = dg.selectorPool.intern(trace::SelectorGetAttr{
@@ -92,7 +92,7 @@ std::optional<CanonicaliseResult> tryStateCreepCanonicalise(
            (see logOuterObservation). */
         trace::OuterValueRequest canonicalOuterReq{canonicalGetterSel};
         auto canonicalReqPayload = jsonToCborString(nlohmann::json(canonicalOuterReq));
-        auto canonicalReqHash = TracingHash::of(TracingDecisionGraph::computeResponseHash(canonicalReqPayload));
+        auto canonicalReqHash = TracingDecisionGraph::computeResponseHash(canonicalReqPayload);
         dg.insertRequest(canonicalReqHash, canonicalReqPayload);
 
         tracingCacheLog(
@@ -102,7 +102,7 @@ std::optional<CanonicaliseResult> tryStateCreepCanonicalise(
             canonicalReqHash.toHex().substr(0, 12).c_str(),
             exCBA->argObsSet.toHex().substr(0, 12).c_str(),
             incCBA->argObsSet.toHex().substr(0, 12).c_str(),
-            canonicalObsSetHash.to_string(HashFormat::Base16, false).substr(0, 12).c_str());
+            canonicalObsSetHash.toHex().substr(0, 12).c_str());
 
         auto existingHashCopy = existingReqHash;
         cell->removeFact(existingHashCopy);
@@ -138,12 +138,12 @@ void TracingWriter::logOuterObservation(
     trace::OuterValueRequest outerReq{query};
     nlohmann::json reqJson = outerReq;
     auto reqPayload = jsonToCborString(reqJson);
-    auto reqHash = TracingHash::of(TracingDecisionGraph::computeResponseHash(reqPayload));
+    auto reqHash = TracingDecisionGraph::computeResponseHash(reqPayload);
 
     nlohmann::json resultJson;
     std::visit([&](const auto & r) { resultJson = r; }, result);
     auto responsePayload = jsonToCborString(resultJson);
-    auto responseHash = TracingHash::of(TracingDecisionGraph::computeResponseHash(responsePayload));
+    auto responseHash = TracingDecisionGraph::computeResponseHash(responsePayload);
 
     tracingCacheLog(
         "  reqHash=%s reqJSON=%s",
@@ -211,7 +211,7 @@ void TracingWriter::createCallbackCell(const nlohmann::json & applyQueryPayload)
        as computeSelectorHash (trace-types.cc): dump_escaped over the
        full JSON payload was a top perf hotspot in cold-path profiles. */
     auto applyPayloadCbor = jsonToCborString(applyQueryPayload);
-    auto applyReqHash = TracingHash::of(TracingDecisionGraph::computeResponseHash(applyPayloadCbor));
+    auto applyReqHash = TracingDecisionGraph::computeResponseHash(applyPayloadCbor);
     decisionGraph.insertRequest(applyReqHash, applyPayloadCbor);
 }
 

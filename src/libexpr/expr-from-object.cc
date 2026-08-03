@@ -297,7 +297,7 @@ OuterApplyResult OuterApply::run(
                         fnRef = *found;
                 } catch (...) {}
                 auto qcaSel = dg.selectorPool.intern(trace::SelectorCallbackApply{
-                    TracingHash::of(obsSetHash), fnRef});
+                    obsSetHash, fnRef});
                 nlohmann::json qcaJson = trace::toJson(*qcaSel);
                 dg.insertRequest(qcaSel->cachedHash, jsonToCborString(qcaJson));
                 return qcaSel;

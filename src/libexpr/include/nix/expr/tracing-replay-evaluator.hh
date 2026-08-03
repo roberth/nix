@@ -109,7 +109,7 @@ class TracingReplayEvaluator : public Evaluator
         Terminal — child Q lookups thread it through their TracingReplayObject's
         TriePosition.factSetHash and use it as their structural-anchor
         candidate startCur. */
-    struct WalkResult { std::string payload; Hash resultNodeHash; Hash terminalCur; };
+    struct WalkResult { std::string payload; TracingHash resultNodeHash; TracingHash terminalCur; };
 
     /** Run the decision-graph walk for `selectorHash`, dispatching
         each Ask edge's requests against the current environment via

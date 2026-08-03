@@ -48,7 +48,7 @@ class TracingReplayObject : public Object
      * onto the per-invocation history for chain symmetry with the writer.
      */
     template<typename Q, typename R>
-    std::optional<std::pair<R, Hash>> lookupResult(const Q & query) const;
+    std::optional<std::pair<R, TracingHash>> lookupResult(const Q & query) const;
 
     /**
      * Cascading lookup for structural children (getAttr, getListElem).

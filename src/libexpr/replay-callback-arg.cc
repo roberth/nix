@@ -28,7 +28,7 @@ thread_local bool rcaBailFlag = false;
 template<typename Q>
 static nlohmann::json readResponse(
     const Q & query,
-    const std::shared_ptr<std::map<Hash, std::string>> & obsSetResponses = {})
+    const std::shared_ptr<std::map<TracingHash, std::string>> & obsSetResponses = {})
 {
     auto reqHash = TracingDecisionGraph::computeSelectorHash(query);
     tracingCacheLog(
@@ -41,7 +41,7 @@ static nlohmann::json readResponse(
        that CAS content. No secondary storage. Miss here is a real
        error. */
     if (obsSetResponses) {
-        auto it = obsSetResponses->find(reqHash.toNixHash());
+        auto it = obsSetResponses->find(reqHash);
         if (it != obsSetResponses->end()) {
             tracingCacheLog(
                 "rlo: obsSet HIT reqHash=%s",
@@ -304,7 +304,7 @@ std::shared_ptr<Object> ReplayCallbackArg::queryApply(std::shared_ptr<Object> ar
     }
 
     for (const auto & [scaHash, recordedResp] : *obsSetResponses) {
-        auto scaOpt = decisionGraph.selectorPool.find(TracingHash::of(scaHash));
+        auto scaOpt = decisionGraph.selectorPool.find(scaHash);
         if (!scaOpt) continue;
         auto * sca = std::get_if<trace::SelectorCallbackApply>(&(*scaOpt)->node);
         if (!sca) continue;
@@ -315,7 +315,7 @@ std::shared_ptr<Object> ReplayCallbackArg::queryApply(std::shared_ptr<Object> ar
 
         bool allMatch = true;
         for (const auto & recordedProbe : *layer2Obs) {
-            auto probeSelOpt = decisionGraph.selectorPool.find(TracingHash::of(recordedProbe.reqHash));
+            auto probeSelOpt = decisionGraph.selectorPool.find(recordedProbe.reqHash);
             if (!probeSelOpt) { allMatch = false; break; }
             trace::ResultVariant liveResult;
             try {
@@ -331,7 +331,7 @@ std::shared_ptr<Object> ReplayCallbackArg::queryApply(std::shared_ptr<Object> ar
                     auto nestedObsSet = decisionGraph.getObservationSet(
                         nestedSca->argObsSet);
                     if (!nestedObsSet) { allMatch = false; break; }
-                    auto nestedObsMap = std::make_shared<std::map<Hash, std::string>>();
+                    auto nestedObsMap = std::make_shared<std::map<TracingHash, std::string>>();
                     for (const auto & obs : *nestedObsSet)
                         nestedObsMap->emplace(obs.reqHash, obs.responsePayload);
                     /* nestedRca semantically IS the arg of the nested
@@ -370,7 +370,7 @@ std::shared_ptr<Object> ReplayCallbackArg::queryApply(std::shared_ptr<Object> ar
             auto matchedWhnf = cborStringToJson(recordedResp).get<trace::ResultWHNF>();
             tracingCacheLog(
                 "RCA::queryApply: HIT via SCA=%s (obsSet=%s, %zu probes)",
-                scaHash.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
+                scaHash.toHex().substr(0, 12).c_str(),
                 sca->argObsSet.toHex().substr(0, 12).c_str(),
                 layer2Obs->size());
             /* H2: return a fresh RCA representing the applyResult. Its

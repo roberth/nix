@@ -51,7 +51,7 @@ struct QState
 
     /** Selector hash for this Q. Stable under #178 — no evolution;
         the same Q hash for the whole invocation. */
-    Hash currentQ{HashAlgorithm::SHA256};
+    TracingHash currentQ{};
 
 /* -------------------- Walker walk-local -------------------------
        Walker per-walk buffers. Cell.facts is the source of truth for

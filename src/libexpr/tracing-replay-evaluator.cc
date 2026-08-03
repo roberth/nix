@@ -52,7 +52,7 @@ TracingReplayEvaluator::walk(
        active walk's cell is the state carrier (parent-chain reachable
        from currentProxy). Switching walks = switching active cell. */
     std::shared_ptr<QState> qState = std::make_shared<QState>();
-    qState->currentQ = selectorHash.toNixHash();
+    qState->currentQ = selectorHash;
     if (cell) {
         cell->qState = qState;
         /* #177: back-pointer to the cell so writer-side cell.factSetHash()
@@ -133,7 +133,7 @@ TracingReplayEvaluator::walk(
                 queryDescription);
             return trace::tracingZeroHash();
         }
-        auto h = TracingHash::of(TracingDecisionGraph::computeResponseHash(*currentResp));
+        auto h = TracingDecisionGraph::computeResponseHash(*currentResp);
         /* Env dispatch MUST NOT read stored responses to substitute
            for a live response that differs from cold's — doing so
            masks legitimate outer-body change detection (per the
@@ -293,7 +293,7 @@ TracingReplayEvaluator::walk(
         return std::nullopt;
     }
     tracingCacheStats().hits++;
-    return WalkResult{std::move(*payload), walkHit->resultHash.toNixHash(), walkHit->terminalCur.toNixHash()};
+    return WalkResult{std::move(*payload), walkHit->resultHash, walkHit->terminalCur};
 }
 
 std::optional<std::string> TracingReplayEvaluator::computeLiveResponse(const trace::Request & req, ResolutionContext & ctx)
@@ -434,7 +434,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveIdentity(const std::strin
                 cba->argObsSet.toHex().substr(0, 12).c_str());
             return nullptr;
         }
-        auto obsSetMap = std::make_shared<std::map<Hash, std::string>>();
+        auto obsSetMap = std::make_shared<std::map<TracingHash, std::string>>();
         for (const auto & obs : *obsSet)
             obsSetMap->emplace(obs.reqHash, obs.responsePayload);
         std::string fnHex = cba->parent->cachedHash.toHex();
@@ -604,7 +604,7 @@ std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nl
                         q.argObsSet.toHex().substr(0, 12));
                     return std::nullopt;
                 }
-                auto obsSetMap = std::make_shared<std::map<Hash, std::string>>();
+                auto obsSetMap = std::make_shared<std::map<TracingHash, std::string>>();
                 for (const auto & obs : *obsSet)
                     obsSetMap->emplace(obs.reqHash, obs.responsePayload);
                 std::shared_ptr<Object> fnObj = resolveIdentity(fnHex, ctx);
@@ -729,9 +729,9 @@ TracingReplayEvaluator::lookup(const Q & query, std::shared_ptr<Object> currentP
     return std::make_pair(
         walkResult->payload,
         TriePosition{
-            .resultNodeHash = TracingHash::of(walkResult->resultNodeHash),
+            .resultNodeHash = walkResult->resultNodeHash,
             .queryHashStr = selectorHash.toHex(),
-            .factSetHash = TracingHash::of(walkResult->terminalCur),
+            .factSetHash = walkResult->terminalCur,
         });
 }
 

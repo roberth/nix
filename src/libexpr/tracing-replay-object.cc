@@ -36,7 +36,7 @@ ref<Object> TracingReplayObject::ensureInner() const
 }
 
 template<typename Q, typename R>
-std::optional<std::pair<R, Hash>> TracingReplayObject::lookupResult(const Q & query) const
+std::optional<std::pair<R, TracingHash>> TracingReplayObject::lookupResult(const Q & query) const
 {
     auto selectorHash = TracingDecisionGraph::computeSelectorHash(query);
     /* Phase D2: getters have no factSet chain. Terminal at
@@ -74,7 +74,7 @@ std::optional<std::pair<R, Hash>> TracingReplayObject::lookupResult(const Q & qu
     }
     tracingCacheLog("replay hit: %s", Q::tag);
     tracingCacheStats().hits++;
-    return std::make_pair(*val, resultNodeHash->toNixHash());
+    return std::make_pair(*val, *resultNodeHash);
 }
 
 template<typename Q, typename R>

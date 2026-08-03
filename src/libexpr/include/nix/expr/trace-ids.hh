@@ -117,11 +117,11 @@ struct ValueHandleTag
 /** JSON trace correlation handle (links Query and Result entries). */
 using ValueHandle = StrongId<ValueHandleTag, uint64_t>;
 
-/** A Subject-derived state hash. Alias for Hash; marks call-site
- *  intent — this Hash is the state hash of some outer/local Subject.
+/** A Subject-derived state hash. Alias for TracingHash; marks call-site
+ *  intent — this hash is the state hash of some outer/local Subject.
  *  No registry lookup involved: outer Objects flow directly through
  *  queryFn/applyFn now. */
-using OuterId = Hash;
+using OuterId = TracingHash;
 
 /** Phantom-typed hash wrapper: distinct Phantom types produce distinct
     HashOf types that can't cross-assign. Prevents mixing hashes with

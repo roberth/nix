@@ -63,7 +63,7 @@ class ReplayCallbackArg : public Object
        callbackApply dispatch from the SelectorCallbackApply's
        referenced observation set — each entry is (selectorHash →
        CBOR response payload). */
-    std::shared_ptr<std::map<Hash, std::string>> obsSetResponses;
+    std::shared_ptr<std::map<TracingHash, std::string>> obsSetResponses;
 
     /* Memoized WHNF response. The recorder logs ONE observation per
        value force (keyed on the value's producer Selector); the walker
@@ -109,13 +109,13 @@ public:
         Result. Enables live outer validation from the recorded
         obsSet content. */
     ReplayCallbackArg & withObsSetResponses(
-        std::shared_ptr<std::map<Hash, std::string>> map)
+        std::shared_ptr<std::map<TracingHash, std::string>> map)
     {
         obsSetResponses = std::move(map);
         return *this;
     }
 
-    std::shared_ptr<std::map<Hash, std::string>> getObsSetResponses() const
+    std::shared_ptr<std::map<TracingHash, std::string>> getObsSetResponses() const
     {
         return obsSetResponses;
     }

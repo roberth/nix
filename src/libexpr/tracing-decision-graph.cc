@@ -51,26 +51,26 @@ namespace nix {
 
 namespace {
 
-struct WriteInsertRequest        { Hash hash; std::string payload; };
-struct WriteInsertSelector       { Hash hash; std::string payload; };
-struct WriteInsertResult         { Hash hash; std::string payload; };
-struct WriteInsertObservationSet { Hash hash; std::string payload; };
-struct WriteInsertRequestSetNode { Hash hash; std::string payload; };
+struct WriteInsertRequest        { TracingHash hash; std::string payload; };
+struct WriteInsertSelector       { TracingHash hash; std::string payload; };
+struct WriteInsertResult         { TracingHash hash; std::string payload; };
+struct WriteInsertObservationSet { TracingHash hash; std::string payload; };
+struct WriteInsertRequestSetNode { TracingHash hash; std::string payload; };
 struct WriteInsertAsk {
-    Hash selectorHash;
-    Hash factSetHash;
-    Hash requestSetHash;
-    std::optional<Hash> altRequestSetHash;
+    TracingHash selectorHash;
+    TracingHash factSetHash;
+    TracingHash requestSetHash;
+    std::optional<TracingHash> altRequestSetHash;
 };
 struct WriteInsertTerminal {
-    Hash selectorHash;
-    Hash factSetHash;
-    Hash resultHash;
+    TracingHash selectorHash;
+    TracingHash factSetHash;
+    TracingHash resultHash;
 };
 struct WriteDeleteAsk {
-    Hash selectorHash;
-    Hash factSetHash;
-    Hash requestSetHash;
+    TracingHash selectorHash;
+    TracingHash factSetHash;
+    TracingHash requestSetHash;
 };
 
 using WriteOp = std::variant<
@@ -83,12 +83,12 @@ using WriteOp = std::variant<
     WriteInsertTerminal,
     WriteDeleteAsk>;
 
-static std::string hashToBlob(const Hash & h)
+static std::string hashToBlob(const TracingHash & h)
 {
-    return std::string(reinterpret_cast<const char *>(h.hash), h.hashSize);
+    return std::string(reinterpret_cast<const char *>(h.bytes.data()), TracingHash::size);
 }
 
-static void bindHashBlob(SQLiteStmt::Use & use, const Hash & h)
+static void bindHashBlob(SQLiteStmt::Use & use, const TracingHash & h)
 {
     auto blob = hashToBlob(h);
     use(reinterpret_cast<const unsigned char *>(blob.data()), blob.size());
@@ -507,20 +507,18 @@ struct TracingDecisionGraph::State
    TU with tracing-index.cc which defines same-named statics.
    ───────────────────────────────────────────────────────────────────── */
 
-static std::string dg_hashToBlob(const Hash & h)
+static std::string dg_hashToBlob(const TracingHash & h)
 {
-    return std::string(reinterpret_cast<const char *>(h.hash), h.hashSize);
+    return std::string(reinterpret_cast<const char *>(h.bytes.data()), TracingHash::size);
 }
 
-static Hash dg_blobToHash(std::string_view blob)
+static TracingHash dg_blobToHash(std::string_view blob)
 {
-    /* Tracing hashes are truncated SHA-256; blob rows carry
-       `tracingHashSize` bytes. */
-    if (blob.size() != trace::tracingHashSize)
+    /* Tracing hashes are 16 raw bytes; blob rows carry that fixed size. */
+    if (blob.size() != TracingHash::size)
         throw Error("decision-graph: malformed hash blob (size=%d)", blob.size());
-    Hash h(HashAlgorithm::SHA256);
-    h.hashSize = trace::tracingHashSize;
-    std::memcpy(h.hash, blob.data(), blob.size());
+    TracingHash h;
+    std::memcpy(h.bytes.data(), blob.data(), blob.size());
     return h;
 }
 
@@ -574,9 +572,9 @@ static std::filesystem::path dg_defaultDbPath()
     return cacheDir / "index.sqlite";
 }
 
-Hash TracingDecisionGraph::computeResponseHash(const std::string & payload)
+TracingHash TracingDecisionGraph::computeResponseHash(const std::string & payload)
 {
-    return trace::tracingHash(payload).toNixHash();
+    return trace::tracingHash(payload);
 }
 
 TracingDecisionGraph::TracingDecisionGraph()
@@ -685,14 +683,14 @@ void TracingDecisionGraph::waitForWrites()
             th, std::optional{std::string(p)});                                  \
         if (!inserted)                                                           \
             return;                                                              \
-        state->writeQueue->enqueue(OP{th.toNixHash(), std::string(p)});          \
+        state->writeQueue->enqueue(OP{th, std::string(p)});                      \
     }
 
 #define ATOM_INSERT_PLAIN(NAME, OP)                                              \
     void TracingDecisionGraph::insert##NAME(const TracingHash & th, std::string_view p) \
     {                                                                            \
         auto state(_state->lock());                                              \
-        state->writeQueue->enqueue(OP{th.toNixHash(), std::string(p)});          \
+        state->writeQueue->enqueue(OP{th, std::string(p)});                      \
     }
 
 ATOM_INSERT_CACHED(Request, requestPayloadCache, WriteInsertRequest)
@@ -709,7 +707,7 @@ ATOM_INSERT_CACHED(Result, resultPayloadCache, WriteInsertResult)
         if (auto it = state->CACHE.find(th); it != state->CACHE.end())          \
             return it->second;                                                  \
         auto query = state->select##NAME.use();                                 \
-        dg_bindBlob(query, dg_hashToBlob(th.toNixHash()));                      \
+        dg_bindBlob(query, dg_hashToBlob(th));                                  \
         std::optional<std::string> payload;                                     \
         if (query.next())                                                       \
             payload = query.getBlob(0);                                         \
@@ -723,7 +721,7 @@ ATOM_INSERT_CACHED(Result, resultPayloadCache, WriteInsertResult)
     {                                                                           \
         auto state(_state->lock());                                             \
         auto query = state->select##NAME.use();                                 \
-        dg_bindBlob(query, dg_hashToBlob(th.toNixHash()));                      \
+        dg_bindBlob(query, dg_hashToBlob(th));                                  \
         if (!query.next())                                                      \
             return std::nullopt;                                                \
         return query.getBlob(0);                                                \
@@ -808,7 +806,7 @@ static std::string dg_observationSetPayload(
            byte string. Preserves exact CBOR bytes without any hex
            encoding overhead. */
         arr.push_back({
-            {"q", m.reqHash.to_string(HashFormat::Base16, false)},
+            {"q", m.reqHash.toHex()},
             {"p", nlohmann::json::binary(std::vector<std::uint8_t>(
                 m.responsePayload.begin(), m.responsePayload.end()))},
         });
@@ -817,7 +815,7 @@ static std::string dg_observationSetPayload(
     return std::string(reinterpret_cast<const char *>(cbor.data()), cbor.size());
 }
 
-Hash TracingDecisionGraph::insertObservationSet(
+TracingHash TracingDecisionGraph::insertObservationSet(
     std::vector<TracingDecisionGraph::InlineFact> members)
 {
     auto sorted = dg_sortAndDedup(std::move(members));
@@ -833,7 +831,7 @@ Hash TracingDecisionGraph::insertObservationSet(
     {
         auto state(_state->lock());
         if (state->obsSetDepthMemo.contains(th))
-            return th.toNixHash();
+            return th;
     }
 
     /* SCA-nesting depth: derived from the ACTUAL obsSet content, not
@@ -842,7 +840,7 @@ Hash TracingDecisionGraph::insertObservationSet(
        and take max(depth) + 1. If no SCA members, depth = 0. */
     std::uint32_t depth = 0;
     for (const auto & m : sorted) {
-        auto selOpt = selectorPool.find(TracingHash::of(m.reqHash));
+        auto selOpt = selectorPool.find(m.reqHash);
         if (!selOpt) continue;
         auto * sca = std::get_if<trace::SelectorCallbackApply>(&(*selOpt)->node);
         if (!sca) continue;
@@ -859,7 +857,7 @@ Hash TracingDecisionGraph::insertObservationSet(
 
     {
         auto state(_state->lock());
-        state->writeQueue->enqueue(WriteInsertObservationSet{th.toNixHash(), payload});
+        state->writeQueue->enqueue(WriteInsertObservationSet{th, payload});
         state->obsSetDepthMemo[th] = depth;
     }
 
@@ -867,7 +865,7 @@ Hash TracingDecisionGraph::insertObservationSet(
     if (depth > stats.maxCallbackObsSetNestingDepth)
         stats.maxCallbackObsSetNestingDepth = depth;
 
-    return th.toNixHash();
+    return th;
 }
 
 std::optional<std::vector<TracingDecisionGraph::InlineFact>>
@@ -877,7 +875,7 @@ TracingDecisionGraph::getObservationSet(const TracingHash & th)
     {
         auto state(_state->lock());
         auto query = state->selectObservationSet.use();
-        dg_bindBlob(query, dg_hashToBlob(th.toNixHash()));
+        dg_bindBlob(query, dg_hashToBlob(th));
         if (query.next())
             payload = query.getBlob(0);
     }
@@ -889,7 +887,7 @@ TracingDecisionGraph::getObservationSet(const TracingHash & th)
     members.reserve(arr.size());
     for (const auto & elt : arr) {
         InlineFact m;
-        m.reqHash = trace::parseTracingHex(elt.at("q").get<std::string>()).toNixHash();
+        m.reqHash = trace::parseTracingHex(elt.at("q").get<std::string>());
         auto & binVal = elt.at("p").get_binary();
         m.responsePayload.assign(binVal.begin(), binVal.end());
         members.push_back(std::move(m));
@@ -988,7 +986,7 @@ TracingDecisionGraph::insertRequestSet(trace::rst::FrozenNodePtr node)
             if (!inserted)
                 return;
             state->writeQueue->enqueue(
-                WriteInsertRequestSetNode{nodeHash.toNixHash(), std::string(payload)});
+                WriteInsertRequestSetNode{nodeHash, std::string(payload)});
         };
     state->requestSetTrieCache.persist(node, sink);
     return node->hash;
@@ -1024,7 +1022,7 @@ void TracingDecisionGraph::persistRequestSetNode(
         nodeHash, std::optional<std::string>{std::string(payload)});
     if (!inserted)
         return;
-    state->writeQueue->enqueue(WriteInsertRequestSetNode{nodeHash.toNixHash(), std::string(payload)});
+    state->writeQueue->enqueue(WriteInsertRequestSetNode{nodeHash, std::string(payload)});
 }
 
 TracingDecisionGraph::SetHash
@@ -1072,7 +1070,7 @@ std::optional<std::string> TracingDecisionGraph::getRequestSetNodePayload(const 
     {
         auto state(_state->lock());
         auto query = state->selectRequestSetNode.use();
-        dg_bindBlob(query, dg_hashToBlob(nodeHash.toNixHash()));
+        dg_bindBlob(query, dg_hashToBlob(nodeHash));
         if (query.next())
             payload = query.getBlob(0);
     }
@@ -1127,7 +1125,7 @@ TracingDecisionGraph::getRequestSetNode(const SetHash & h)
             payload = it->second;
         else {
             auto query = state->selectRequestSetNode.use();
-            dg_bindBlob(query, dg_hashToBlob(nodeHash.toNixHash()));
+            dg_bindBlob(query, dg_hashToBlob(nodeHash));
             if (query.next())
                 payload = query.getBlob(0);
             state->requestSetNodePayloadCache.emplace(nodeHash, payload);
@@ -1178,13 +1176,13 @@ void TracingDecisionGraph::insertAsk(
     auto it = state->askEdgesCache.find(key);
     if (it == state->askEdgesCache.end()) {
             auto query = state->selectAsks.use();
-        dg_bindBlob(query, dg_hashToBlob(q.toNixHash()));
-        dg_bindBlob(query, dg_hashToBlob(factSet.toNixHash()));
+        dg_bindBlob(query, dg_hashToBlob(q));
+        dg_bindBlob(query, dg_hashToBlob(factSet));
         std::vector<AskEdge> loaded;
         while (query.next()) {
-            AskEdge e{TracingHash::of(dg_blobToHash(query.getBlob(0))), std::nullopt};
+            AskEdge e{dg_blobToHash(query.getBlob(0)), std::nullopt};
             if (!query.isNull(1))
-                e.altRequestSet = TracingHash::of(dg_blobToHash(query.getBlob(1)));
+                e.altRequestSet = dg_blobToHash(query.getBlob(1));
             loaded.push_back(std::move(e));
         }
         it = state->askEdgesCache.emplace(key, std::move(loaded)).first;
@@ -1198,11 +1196,8 @@ void TracingDecisionGraph::insertAsk(
             return;
     }
     it->second.push_back(AskEdge{requestSet, altRequestSet});
-    std::optional<Hash> altRequestSetNix;
-    if (altRequestSet)
-        altRequestSetNix = altRequestSet->toNixHash();
     state->writeQueue->enqueue(WriteInsertAsk{
-        q.toNixHash(), factSet.toNixHash(), requestSet.toNixHash(), altRequestSetNix});
+        q, factSet, requestSet, altRequestSet});
 }
 
 std::vector<TracingDecisionGraph::AskEdge>
@@ -1219,13 +1214,13 @@ TracingDecisionGraph::getAsks(const QueryHash & q, const SetHash & factSet)
         return it->second;
     /* First read: load from DB and cache. */
     auto query = state->selectAsks.use();
-    dg_bindBlob(query, dg_hashToBlob(q.toNixHash()));
-    dg_bindBlob(query, dg_hashToBlob(factSet.toNixHash()));
+    dg_bindBlob(query, dg_hashToBlob(q));
+    dg_bindBlob(query, dg_hashToBlob(factSet));
     std::vector<AskEdge> out;
     while (query.next()) {
-        AskEdge e{TracingHash::of(dg_blobToHash(query.getBlob(0))), std::nullopt};
+        AskEdge e{dg_blobToHash(query.getBlob(0)), std::nullopt};
         if (!query.isNull(1))
-            e.altRequestSet = TracingHash::of(dg_blobToHash(query.getBlob(1)));
+            e.altRequestSet = dg_blobToHash(query.getBlob(1));
         out.push_back(std::move(e));
     }
     state->askEdgesCache.emplace(key, out);
@@ -1250,7 +1245,7 @@ void TracingDecisionGraph::removeAsk(
        in-session cache load here is fine because we don't need to
        report the removed rows. */
     state->writeQueue->enqueue(WriteDeleteAsk{
-        q.toNixHash(), factSet.toNixHash(), requestSet.toNixHash()});
+        q, factSet, requestSet});
 }
 
 void TracingDecisionGraph::insertAskSplitting(
@@ -1476,7 +1471,7 @@ void TracingDecisionGraph::insertTerminal(
         return;
     it->second = result;
     state->writeQueue->enqueue(WriteInsertTerminal{
-        q.toNixHash(), factSet.toNixHash(), result.toNixHash()});
+        q, factSet, result});
 }
 
 std::optional<TracingDecisionGraph::ResultHash>
@@ -1493,11 +1488,11 @@ TracingDecisionGraph::getTerminal(const QueryHash & q, const SetHash & factSet)
         return it->second;
     }
     auto query = state->selectTerminal.use();
-    dg_bindBlob(query, dg_hashToBlob(q.toNixHash()));
-    dg_bindBlob(query, dg_hashToBlob(factSet.toNixHash()));
+    dg_bindBlob(query, dg_hashToBlob(q));
+    dg_bindBlob(query, dg_hashToBlob(factSet));
     std::optional<ResultHash> result;
     if (query.next())
-        result = TracingHash::of(dg_blobToHash(query.getBlob(0)));
+        result = dg_blobToHash(query.getBlob(0));
     tracingCacheLog("getTerminal(q=%s, fs=%s) SQL %s",
                     q.toHex().c_str(),
                     factSet.toHex().c_str(),
@@ -1628,18 +1623,16 @@ bool TracingDecisionGraph::hasAnyEdge(const QueryHash & q, const SetHash & factS
     /* Fall back to DB. If either cache is populated with a negative
        (empty vector or nullopt), we still have to check the OTHER
        table on disk because the caches are per-table. */
-    auto qNix = q.toNixHash();
-    auto factSetNix = factSet.toNixHash();
     {
         auto check = state->countAsks.use();
-        dg_bindBlob(check, dg_hashToBlob(qNix));
-        dg_bindBlob(check, dg_hashToBlob(factSetNix));
+        dg_bindBlob(check, dg_hashToBlob(q));
+        dg_bindBlob(check, dg_hashToBlob(factSet));
         if (check.next())
             return true;
     }
     auto check = state->countTerminals.use();
-    dg_bindBlob(check, dg_hashToBlob(qNix));
-    dg_bindBlob(check, dg_hashToBlob(factSetNix));
+    dg_bindBlob(check, dg_hashToBlob(q));
+    dg_bindBlob(check, dg_hashToBlob(factSet));
     return check.next();
 }
 
