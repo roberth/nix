@@ -166,12 +166,13 @@ OuterApplyResult OuterApply::run(
        boundary maximally predictable — two cb calls observing the
        same way through their args reach the same trie position
        regardless of where the arg's source came from. */
-    /* Contra-arg identity is a hardcoded sentinel — the enclosing
-       SelectorCallbackApply already scopes "which firing's contra-arg
-       this is", so no cell-topology encoding is needed here. Writer
-       and reader (replay-callback-arg.cc, tracing-replay-evaluator.cc)
-       agree on the same constant. */
-    trace::SelectorArg argProducer{0};
+    /* Contra-arg identity: SelectorArg{depth} at the firing cell's
+       reverse-De-Bruijn depth. Making obsset members globally unique
+       across nested firings lets XOR-fold hashes compose without
+       collision. Writer and walker agree via localCell.depth ==
+       fn.argCell.depth + 1 (see tracing-replay-evaluator.cc's SCA
+       branches). */
+    trace::SelectorArg argProducer{localCell->depth};
     auto argStateHash = TracingDecisionGraph::computeSelectorHash(argProducer);
     tracingCacheLog("OuterApply::run: argStateHash=%s",
                     argStateHash.to_string(HashFormat::Base16, false).substr(0, 12));

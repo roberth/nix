@@ -334,8 +334,21 @@ std::shared_ptr<Object> ReplayCallbackArg::queryApply(std::shared_ptr<Object> ar
                     auto nestedObsMap = std::make_shared<std::map<Hash, std::string>>();
                     for (const auto & obs : *nestedObsSet)
                         nestedObsMap->emplace(obs.reqHash, obs.responsePayload);
+                    /* nestedRca semantically IS the arg of the nested
+                       firing. Its identity is SelectorArg at one depth
+                       deeper than the fn's SelectorArg — writer emitted
+                       nestedCell's contra-arg at nestedCell.depth =
+                       enclosingFiring.depth + 1, and enclosing firing's
+                       contra-arg identity IS nestedSca->parent (a
+                       SelectorArg for higher-order+ cases). */
+                    auto * fnArg = std::get_if<trace::SelectorArg>(&nestedSca->parent->node);
+                    if (!fnArg)
+                        panic("nested SCA parent isn't SelectorArg — deeper nesting not "
+                              "supported by reverse-De-Bruijn arg formula");
+                    auto argSel = decisionGraph.selectorPool.intern(
+                        trace::SelectorArg{fnArg->depth + 1});
                     auto nestedRca = std::make_shared<ReplayCallbackArg>(
-                        nestedSca->parent, decisionGraph, rootFSRoot, state);
+                        argSel, decisionGraph, rootFSRoot, state);
                     nestedRca->withObsSetResponses(nestedObsMap);
                     auto nestedResultObj = argObj->queryApply(nestedRca);
                     if (!nestedResultObj) { allMatch = false; break; }

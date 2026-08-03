@@ -445,7 +445,14 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveIdentity(const std::strin
                 idStr.substr(0, 12), fnHex.substr(0, 12).c_str());
             return nullptr;
         }
-        auto argProducerSel = decisionGraph.selectorPool.intern(trace::SelectorArg{0});
+        /* Match writer's SelectorArg{layer2Cell.depth}. layer2Cell is
+           child of TCA.argCell (= fn's argCell in this SCA), so its
+           depth is fn.argCell.depth + 1. */
+        auto fnCell = fnObj->getProxyArgCell();
+        if (!fnCell)
+            panic("callbackApply producer: resolved fn has no argCell");
+        int argDepth = fnCell->depth + 1;
+        auto argProducerSel = decisionGraph.selectorPool.intern(trace::SelectorArg{argDepth});
         auto replayArg = std::make_shared<ReplayCallbackArg>(
             argProducerSel,
             decisionGraph, inner->getEvalState().rootFSRoot,
@@ -607,10 +614,13 @@ std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nl
                         fnHex.substr(0, 12));
                     return std::nullopt;
                 }
-                /* Contra-arg identity: hardcoded sentinel matching
-                   writer's OuterApply::run and reader's replay-callback-arg.
-                   Scoped by this enclosing SelectorCallbackApply. */
-                auto argProducerSel = decisionGraph.selectorPool.intern(trace::SelectorArg{0});
+                /* Contra-arg identity: SelectorArg{depth} matching
+                   writer's firingCell.depth = fn.argCell.depth + 1. */
+                auto fnCell = fnObj->getProxyArgCell();
+                if (!fnCell)
+                    panic("callbackApply dispatch: resolved fn has no argCell");
+                int argDepth = fnCell->depth + 1;
+                auto argProducerSel = decisionGraph.selectorPool.intern(trace::SelectorArg{argDepth});
                 auto replayArg = std::make_shared<ReplayCallbackArg>(
                     argProducerSel,
                     decisionGraph, inner->getEvalState().rootFSRoot,

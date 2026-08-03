@@ -283,11 +283,12 @@ std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> a
         producer->cachedHash.to_string(HashFormat::Base16, false);
     layer2Cell->liveObject = argObj;
 
-    /* Producer for the wrapped outer-arg — SelectorArg{0} scoped by
-       the enclosing SelectorCallbackApply constructed below embedding
-       the layer-2 argObsSet (§6: contra-arg identity is hardcoded
-       sentinel scoped by enclosing SCA). */
-    auto argProducerSel = dg.selectorPool.intern(trace::SelectorArg{0});
+    /* Producer for the wrapped outer-arg — SelectorArg{depth} at the
+       layer-2 firing cell's reverse-De-Bruijn depth. Global uniqueness
+       across nested firings lets XOR-fold hashes compose without
+       collision. Walker mirrors via fnObj.argCell.depth + 1 (see
+       tracing-replay-evaluator.cc). */
+    auto argProducerSel = dg.selectorPool.intern(trace::SelectorArg{layer2Cell->depth});
 
     /* queryFn: execute the probe on the outer-arg live and append
        (Selector, response) to layer2Cell's runningObsSet. Not
@@ -339,7 +340,7 @@ std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> a
             fnProducer->cachedHash.to_string(HashFormat::Base16, false);
         nestedCell->liveObject = argObj2;
 
-        auto nestedArgProducerSel = dg.selectorPool.intern(trace::SelectorArg{0});
+        auto nestedArgProducerSel = dg.selectorPool.intern(trace::SelectorArg{nestedCell->depth});
 
         OuterQueryFn nestedQueryFn = [nestedCell, &dg](
             std::shared_ptr<Object> outerObj,
