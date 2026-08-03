@@ -1382,31 +1382,57 @@ void TracingDecisionGraph::insertAskSplitting(
     /* trySplitOne: find an overlap between remaining and an existing
        edge at (q, cur), execute the split, return the advanced (cur,
        remaining). Returns nullopt when no overlap is found (caller
-       inserts the remainder as a plain edge). */
+       inserts the remainder as a plain edge).
+
+       The shared-prefix calc uses trie intersection with hash-equal
+       subtree short-circuit — under cumulative request sets, existing
+       edges and the new remaining set share large subtrees and the
+       intersection collapses to shared subtree pointers rather than
+       walking every member. */
     auto trySplitOne =
         [&](const SetHash & cur, const std::vector<Fact> & remaining) -> std::optional<SplitStep>
     {
+        /* Build remainingNode once per trySplitOne call. remaining is
+           a barrier group's members — typically small. */
+        std::vector<Hash> remainingReqsVec;
+        remainingReqsVec.reserve(remaining.size());
+        for (const auto & f : remaining) remainingReqsVec.push_back(f.request);
+        trace::rst::FrozenNodePtr remainingNode = [&] {
+            auto state(_state->lock());
+            return state->requestSetTrieCache.internSet(remainingReqsVec);
+        }();
         std::unordered_set<Hash> remainingReqs;
-        remainingReqs.reserve(remaining.size());
-        for (const auto & f : remaining) remainingReqs.insert(f.request);
+        remainingReqs.reserve(remainingReqsVec.size());
+        for (const auto & r : remainingReqsVec) remainingReqs.insert(r);
 
         for (const auto & edge : getAsks(q, cur)) {
             auto exRsHash = edge.requestSet;
+            auto exNodeOpt = getRequestSetNode(exRsHash);
+            if (!exNodeOpt)
+                continue;
+            auto exNode = *exNodeOpt;
+
+            /* Intersect via trie — hash-equal subtrees short-circuit,
+               so under high overlap this is O(|shared|) rather than
+               O(|exNode| + |remaining|). */
+            trace::rst::FrozenNodePtr sharedNode = [&] {
+                auto state(_state->lock());
+                return trace::rst::intersection(exNode, remainingNode,
+                    state->requestSetTrieCache);
+            }();
+            if (sharedNode->size() == 0)
+                continue;
+            auto shared = sharedNode->allMembers();
+
+            /* Keep exUseful for the split-shape check + tail
+               construction — its size drives whether we do a "shared
+               == existing" collapse or need to insert a separate tail
+               rs. */
             auto exMembers = getRequestSet(exRsHash);
             if (!exMembers)
                 continue;
-            /* Filter existing rs against dispatchedSoFar to avoid double-
-               XOR when computing the intermediate cur. */
             auto exUseful = usefulDispatch(*exMembers, dispatchedSoFar);
             if (exUseful.empty())
-                continue;
-
-            std::vector<Hash> shared;
-            shared.reserve(exUseful.size());
-            for (const auto & req : exUseful)
-                if (remainingReqs.count(req))
-                    shared.push_back(req);
-            if (shared.empty())
                 continue;
 
             /* Full identity: existing rs is exactly remaining. Nothing
