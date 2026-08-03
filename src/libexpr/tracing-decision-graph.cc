@@ -1211,10 +1211,10 @@ TracingDecisionGraph::getRequestSet(const SetHash & h)
 std::optional<trace::rst::FrozenNodePtr>
 TracingDecisionGraph::getRequestSetNode(const SetHash & h)
 {
-    /* Empty set: return the empty leaf (interned in the shared cache). */
+    /* Empty set: hand back the interned empty node. */
     if (h == emptySetHash()) {
         auto state(_state->lock());
-        return state->requestSetTrieCache.internLeaf({});
+        return state->requestSetTrieCache.internSet({});
     }
     auto state(_state->lock());
     /* Quick hit: node already in the trie cache. */

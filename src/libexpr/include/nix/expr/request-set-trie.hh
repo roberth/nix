@@ -1,25 +1,25 @@
 #pragma once
 /**
  * @file
- * In-memory RequestSet trie with two node representations:
+ * In-memory RequestSet store as a top-down HAMT (Hash Array Mapped Trie).
  *
- * - FrozenNode: immutable, content-addressed, matches the DB payload
- *   format. Shared by hash via a `FrozenNodeCache`. Its subtree
- *   references are all `FrozenNodePtr`. Payload round-trips exactly.
+ * Each internal node has RADIX=16 slots. At depth `d`, the slot for a
+ * request hash `h` is `slotFor(h, d)` — the 4-bit group of `h` at bit
+ * offset `d * RADIX_BITS`. Because slot indices are pure functions of
+ * the content bits (not of position, insertion order, or history), two
+ * sets with the same members always produce identical trees at every
+ * subtree. This eliminates representational entropy that content-defined
+ * chunking exposes on the tail of its size distribution.
  *
- * - MutableNode: algorithmic scratch. Children can be either owned
- *   `unique_ptr<MutableNode>` or shared `FrozenNodePtr` (COW: the
- *   immutable child is walked read-only until we need to modify, at
- *   which point it's cloned into a mutable copy).
+ * Flat leaves for small sets: a node with ≤ LEAF_MAX_MEMBERS members is
+ * stored as a `Leaf` (sorted flat list). At more than that, the node
+ * splits into an `Internal` and each slot's members recurse.
  *
- * Freeze operation walks the mutable tree, interning each node by its
- * hash into the cache. Existing frozen subtrees short-circuit — no
- * rebuild if the hash is already known.
- *
- * Set operations (`difference`, `isSubset`, ...) parallel-walk two
- * frozen trees; any subtree pair with equal hash collapses to a
- * no-op. Cost tracks the size of the difference, not the size of
- * either input.
+ * Identity is XOR of the full member set. Two subtrees anywhere in the
+ * tree with the same members have the same identity, so intersection,
+ * difference, and isSubset can short-circuit at any hash-equal subtree
+ * pair (cost tracks the size of the delta, not the size of either
+ * input).
  */
 
 #include "nix/expr/tracing-decision-graph.hh"
@@ -37,50 +37,52 @@
 
 namespace nix::trace::rst {
 
-/** Bits per trie level. Matches the DB storage format. */
-constexpr int TRIE_RADIX_BITS = 4;
-constexpr int TRIE_RADIX = 1 << TRIE_RADIX_BITS; // 16
-constexpr size_t TRIE_SPLIT_THRESHOLD = 16;
+/** Bits per HAMT level. Each internal node has 2^RADIX_BITS = 16 slots
+    keyed by the corresponding 4-bit group of a request hash. */
+constexpr int RADIX_BITS = 4;
+constexpr size_t RADIX = 1u << RADIX_BITS;
 
-/** Bucket index at trie depth `d` for hash `h`: the top TRIE_RADIX_BITS
-    bits starting at bit `d * TRIE_RADIX_BITS`, MSB first. */
-uint8_t bucketAt(const Hash & h, int depth);
+/** A node with at most this many members is stored as a flat sorted
+    Leaf. On insertion crossing this threshold the node promotes to an
+    Internal at its current depth. */
+constexpr size_t LEAF_MAX_MEMBERS = RADIX;
+
+/** Slot index for `h` at HAMT depth `d`. Depth 0 uses the top nibble
+    of hash[0]; depth 1 uses the low nibble; depth 2 the top nibble of
+    hash[1]; and so on. Callers walking down the tree pass their
+    current depth. */
+size_t slotFor(const Hash & h, size_t depth);
 
 class FrozenNode;
-/** Non-nullable shared reference to a FrozenNode. Used at every site
-    that holds a definite reference (return of intern/freeze, child
-    slots in the internal-node representation, etc.). Nullable slots
-    (empty bucket in a MutableNode, uninitialised cache) use
-    `std::optional<FrozenNodePtr>` or plain `std::shared_ptr<const
-    FrozenNode>` where nullability is intrinsic. */
+/** Non-nullable shared reference to a FrozenNode. Held wherever a
+    subtree reference is definite (return of intern/freeze, ops
+    outputs). Nullable slots inside an Internal use
+    `std::shared_ptr<const FrozenNode>` because empty is intrinsic. */
 using FrozenNodePtr = ref<const FrozenNode>;
 
-/** Content-addressed trie node. Immutable after construction. Instances
-    are shared via `FrozenNodePtr`; the identity is `hash`, computed at
-    construction from the byte payload. */
+/** Content-addressed HAMT node. Immutable; identity is `hash`. */
 class FrozenNode
 {
 public:
-    /** Sorted lex-ascending, size ≤ TRIE_SPLIT_THRESHOLD. */
+    /** Flat sorted (lex-ascending) member list. Size ≤ LEAF_MAX_MEMBERS. */
     struct Leaf
     {
         std::vector<Hash> members;
     };
 
-    /** Sparse, sorted by bucket index. Matches DB payload encoding. */
+    /** Sparse RADIX-slot array. Empty slots are `nullptr`. Slot index
+        for a member `m` in a node at depth `d` is `slotFor(m, d)`. */
     struct Internal
     {
-        std::vector<std::pair<uint8_t, FrozenNodePtr>> children;
+        std::array<std::shared_ptr<const FrozenNode>, RADIX> slots;
     };
 
     std::variant<Leaf, Internal> body;
     Hash hash{HashAlgorithm::SHA256};
 
-    /** True once the payload has been enqueued to the persistence
-        sink. Morally immutable — mutated only by `FrozenNodeCache::persist`
-        as a bookkeeping bit. Authoritative: `persisted=true` means
-        the sink has (or will) receive the write; the persist walk
-        skips such subtrees. */
+    /** Set true by `FrozenNodeCache::persist` once the payload has been
+        enqueued for the writer thread. Already-persisted subtrees
+        short-circuit the persist walk on subsequent freezes. */
     mutable bool persisted = false;
 
     bool isLeaf() const noexcept { return std::holds_alternative<Leaf>(body); }
@@ -90,142 +92,97 @@ public:
     /** Total number of member hashes in this subtree. */
     size_t size() const noexcept;
 
-    /** O(log_radix N) membership check. */
+    /** Membership check by hash. O(depth) — walks slot-by-slot. */
     bool contains(const Hash & h) const noexcept;
 
-    /** Serialize to the DB payload byte format:
+    /** Serialize to DB payload bytes.
         Leaf:     [0x00] hash_1 hash_2 ... hash_n
-        Internal: [0x01] (bucket_byte, child_hash)+ */
+        Internal: [0x01] bitmap_lo bitmap_hi child_hash_1 ... child_hash_k
+        The bitmap is 16 bits (little-endian), one bit per populated
+        slot; children follow in slot order. */
     std::string toPayload() const;
 
-    /** Materialize all members into a flat vector (recursive walk).
-        Preserves the trie's lex-sorted order across bucket boundaries. */
+    /** Materialize all members into a flat vector via recursive walk.
+        Order is lex-ascending because slot indices at every depth
+        preserve the top-bit ordering. */
     std::vector<Hash> allMembers() const;
 
-    /* Constructed only by FrozenNodeCache; user code interacts via
-       FrozenNodePtr. Not private so make_shared can invoke; users
-       should not construct directly. */
     FrozenNode() = default;
 };
 
-/** Global cache: `Hash → FrozenNodePtr`. Deduplicates across all
-    interning operations, both from decoded payloads (DB read) and from
-    freshly-built member lists (writer). */
+/** Global cache mapping `Hash → FrozenNodePtr`. Deduplicates across
+    both freshly-built subtrees (writer) and payload-decoded subtrees
+    (DB read). */
 class FrozenNodeCache
 {
 public:
-    /** Look up by hash. Returns nullopt if the node isn't cached. */
+    /** Returns the cached FrozenNodePtr for `hash`, or nullopt if not
+        cached. */
     std::optional<FrozenNodePtr> lookup(const Hash & hash) const;
 
-    /** Intern a node from its raw payload bytes and precomputed hash.
-        If already cached under this hash, returns the existing pointer
-        without re-parsing. */
+    /** Reconstitute a node from DB payload bytes and its precomputed
+        hash. Throws if the payload references child hashes that
+        aren't already cached (readers walk children-before-parent). */
     FrozenNodePtr intern(const Hash & hash, std::string_view payload);
 
-    /** Build (or reuse) a leaf node with the given members. Sorts +
-        dedups internally; hash and interning are handled here. */
-    FrozenNodePtr internLeaf(std::vector<Hash> members);
-
-    /** Build (or reuse) a set from the given members. If the set fits
-        in a single leaf (≤ TRIE_SPLIT_THRESHOLD) returns a leaf;
-        otherwise buckets recursively into internal + leaf nodes. */
+    /** Build (or reuse) a HAMT-shaped set from the given members.
+        Sorts + dedups internally. */
     FrozenNodePtr internSet(std::vector<Hash> members);
 
-    /** Intern an internal node from a pre-built children list. Children
-        must already be interned. Recomputes hash. */
-    FrozenNodePtr internInternal(std::vector<std::pair<uint8_t, FrozenNodePtr>> children);
-
-    /** Total number of `internLeaf` / `internInternal` calls (i.e.,
-        payload-and-hash operations). Used by tests to prove that
-        freeze reuses unchanged subtrees. */
+    /** Count of node-construction operations. Tests use this to
+        verify that freeze reuses cached subtrees rather than
+        rebuilding. */
     size_t internAttempts() const noexcept { return internAttemptCount; }
 
-    /** Walk `root` and its subtrees; for each node with `persisted=false`,
-        call `sink(hash, payload)` and flip `persisted=true`. Already-
-        persisted subtrees short-circuit — the walk skips them entirely.
-        Post-order traversal, so children are enqueued before their
-        parent (matches TrieBuilder::persistTree semantics; readers
-        that walk internal nodes' child refs find them already
-        persisted). */
+    /** Walk `root` post-order and call `sink(hash, payload)` for each
+        node whose `persisted` bit is false, flipping it true. Already-
+        persisted subtrees short-circuit. */
     using PersistSink = fun<void(const Hash &, std::string_view)>;
     void persist(const FrozenNodePtr & root, PersistSink & sink);
 
 private:
     std::unordered_map<Hash, FrozenNodePtr> byHash;
     size_t internAttemptCount = 0;
+
+    /** Internal helper: build a subtree from a member range at the
+        given HAMT depth. */
+    FrozenNodePtr build(std::vector<Hash> members, size_t depth);
 };
 
-/** Mutable trie node. Children may be owned mutable subtrees or shared
-    frozen subtrees. Mutation walks down; on entering a frozen subtree
-    we materialize it into a mutable copy (COW) before descending
-    further.
+/** Mutable HAMT — an insertion buffer with COW from a frozen seed.
+    Insertion is O(depth) — walks down along the target slot, XORs
+    identity contributions along the way. Freeze walks the mutable
+    tree, interning each node; unchanged subtrees (still pointed to
+    from before insertion) are already frozen and reuse their existing
+    FrozenNodePtr.
 
-    NOT thread-safe. Intended for single-writer algorithmic use, then
-    freeze at the end for sharing/persistence. */
+    NOT thread-safe. */
 class MutableNode
 {
 public:
-    struct Leaf
-    {
-        std::vector<Hash> members; // kept sorted
-    };
+    MutableNode();
+    ~MutableNode();
+    MutableNode(MutableNode &&) noexcept;
+    MutableNode & operator=(MutableNode &&) noexcept;
 
-    /** Child slot in an internal node. At most one of `mut` / `frozen`
-        is populated. Absent slot (both null) = no members in that
-        bucket. `frozen` is nullable-by-design (empty bucket), so it's
-        `shared_ptr`, not `ref`. */
-    struct Child
-    {
-        std::unique_ptr<MutableNode> mut;
-        std::shared_ptr<const FrozenNode> frozen;
-
-        bool empty() const noexcept { return !mut && !frozen; }
-        size_t size() const noexcept;
-        bool contains(const Hash & h, int depth) const noexcept;
-    };
-
-    struct Internal
-    {
-        std::array<Child, TRIE_RADIX> children;
-    };
-
-    std::variant<Leaf, Internal> body;
-
-    /** Cached result of the last freeze, if still valid (no mutation
-        since). Invalidated at the top of every insert. Set at the end
-        of every freeze. Enables O(depth) freeze after O(depth) insert
-        when the caller freezes after every step. Nullable-by-design
-        (unset before first freeze / after invalidation). */
-    mutable std::shared_ptr<const FrozenNode> cachedFrozen;
-
-    /** Fresh empty mutable tree (empty leaf). */
-    MutableNode() = default;
-
-    /** Wrap a frozen root as a mutable tree. The frozen subtree is
-        referenced (not copied) until modification descends into it. */
+    /** Seed from a frozen root: the mutable is a COW wrapper — no
+        immediate copy, only the modified slot-path clones on insert. */
     explicit MutableNode(FrozenNodePtr root);
 
     void insert(const Hash & h);
     bool contains(const Hash & h) const noexcept;
     size_t size() const noexcept;
 
-    /** Freeze into a shared FrozenNodePtr. Reuses `cachedFrozen` if
-        no mutation happened since the last freeze. Recursively reuses
-        each child's `cachedFrozen`, so incremental build-and-freeze
-        stays O(depth of the modified path) per step, not O(tree
-        size). */
+    /** Freeze into a shared FrozenNodePtr; identity is the XOR of
+        contained members. Repeated freezes without mutation return
+        the cached pointer. */
     FrozenNodePtr freeze(FrozenNodeCache & cache);
 
 private:
-    void insertAtDepth(const Hash & h, int depth);
-    bool containsAtDepth(const Hash & h, int depth) const noexcept;
-    /* Split a leaf that has just exceeded threshold into an internal
-       node whose children hold the redistributed members. */
-    void splitLeafAt(int depth);
+    /* Implementation-defined; see request-set-trie.cc. */
+    struct Body;
+    std::unique_ptr<Body> body;
 };
-
-/** Set operations on frozen trees. Parallel walk short-circuits at
-    subtree pairs whose hashes match. */
 
 /** A \ B — members present in A but not in B. */
 std::vector<Hash> difference(const FrozenNode & a, const FrozenNode & b);
@@ -233,11 +190,9 @@ std::vector<Hash> difference(const FrozenNode & a, const FrozenNode & b);
 /** A ⊆ B — every member of A is a member of B. */
 bool isSubset(const FrozenNode & a, const FrozenNode & b);
 
-/** A ∩ B — members present in both, returned as an interned
-    FrozenNodePtr. Parallel walk short-circuits at hash-equal
-    subtrees (returns that subtree pointer directly, no rebuild).
-    Takes FrozenNodePtrs so the short-circuit case can hand back
-    the caller's own reference. */
+/** A ∩ B — parallel walk over the HAMT slots with hash-equal
+    short-circuit. Takes FrozenNodePtrs so an identical-subtree pair
+    can be returned by handing back the caller's own reference. */
 FrozenNodePtr intersection(const FrozenNodePtr & a, const FrozenNodePtr & b, FrozenNodeCache & cache);
 
 } // namespace nix::trace::rst
