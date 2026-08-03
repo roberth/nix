@@ -126,22 +126,16 @@ private:
     {
         if (facts.empty())
             return;
-        /* responseFor is our known-response lookup for facts; remaining
-           tracks reqs not yet consumed (via follow or insert). */
-        std::unordered_map<Hash, Hash> responseFor;
-        std::unordered_set<Hash> remaining;
-        responseFor.reserve(facts.size());
-        remaining.reserve(facts.size());
-        for (auto & [req, br_resp] : facts) {
-            responseFor.emplace(req, br_resp.second);
-            remaining.insert(req);
-        }
+        /* dispatchedSoFar tracks reqs already folded (via follow or,
+           at the tail, by insertAskSplitting). `remaining ∈ facts`
+           iff `!dispatchedSoFar.count(req)` — no need to materialise
+           a separate set; querying `facts` directly is O(1) too. */
         auto cur = startCur;
         std::unordered_set<Hash> dispatchedSoFar;
 
         /* Follow phase: greedy consume any existing edge whose useful
-           subset is fully covered by our remaining reqs. Reads from
-           the DB, folds with our own responses, updates cur. */
+           subset is fully covered by facts \ dispatchedSoFar. Reads
+           from the DB, folds with our own responses, updates cur. */
         while (true) {
             bool followed = false;
             for (const auto & edge : decisionGraph.getAsks(selectorHash, cur)) {
@@ -156,16 +150,15 @@ private:
                 if (useful.empty())
                     continue;
                 bool subset = std::all_of(useful.begin(), useful.end(),
-                    [&](const Hash & req) { return remaining.count(req) > 0; });
+                    [&](const Hash & req) { return facts.count(req) > 0; });
                 if (!subset)
                     continue;
-                /* Follow: fold each useful req/resp into cur, dedupe
-                   from remaining/dispatchedSoFar. */
+                /* Follow: fold each useful req/resp into cur, mark
+                   dispatched. `subset` above guarantees facts.at(req)
+                   succeeds. */
                 for (const auto & req : useful) {
-                    auto it = responseFor.find(req);
-                    /* Guaranteed by `subset` check above. */
-                    cur = TracingDecisionGraph::xorFactIntoHash(cur, req, it->second);
-                    remaining.erase(req);
+                    auto it = facts.find(req);
+                    cur = TracingDecisionGraph::xorFactIntoHash(cur, req, it->second.second);
                     dispatchedSoFar.insert(req);
                 }
                 tracingCacheLog("insertBarrieredChain follow Q=%s cur→%s (consumed %zu req)",
@@ -180,11 +173,11 @@ private:
         }
 
         /* Insert phase: barrier-group only the leftover reqs from cur. */
-        if (remaining.empty())
+        if (dispatchedSoFar.size() == facts.size())
             return;
         std::map<uint64_t, std::vector<TracingDecisionGraph::Fact>> byBarrier;
         for (auto & [req, br_resp] : facts)
-            if (remaining.count(req))
+            if (!dispatchedSoFar.count(req))
                 byBarrier[br_resp.first].push_back({req, br_resp.second});
         /* Iterate by barrier group; the barrier value itself isn't
            needed in-loop — sortedness of `byBarrier` drives the order. */
