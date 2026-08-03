@@ -122,7 +122,7 @@ private:
     void insertBarrieredChain(
         const Hash & selectorHash,
         const Hash & startCur,
-        const std::map<Hash, std::pair<uint64_t, Hash>> & facts)
+        const std::unordered_map<Hash, std::pair<uint64_t, Hash>> & facts)
     {
         if (facts.empty())
             return;
@@ -292,7 +292,7 @@ private:
                        search finds the first tail entry >= threshold
                        and we iterate only what we need — no scan of the
                        pre-parent-record prefix. */
-                    std::map<Hash, std::pair<uint64_t, Hash>> deltaFacts;
+                    std::unordered_map<Hash, std::pair<uint64_t, Hash>> deltaFacts;
                     auto threshold = it->second.barrierAtRecord;
                     for (auto c = cell.get(); c; c = c->parent.get()) {
                         auto & v = c->factsInOrder;
@@ -311,7 +311,7 @@ private:
 
         if (!structuralInserted) {
             /* Full chain: cell + ancestors, from ∅. */
-            std::map<Hash, std::pair<uint64_t, Hash>> allFacts;
+            std::unordered_map<Hash, std::pair<uint64_t, Hash>> allFacts;
             for (auto c = cell.get(); c; c = c->parent.get())
                 for (auto & [req, entry] : c->factsInOrder)
                     allFacts.try_emplace(req, entry.barrier, entry.response);
@@ -322,7 +322,7 @@ private:
                parent.terminalCur. Covers callback-firing nesting where
                the structural-parent isn't on the same cell. */
             if (cell->parent && !cell->factsInOrder.empty()) {
-                std::map<Hash, std::pair<uint64_t, Hash>> ownFacts;
+                std::unordered_map<Hash, std::pair<uint64_t, Hash>> ownFacts;
                 for (auto & [req, entry] : cell->factsInOrder)
                     ownFacts.try_emplace(req, entry.barrier, entry.response);
                 auto parentCur = cell->parent->factSetHash();
