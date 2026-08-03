@@ -466,6 +466,59 @@ TEST_F(RequestSetTrieTest, DifferenceMembersAreLexSorted)
    Split-boundary insertion via mutable (leaf → internal transition)
    ───────────────────────────────────────────────────────────────────── */
 
+/* ─────────────────────────────────────────────────────────────────────
+   Incremental build-and-freeze: 500 insert+freeze cycles.
+   Verifies both correctness AND that freeze reuses unchanged subtrees
+   (via cache identity), so the total work stays O(depth) per step
+   instead of O(total nodes).
+   ───────────────────────────────────────────────────────────────────── */
+
+TEST_F(RequestSetTrieTest, IncrementalInsertAndFreezeReusesUnchangedSubtrees)
+{
+    FrozenNodeCache cache;
+    MutableNode mut;
+    /* Build up 500 members, freezing after every insert.
+       Correctness assertions on each step, and count the total intern
+       work — a well-designed freeze reuses unchanged subtrees, so the
+       cost per step is bounded by tree depth, not tree size. */
+    FrozenNodePtr last;
+    for (uint64_t i = 0; i < 500; ++i) {
+        mut.insert(h(i));
+        auto frozen = mut.freeze(cache);
+        ASSERT_NE(frozen, nullptr);
+        EXPECT_EQ(frozen->size(), i + 1);
+        EXPECT_TRUE(frozen->contains(h(i)));
+        last = frozen;
+    }
+    /* Final tree matches the all-at-once build. */
+    auto before = cache.internAttempts();
+    auto direct = cache.internSet(hashes(500));
+    EXPECT_EQ(last, direct);
+    auto internSetCost = cache.internAttempts() - before;
+    /* Recording the "reference cost" of building the whole set once,
+       from scratch, so we can compare against the amortised
+       per-insert cost of the incremental build below. */
+
+    /* Freeze-with-no-mutation is free — cached at each mutable node. */
+    auto attemptsBeforeReFreeze = cache.internAttempts();
+    auto again = mut.freeze(cache);
+    EXPECT_EQ(again, last);
+    EXPECT_EQ(cache.internAttempts(), attemptsBeforeReFreeze)
+        << "no-op freeze must not re-hash any node";
+
+    /* Total intern attempts across 500 insert+freeze steps should be
+       bounded by O(steps × depth). A radix-16 trie of 500 members has
+       depth ≤ 3 (16^3 = 4096 buckets is far more than 500). So per
+       step we expect ≤ ~4 nodes touched (each level's ancestor of the
+       newly-inserted leaf). Allowing a generous slack for splits,
+       expect ≪ 500 × 500 = 250 000 (which is what an unreused freeze
+       would cost). */
+    (void) internSetCost;  // silence unused warning if we drop cap
+    EXPECT_LT(cache.internAttempts(), 10000u)
+        << "500 insert+freeze cycles cost far more than O(depth) — "
+           "freeze isn't reusing unchanged subtrees";
+}
+
 TEST_F(RequestSetTrieTest, MutableInsertCrossesLeafThreshold)
 {
     FrozenNodeCache cache;

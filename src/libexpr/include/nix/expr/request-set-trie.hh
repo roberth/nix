@@ -120,8 +120,14 @@ public:
         must already be interned. Recomputes hash. */
     FrozenNodePtr internInternal(std::vector<std::pair<uint8_t, FrozenNodePtr>> children);
 
+    /** Total number of `internLeaf` / `internInternal` calls (i.e.,
+        payload-and-hash operations). Used by tests to prove that
+        freeze reuses unchanged subtrees. */
+    size_t internAttempts() const noexcept { return internAttemptCount; }
+
 private:
     std::unordered_map<Hash, FrozenNodePtr> byHash;
+    size_t internAttemptCount = 0;
 };
 
 /** Mutable trie node. Children may be owned mutable subtrees or shared
@@ -159,6 +165,12 @@ public:
 
     std::variant<Leaf, Internal> body;
 
+    /** Cached result of the last freeze, if still valid (no mutation
+        since). Invalidated at the top of every insert. Set at the end
+        of every freeze. Enables O(depth) freeze after O(depth) insert
+        when the caller freezes after every step. */
+    mutable FrozenNodePtr cachedFrozen;
+
     /** Fresh empty mutable tree (empty leaf). */
     MutableNode() = default;
 
@@ -170,10 +182,11 @@ public:
     bool contains(const Hash & h) const noexcept;
     size_t size() const noexcept;
 
-    /** Freeze into a shared FrozenNodePtr. All subtrees are interned
-        into `cache`. If a subtree is already a FrozenNodePtr (COW
-        unmodified), we return that directly — no re-hash, no
-        reinsertion. */
+    /** Freeze into a shared FrozenNodePtr. Reuses `cachedFrozen` if
+        no mutation happened since the last freeze. Recursively reuses
+        each child's `cachedFrozen`, so incremental build-and-freeze
+        stays O(depth of the modified path) per step, not O(tree
+        size). */
     FrozenNodePtr freeze(FrozenNodeCache & cache);
 
 private:

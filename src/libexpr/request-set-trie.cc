@@ -166,6 +166,7 @@ FrozenNodePtr FrozenNodeCache::intern(const Hash & hash, std::string_view payloa
 
 FrozenNodePtr FrozenNodeCache::internLeaf(std::vector<Hash> members)
 {
+    ++internAttemptCount;
     auto sorted = sortAndDedup(std::move(members));
     auto payload = leafPayload(sorted);
     auto hash = tracingHash(payload);
@@ -180,6 +181,7 @@ FrozenNodePtr FrozenNodeCache::internLeaf(std::vector<Hash> members)
 
 FrozenNodePtr FrozenNodeCache::internInternal(std::vector<std::pair<uint8_t, FrozenNodePtr>> children)
 {
+    ++internAttemptCount;
     std::sort(children.begin(), children.end(),
         [](const auto & a, const auto & b) { return a.first < b.first; });
     auto payload = internalPayload(children);
@@ -279,6 +281,11 @@ void MutableNode::insert(const Hash & h)
 
 void MutableNode::insertAtDepth(const Hash & h, int depth)
 {
+    /* Any mutation invalidates the cached freeze at this node. Only
+       the ancestor chain of the modified leaf sees invalidation;
+       untouched sibling subtrees keep their `cachedFrozen` and are
+       reused wholesale on the next freeze. */
+    cachedFrozen.reset();
     if (auto * leaf = std::get_if<Leaf>(&body)) {
         auto pos = std::lower_bound(leaf->members.begin(), leaf->members.end(), h);
         if (pos != leaf->members.end() && *pos == h)
@@ -320,17 +327,26 @@ void MutableNode::splitLeafAt(int depth)
 
 FrozenNodePtr MutableNode::freeze(FrozenNodeCache & cache)
 {
-    if (auto * leaf = std::get_if<Leaf>(&body))
-        return cache.internLeaf(leaf->members);
+    /* Fast path: this node hasn't mutated since the last freeze. */
+    if (cachedFrozen)
+        return cachedFrozen;
+    if (auto * leaf = std::get_if<Leaf>(&body)) {
+        cachedFrozen = cache.internLeaf(leaf->members);
+        return cachedFrozen;
+    }
     auto & inter = std::get<Internal>(body);
     std::vector<std::pair<uint8_t, FrozenNodePtr>> frozenChildren;
     for (uint8_t i = 0; i < TRIE_RADIX; ++i) {
         auto & c = inter.children[i];
         if (c.empty()) continue;
+        /* Frozen child: reuse directly. Mutable child: recurse — its
+           own `cachedFrozen` short-circuits sibling subtrees that
+           didn't change. */
         FrozenNodePtr child = c.frozen ? c.frozen : c.mut->freeze(cache);
         frozenChildren.emplace_back(i, std::move(child));
     }
-    return cache.internInternal(std::move(frozenChildren));
+    cachedFrozen = cache.internInternal(std::move(frozenChildren));
+    return cachedFrozen;
 }
 
 /* ─────────────────────────────────────────────────────────────────────
