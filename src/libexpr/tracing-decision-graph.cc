@@ -563,61 +563,10 @@ Hash TracingDecisionGraph::xorHashes(const Hash & a, const Hash & b)
 }
 
 /* ──────────────────────────────────────────────────────────────────────
-   RequestSet trie: a hash-prefix trie over Request hashes.
-
-   Leaf payload:     [0x00] || hash_1 || hash_2 || ... || hash_n
-                     (n ≤ TRIE_SPLIT_THRESHOLD; n hashes sorted lex.)
-   Internal payload: [0x01] || (bucket_index_byte || child_node_hash)+
-                     (bucket indices sorted ascending; ≤ TRIE_RADIX entries.)
-
-   Bucket index at trie depth d for a hash h = (TRIE_RADIX_BITS bits of h
-   starting at bit d * TRIE_RADIX_BITS, MSB first).
-
-   The split threshold is *probabilistic* per the user's design intent:
-   no hard upper bound on internal nodes, just "split when leaf would
-   exceed threshold." Uniform-random SHA-256 keys keep buckets balanced
-   in expectation, so depth ≈ log_TRIE_RADIX(N).
+   RequestSet storage lives in the rst layer (see
+   `nix/expr/request-set-trie.hh`) — top-down HAMT with XOR-of-members
+   identity. See that file for the canonical shape and payload format.
    ────────────────────────────────────────────────────────────────────── */
-
-constexpr int TRIE_RADIX_BITS = 4;
-constexpr int TRIE_RADIX = 1 << TRIE_RADIX_BITS; // 16
-constexpr size_t TRIE_SPLIT_THRESHOLD = 16;
-
-static uint8_t dg_bucketAt(const Hash & h, int depth)
-{
-    const int bitOffset = depth * TRIE_RADIX_BITS;
-    const int byteIdx = bitOffset / 8;
-    const int bitInByte = bitOffset % 8;
-    // Read TRIE_RADIX_BITS bits MSB-first starting at byteIdx:bitInByte
-    uint16_t word = (uint16_t)h.hash[byteIdx] << 8;
-    if (byteIdx + 1 < (int)h.hashSize)
-        word |= (uint16_t)h.hash[byteIdx + 1];
-    return (uint8_t)((word >> (16 - TRIE_RADIX_BITS - bitInByte)) & ((1 << TRIE_RADIX_BITS) - 1));
-}
-
-static std::string dg_trieLeafPayload(const std::vector<Hash> & members)
-{
-    const size_t hs = trace::tracingHashSize;
-    std::string out;
-    out.reserve(1 + members.size() * hs);
-    out.push_back(0x00);
-    for (const auto & h : members)
-        out.append(reinterpret_cast<const char *>(h.hash), h.hashSize);
-    return out;
-}
-
-static std::string dg_trieInternalPayload(const std::vector<std::pair<uint8_t, Hash>> & children)
-{
-    const size_t hs = trace::tracingHashSize;
-    std::string out;
-    out.reserve(1 + children.size() * (1 + hs));
-    out.push_back(0x01);
-    for (const auto & [bucket, child] : children) {
-        out.push_back(static_cast<char>(bucket));
-        out.append(reinterpret_cast<const char *>(child.hash), child.hashSize);
-    }
-    return out;
-}
 
 /* ─────────────────────────────────────────────────────────────────────
    Construction / database path
@@ -956,39 +905,19 @@ TracingDecisionGraph::getObservationSet(const Hash & h)
     return members;
 }
 
-/* Pure recursive trie root hash — no DB access. Used by
-   computeRequestSetHash (caller has just the members in hand) and by
-   insertRequestSet's writer (which also persists each node). */
-static Hash dg_trieRootHash(std::vector<Hash> sortedMembers, int depth)
-{
-    if (sortedMembers.size() <= TRIE_SPLIT_THRESHOLD) {
-        auto payload = dg_trieLeafPayload(sortedMembers);
-        return trace::tracingHash(payload);
-    }
-    /* Bucket by the depth'th 4-bit slice. Members come in sorted; a
-       stable bucket-sort preserves intra-bucket sortedness. */
-    std::vector<std::vector<Hash>> buckets(TRIE_RADIX);
-    for (auto & h : sortedMembers)
-        buckets[dg_bucketAt(h, depth)].push_back(std::move(h));
-    std::vector<std::pair<uint8_t, Hash>> children;
-    for (uint8_t i = 0; i < TRIE_RADIX; ++i) {
-        if (buckets[i].empty())
-            continue;
-        children.emplace_back(i, dg_trieRootHash(std::move(buckets[i]), depth + 1));
-    }
-    auto payload = dg_trieInternalPayload(children);
-    return trace::tracingHash(payload);
-}
-
 TracingDecisionGraph::SetHash
 TracingDecisionGraph::computeRequestSetHash(const std::vector<RequestHash> & members)
 {
-    if (members.empty())
-        return emptySetHash();
-    auto canonical = dg_sortAndDedup(members);
-    if (canonical.empty())
-        return emptySetHash();
-    return dg_trieRootHash(std::move(canonical), 0);
+    /* XOR-fold of the dedup'd member set — matches rst::FrozenNode's
+       identity so this and insertRequestSet(members) always agree
+       on the canonical hash. Empty set → all-zero (emptySetHash). */
+    Hash acc = emptySetHash();
+    std::unordered_set<Hash> seen;
+    seen.reserve(members.size());
+    for (const auto & m : members)
+        if (seen.insert(m).second)
+            acc = dg_xorHash(acc, m);
+    return acc;
 }
 
 TracingDecisionGraph::SetHash
