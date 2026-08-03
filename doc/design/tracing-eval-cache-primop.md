@@ -203,7 +203,10 @@ on which path forced the value:
 - The first time an outer caller forces a `<cached-fn>` PrimOp with
   a new argument, the PrimOp routes to
   `innerEvaluator->apply(fnObj, outerArgObj)`, which records
-  `SelectorApply{fn, arg}` at the inner level.
+  `SelectorApply{fn, arg}` at the inner level. The fn is loaded in
+  the inner evaluator, so the apply resolves there — a
+  [regular call](./tracing-eval-cache-vocabulary.md#call-hierarchy-across-the-boundary)
+  per the vocabulary's call hierarchy.
 
 Each recording produces its own `(selectorHash, factSet, result)` row via
 `decisionGraph.record(...)`. The `factSet` contains:

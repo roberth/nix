@@ -437,6 +437,48 @@ owns a value, the other side is what probes it:
   callback body accumulates on its contra-arg is folded into that
   query's identity.
 
+### Call hierarchy across the boundary
+
+Functions are referentially transparent black boxes — we can't
+inspect a function's body or clone it, so a function stays loaded
+in whichever evaluator originally loaded it, and any application
+of it resolves against that side. Values (both functions and
+arguments) carry no persistent cross-boundary identity: when a
+value from one side ends up participating in the other side's
+apply, it lazily copies over and behaves as a native value there.
+
+Same-side applies (function and argument both loaded on the same
+side) happen inside that side's black box and don't concern the
+cache. The applies the cache observes are the ones where function
+and argument originate on opposite sides. Their **direction** is
+determined by the function's home — the apply resolves where the
+function lives; the argument travels there.
+
+The applies form an alternating hierarchy by depth, with argument
+ownership flipping level by level:
+
+- **regular call** — function owned by inner, argument owned by
+  outer. Outer initiates the application.
+- **callback** — function owned by outer, argument owned by inner.
+  Inner initiates the application, typically invoking an outer
+  library function from inside its own body with inner-produced
+  data. **Curried callbacks** (multiple inner arguments threaded
+  through the same outer function in sequence) live at this level
+  too — same directionality, different arity. Some literature
+  calls curried callbacks higher-order; in this vocabulary they
+  aren't, because ownership hasn't alternated.
+- **higher-order callback** — function owned by inner, argument
+  owned by outer, one alternation deeper than a callback. Outer
+  applies an inner-loaded function it received as a contra-arg
+  from a prior callback, to a fresh outer-constructed argument.
+- **even higher-order callbacks** — the alternation continues at
+  each further level. Rare in practice; mentioned for completeness.
+
+Each level past a regular call is nested inside the previous level's
+application; its enclosing cell (see the callback-tracking doc §6,
+and §6a for the higher-order case) is what composes it with its
+context.
+
 The mechanism that ties observations to structural identities —
 Selector chains, callback-arg objects, cell navigation — is
 defined in the next section.

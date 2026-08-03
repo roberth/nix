@@ -175,19 +175,27 @@ present design.
    via Requests folded into that arg's cell.
 
    Equivalently: arguments enter **by value**, not by outer heap
-   identity. Two distinct outer Values that behave identically under
-   the inner's observations produce the same cell factset and hit
-   the same Terminal; two references to the same outer Value that
-   behave differently under different observation traces produce
-   different factsets and miss each other. The loss of value sharing
-   (two heap-identical args go through the machinery independently)
-   is the accepted price for keeping the cache tractable — deciding
-   otherwise would constitute a significant research project.
+   identity — cross-boundary values carry no persistent identity in
+   this design, they lazily copy across and behave as native values
+   on the receiving side (see the vocabulary's
+   [call hierarchy](./tracing-eval-cache-vocabulary.md#call-hierarchy-across-the-boundary)).
+   Two distinct outer Values that behave identically under the
+   inner's observations produce the same cell factset and hit the
+   same Terminal; two references to the same outer Value that behave
+   differently under different observation traces produce different
+   factsets and miss each other. The loss of value sharing (two
+   heap-identical args go through the machinery independently) is
+   the price of that rule; recovering heap identity across crossings
+   would constitute a significant research project.
 
    *Consequence for callbacks.* Outer-supplied functions the inner
-   applies cannot have their response served from cache. The walker
-   invokes the outer live and validates the structure of the
-   resulting probes against the recorded observation set carried
+   applies — the
+   [callback](./tracing-eval-cache-vocabulary.md#call-hierarchy-across-the-boundary)
+   level of the hierarchy — cannot have their response served from
+   cache: the function body lives on the outer side and can't cross
+   into the DB, so the response has to come from the outer live.
+   The walker invokes the outer live and validates the structure of
+   the resulting probes against the recorded observation set carried
    inside the `SelectorCallbackApply` request. Cached state covers
    the structural contract (what probes happened, in what order,
    with what response shape) but never the response values
