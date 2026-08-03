@@ -234,21 +234,6 @@ private:
         const Hash & selectorHash,
         const std::shared_ptr<const ArgCell> & cell)
     {
-        /* Diagnostic: detect a fact attributed to both this cell and
-           an ancestor. Under XOR-fold, that would make factSetHash
-           silently cancel the fact — the cell's fold reads as if the
-           fact never happened. */
-        {
-            std::unordered_set<Hash> ownReqs;
-            for (auto & [req, entry] : cell->facts) ownReqs.insert(req);
-            for (auto c = cell->parent.get(); c; c = c->parent.get())
-                for (auto & [req, entry] : c->facts)
-                    if (ownReqs.count(req))
-                        tracingCacheLog(
-                            "XOR-CANCEL RISK: req=%s appears in cell.facts AND ancestor.facts",
-                            req.to_string(HashFormat::Base16, false).substr(0, 12).c_str());
-        }
-
         /* Structural chain (task 1a, task 1b enabler): if this
            Selector is a getter whose parent is also a getter recorded
            on this cell, insert a delta chain anchored at parent's
@@ -290,34 +275,22 @@ private:
                 {
                     /* Epoch matches — no canonicalisation-driven fact
                        removal on this cell or any ancestor since
-                       parent's record. Now verify the delta actually
-                       folds cleanly. XOR-CANCEL RISK (see below):
-                       when the same req appears in multiple cells,
-                       cell.factSetHash XORs it once per occurrence
-                       (cancelling in pairs), but our deltaFacts map
-                       stores each req once — the fold arithmetic
-                       diverges. Sanity check catches those cases. */
+                       parent's record. Under reverse-De-Bruijn
+                       SelectorArg{depth}, obsset members are globally
+                       unique across nested firings, and every fact-add
+                       bumps the barrier — so the delta filter precisely
+                       separates before-parent-record from after, no
+                       XOR-cancel arithmetic. */
                     std::map<Hash, std::pair<uint64_t, Hash>> deltaFacts;
                     for (auto c = cell.get(); c; c = c->parent.get())
                         for (auto & [req, entry] : c->facts)
                             if (entry.barrier >= it->second.barrierAtRecord)
                                 deltaFacts.try_emplace(req, entry.barrier, entry.response);
-                    Hash simulated = it->second.terminalCur;
-                    for (auto & [req, br_resp] : deltaFacts)
-                        simulated = TracingDecisionGraph::xorFactIntoHash(
-                            simulated, req, br_resp.second);
-                    if (simulated == cell->factSetHash()) {
-                        if (!deltaFacts.empty())
-                            insertBarrieredChain(selectorHash,
-                                it->second.terminalCur, deltaFacts);
-                        structuralInserted = true;
-                    }
+                    if (!deltaFacts.empty())
+                        insertBarrieredChain(selectorHash,
+                            it->second.terminalCur, deltaFacts);
+                    structuralInserted = true;
                 }
-                /* Otherwise (parent not on this cell, canonicalisation
-                   happened, or XOR-cancel divergence): fall through to
-                   ∅-chain. Follow-up work: re-record parent's chain
-                   fresh from current cell state so structural chains
-                   for later child Qs on this cell become usable again. */
             }
         }
 
@@ -541,7 +514,14 @@ public:
         if (cell) {
             insertBarrieredAskChain(qh.raw, cell);
             /* task 1a: record oldest terminalCur per Selector on the
-               cell so descendant Qs can anchor structural chains here. */
+               cell so descendant Qs can anchor structural chains here.
+               Bump the barrier and snapshot post-bump so subsequent
+               facts (env or value) get a barrier >= barrierAtRecord
+               only when they were added after this record. Env facts
+               (which don't bump per F9) would otherwise share the
+               barrier with parent's record moment and be spuriously
+               double-counted in a descendant's delta. */
+            bumpBarrier();
             cell->firstTerminalCurs.try_emplace(qh.raw,
                 ArgCell::FirstTerminalRecord{terminalCur, peekBarrier(),
                     cell->canonicalisationEpochChain()});
@@ -598,7 +578,11 @@ public:
            Ask rows are inserted per-Selector-completion.
 
            #187 principle 9: env-file / env-var are NOT value probes —
-           stamp with current barrier, do not bump. */
+           stamp with current barrier, do not bump. Multiple env facts
+           batch into one Ask row (safely batchable per F9). Delta
+           filter correctness is maintained by bumping the barrier at
+           logQueryResult time, which separates facts folded into
+           parent's terminalCur from later ones. */
         sessionRootCell->addFact(selectorHash, responseHash, peekBarrier());
         responseFor.emplace(selectorHash, responseHash);
         sessionRequestsTrie.insert(selectorHash);
