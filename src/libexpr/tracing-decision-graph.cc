@@ -451,8 +451,11 @@ struct TracingDecisionGraph::State
        first read or write so that subsequent operations within the same
        process avoid the SQLite round-trip and the CBOR decode.
        std::optional<vector<...>> distinguishes a known-empty result from
-       a known-missing one. */
-    std::unordered_map<Hash, std::optional<std::vector<Hash>>> requestSetCache;
+       a known-missing one.
+
+       RequestSet has no vector-form cache — getRequestSet routes
+       through requestSetTrieCache + FrozenNode::allMembers, memoized
+       on the FrozenNode itself. */
     std::unordered_map<Hash, std::optional<std::vector<TracingDecisionGraph::Fact>>> factSetCache;
     std::unordered_map<Hash, std::optional<std::string>> requestPayloadCache;
     std::unordered_map<Hash, std::optional<std::string>> resultPayloadCache;
@@ -612,53 +615,6 @@ static std::string dg_trieInternalPayload(const std::vector<std::pair<uint8_t, H
     for (const auto & [bucket, child] : children) {
         out.push_back(static_cast<char>(bucket));
         out.append(reinterpret_cast<const char *>(child.hash), child.hashSize);
-    }
-    return out;
-}
-
-struct DgTrieNode
-{
-    bool isLeaf;
-    std::vector<Hash> members;                          // populated when isLeaf
-    std::vector<std::pair<uint8_t, Hash>> children;     // populated otherwise
-};
-
-static DgTrieNode dg_parseTrieNode(std::string_view payload)
-{
-    /* Mirror of trace::rst::FrozenNodeCache::intern's payload layout —
-       kept here so decision-graph-side traversal (member collection,
-       recursive top-down load) doesn't need to intern into the rst
-       cache. Layout:
-         Leaf:     [0x00] hash_1 ... hash_n
-         Internal: [0x01] depth bitmap_lo bitmap_hi child_hash_1 ... child_hash_k
-       The bucket byte we surface in `children` is the slot index recovered
-       from the bitmap. */
-    if (payload.empty())
-        throw Error("decision-graph: malformed RequestSet node (empty)");
-    const size_t hs = trace::tracingHashSize;
-    DgTrieNode out;
-    out.isLeaf = (payload[0] == 0x00);
-    if (out.isLeaf) {
-        if ((payload.size() - 1) % hs != 0)
-            throw Error("decision-graph: malformed RequestSet leaf (size=%d)", payload.size());
-        for (size_t i = 1; i + hs <= payload.size(); i += hs)
-            out.members.push_back(dg_blobToHash(payload.substr(i, hs)));
-    } else {
-        if (payload.size() < 4)
-            throw Error("decision-graph: malformed RequestSet internal node (size=%d)", payload.size());
-        uint16_t bitmap = static_cast<uint8_t>(payload[2])
-                        | (static_cast<uint8_t>(payload[3]) << 8);
-        size_t off = 4;
-        for (uint8_t slot = 0; slot < 16; ++slot) {
-            if (!(bitmap & (uint16_t(1) << slot)))
-                continue;
-            if (off + hs > payload.size())
-                throw Error("decision-graph: malformed RequestSet internal node (truncated at slot %d)", slot);
-            out.children.emplace_back(slot, dg_blobToHash(payload.substr(off, hs)));
-            off += hs;
-        }
-        if (off != payload.size())
-            throw Error("decision-graph: trailing bytes in RequestSet internal payload");
     }
     return out;
 }
@@ -1099,10 +1055,6 @@ TracingDecisionGraph::insertRequestSet(std::vector<RequestHash> members)
                 WriteInsertRequestSetNode{nodeHash, std::string(payload)});
         };
     state->requestSetTrieCache.persist(rootPtr, sink);
-    /* Snapshot the full member list at the root for getRequestSet's
-       fast path (existing consumers expect vector<Hash> members). */
-    state->requestSetCache.try_emplace(rootPtr->hash,
-        std::optional<std::vector<Hash>>{rootPtr->allMembers()});
     return rootPtr->hash;
 }
 
@@ -1122,8 +1074,6 @@ TracingDecisionGraph::insertRequestSet(trace::rst::FrozenNodePtr node)
                 WriteInsertRequestSetNode{nodeHash, std::string(payload)});
         };
     state->requestSetTrieCache.persist(node, sink);
-    state->requestSetCache.try_emplace(node->hash,
-        std::optional<std::vector<Hash>>{node->allMembers()});
     return node->hash;
 }
 
@@ -1205,44 +1155,19 @@ std::optional<std::string> TracingDecisionGraph::getRequestSetNodePayload(const 
     return payload;
 }
 
-bool TracingDecisionGraph::collectTrieMembers(const Hash & nodeHash, std::vector<RequestHash> & out)
-{
-    auto payload = getRequestSetNodePayload(nodeHash);
-    if (!payload)
-        return false;
-    auto node = dg_parseTrieNode(*payload);
-    if (node.isLeaf) {
-        for (auto & h : node.members)
-            out.push_back(h);
-        return true;
-    }
-    for (const auto & [bucket, child] : node.children)
-        if (!collectTrieMembers(child, out))
-            return false;
-    return true;
-}
-
 std::optional<std::vector<TracingDecisionGraph::RequestHash>>
 TracingDecisionGraph::getRequestSet(const SetHash & h)
 {
+    /* Route through the rst trie cache. FrozenNode::allMembers is
+       memoized on the interned node itself, so repeat calls for the
+       same set hash return the same materialized vector without
+       re-walking. */
     if (h == emptySetHash())
         return std::vector<RequestHash>{};
-    {
-        auto state(_state->lock());
-        if (auto it = state->requestSetCache.find(h); it != state->requestSetCache.end())
-            return it->second;
-    }
-    std::vector<RequestHash> members;
-    if (!collectTrieMembers(h, members)) {
-        auto state(_state->lock());
-        state->requestSetCache.emplace(h, std::nullopt);
+    auto node = getRequestSetNode(h);
+    if (!node)
         return std::nullopt;
-    }
-    {
-        auto state(_state->lock());
-        state->requestSetCache.emplace(h, std::optional{members});
-    }
-    return std::optional{std::move(members)};
+    return (*node)->allMembers();
 }
 
 std::optional<trace::rst::FrozenNodePtr>
@@ -1281,13 +1206,11 @@ TracingDecisionGraph::getRequestSetNode(const SetHash & h)
         }
         if (!payload)
             return std::nullopt;
-        /* Recursively load children if internal. */
-        if (!payload->empty() && (*payload)[0] == 0x01) {
-            auto parsed = dg_parseTrieNode(*payload);
-            for (const auto & [_, childHash] : parsed.children)
-                if (!loadNode(childHash))
-                    return std::nullopt;
-        }
+        /* Recursively load children before interning the parent —
+           FrozenNodeCache::intern requires child hashes cached. */
+        for (const auto & childHash : trace::rst::childHashesInPayload(*payload))
+            if (!loadNode(childHash))
+                return std::nullopt;
         return state->requestSetTrieCache.intern(nodeHash, *payload);
     };
     return loadNode(h);

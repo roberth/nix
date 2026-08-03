@@ -98,6 +98,11 @@ public:
         short-circuit the persist walk on subsequent freezes. */
     mutable bool persisted = false;
 
+    /** Memoized flat member list. Populated on first `allMembers()`
+        call and reused thereafter — since FrozenNodes are interned,
+        one materialisation per unique set. */
+    mutable std::optional<std::vector<Hash>> cachedAllMembers;
+
     bool isLeaf() const noexcept { return std::holds_alternative<Leaf>(body); }
     const Leaf & asLeaf() const { return std::get<Leaf>(body); }
     const Internal & asInternal() const { return std::get<Internal>(body); }
@@ -229,5 +234,12 @@ FrozenNodePtr intersection(const FrozenNodePtr & a, const FrozenNodePtr & b, Fro
     of the larger side that aren't touched by the smaller side's
     inserts. Named `union_` because `union` is a C++ keyword. */
 FrozenNodePtr union_(const FrozenNodePtr & a, const FrozenNodePtr & b, FrozenNodeCache & cache);
+
+/** Enumerate child-node hashes referenced in an Internal payload
+    without interning the node itself. For a Leaf payload, returns
+    empty. Used by DB loaders that walk children-before-parent to
+    satisfy `FrozenNodeCache::intern`'s "children must be cached"
+    precondition. */
+std::vector<Hash> childHashesInPayload(std::string_view payload);
 
 } // namespace nix::trace::rst

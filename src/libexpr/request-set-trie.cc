@@ -117,6 +117,8 @@ std::string FrozenNode::toPayload() const
 
 std::vector<Hash> FrozenNode::allMembers() const
 {
+    if (cachedAllMembers)
+        return *cachedAllMembers;
     std::vector<Hash> out;
     out.reserve(size());
     auto walk = [&](const FrozenNode & node, auto & self) -> void {
@@ -130,6 +132,7 @@ std::vector<Hash> FrozenNode::allMembers() const
                 self(*child, self);
     };
     walk(*this, walk);
+    cachedAllMembers = out;
     return out;
 }
 
@@ -722,6 +725,31 @@ FrozenNodePtr intersection(const FrozenNodePtr & a, const FrozenNodePtr & b, Fro
         if (larger->contains(m))
             keep.push_back(m);
     return cache.internSet(std::move(keep));
+}
+
+std::vector<Hash> childHashesInPayload(std::string_view payload)
+{
+    if (payload.empty() || payload[0] != char(0x01))
+        return {};
+    if (payload.size() < 4)
+        throw Error("rst: malformed frozen internal payload (size=%d)", payload.size());
+    uint16_t bitmap = static_cast<uint8_t>(payload[2])
+                    | (static_cast<uint8_t>(payload[3]) << 8);
+    const size_t hs = tracingHashSize;
+    std::vector<Hash> out;
+    size_t off = 4;
+    for (size_t i = 0; i < RADIX; ++i) {
+        if (!(bitmap & (uint16_t(1) << i)))
+            continue;
+        if (off + hs > payload.size())
+            throw Error("rst: malformed frozen internal payload (truncated at slot %d)", i);
+        Hash h(HashAlgorithm::SHA256);
+        h.hashSize = hs;
+        std::memcpy(h.hash, payload.data() + off, hs);
+        out.push_back(h);
+        off += hs;
+    }
+    return out;
 }
 
 FrozenNodePtr union_(const FrozenNodePtr & a, const FrozenNodePtr & b, FrozenNodeCache & cache)

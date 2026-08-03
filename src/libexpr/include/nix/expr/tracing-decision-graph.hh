@@ -386,12 +386,10 @@ private:
     struct State;
     std::unique_ptr<Sync<State>> _state;
 
-    /* RequestSet trie internals — see schema comment and definitions
-       in tracing-decision-graph.cc. */
-    bool collectTrieMembers(const Hash & nodeHash, std::vector<RequestHash> & out);
 public:
-    /* Public so `collectTrieMembers` and other in-file helpers can
-       fetch stored node payloads. Not intended for general use. */
+    /* Fetch a raw stored RequestSet node payload by its hash. Callers
+       are typically the rst layer's DB loader; not intended for
+       general use. */
     std::optional<std::string> getRequestSetNodePayload(const Hash & nodeHash);
 };
 
