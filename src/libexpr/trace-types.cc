@@ -578,6 +578,77 @@ Hash tracingZeroHash()
     return z;
 }
 
+} // namespace nix::trace
+
+namespace nix {
+
+TracingHash TracingHash::compute(std::string_view input)
+{
+    /* Delegate to SHA-256 via the existing pipeline; truncate to the
+       first 16 bytes. This is the single line to swap when moving to
+       BLAKE3 — everything downstream consumes TracingHash bytes with
+       no algorithm knowledge. */
+    Hash h = hashString(HashAlgorithm::SHA256, input);
+    TracingHash r;
+    std::memcpy(r.bytes.data(), h.hash, TracingHash::size);
+    return r;
+}
+
+TracingHash TracingHash::of(const Hash & h)
+{
+    assert(h.hashSize >= TracingHash::size);
+    TracingHash r;
+    std::memcpy(r.bytes.data(), h.hash, TracingHash::size);
+    return r;
+}
+
+Hash TracingHash::toNixHash() const
+{
+    Hash h(HashAlgorithm::SHA256);
+    h.hashSize = TracingHash::size;
+    std::memcpy(h.hash, bytes.data(), TracingHash::size);
+    return h;
+}
+
+static char tracingHexDigit(uint8_t v)
+{
+    return v < 10 ? char('0' + v) : char('a' + (v - 10));
+}
+
+static uint8_t tracingHexNibble(char c)
+{
+    if (c >= '0' && c <= '9') return uint8_t(c - '0');
+    if (c >= 'a' && c <= 'f') return uint8_t(10 + c - 'a');
+    if (c >= 'A' && c <= 'F') return uint8_t(10 + c - 'A');
+    throw Error("TracingHash: invalid hex digit '%c'", c);
+}
+
+std::string TracingHash::toHex() const
+{
+    std::string s;
+    s.reserve(TracingHash::size * 2);
+    for (uint8_t b : bytes) {
+        s.push_back(tracingHexDigit(b >> 4));
+        s.push_back(tracingHexDigit(b & 0x0F));
+    }
+    return s;
+}
+
+TracingHash TracingHash::parseHex(std::string_view hex)
+{
+    if (hex.size() != TracingHash::size * 2)
+        throw Error("TracingHash::parseHex: hex length %d, expected %d",
+            hex.size(), TracingHash::size * 2);
+    TracingHash r;
+    for (size_t i = 0; i < TracingHash::size; ++i)
+        r.bytes[i] = (tracingHexNibble(hex[i * 2]) << 4) | tracingHexNibble(hex[i * 2 + 1]);
+    return r;
+}
+
+} // namespace nix
+
+namespace nix::trace {
+
 SelectorF<Resolved>::SelectorF(SelectorNodeF<Resolved> n)
     : node(std::move(n))
     , cachedHash(computeSelectorHash(node))

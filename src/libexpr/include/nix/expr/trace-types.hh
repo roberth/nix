@@ -14,6 +14,7 @@
  * - ResultOf<Query> maps each user query to its result
  */
 
+#include "nix/expr/trace-ids.hh"
 #include "nix/util/hash.hh"
 #include "nix/util/ref.hh"
 

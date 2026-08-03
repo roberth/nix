@@ -173,4 +173,83 @@ TEST_F(TraceTypesTest, ResolveFromJsonMalformed)
     EXPECT_FALSE(resolveFromJson(nlohmann::json{{"tag", "getAttr"}}, pool).has_value());
 }
 
+/* ─────────────────────────────────────────────────────────────────────
+   TracingHash: 128-bit tracing hash type — self-contained tests for the
+   type itself.
+   ───────────────────────────────────────────────────────────────────── */
+
+TEST(TracingHashTest, DefaultIsZero)
+{
+    nix::TracingHash h;
+    EXPECT_EQ(h, nix::TracingHash::zero());
+    for (uint8_t b : h.bytes) EXPECT_EQ(b, 0u);
+}
+
+TEST(TracingHashTest, EqualityAndOrdering)
+{
+    auto a = nix::TracingHash::compute("alpha");
+    auto b = nix::TracingHash::compute("beta");
+    EXPECT_NE(a, b);
+    EXPECT_EQ(a, a);
+    EXPECT_EQ((a < b), (a < b));
+}
+
+TEST(TracingHashTest, ComputeIsStable)
+{
+    auto a = nix::TracingHash::compute("hello");
+    auto b = nix::TracingHash::compute("hello");
+    EXPECT_EQ(a, b);
+}
+
+TEST(TracingHashTest, TruncatesFromNixHash)
+{
+    /* compute() and of(tracingHash) agree on the first 16 bytes. */
+    auto direct = nix::TracingHash::compute("some content");
+    auto viaHash = nix::TracingHash::of(tracingHash("some content"));
+    EXPECT_EQ(direct, viaHash);
+}
+
+TEST(TracingHashTest, NixHashRoundTrip)
+{
+    auto h = nix::TracingHash::compute("round-trip");
+    auto n = h.toNixHash();
+    EXPECT_EQ(n.hashSize, nix::TracingHash::size);
+    EXPECT_EQ(nix::TracingHash::of(n), h);
+}
+
+TEST(TracingHashTest, HexRoundTrip)
+{
+    auto h = nix::TracingHash::compute("hex-test");
+    auto hex = h.toHex();
+    EXPECT_EQ(hex.size(), nix::TracingHash::size * 2);
+    EXPECT_EQ(nix::TracingHash::parseHex(hex), h);
+}
+
+TEST(TracingHashTest, XorIsCommutativeAndSelfInverse)
+{
+    auto a = nix::TracingHash::compute("x");
+    auto b = nix::TracingHash::compute("y");
+    EXPECT_EQ(a.xorWith(b), b.xorWith(a));
+    EXPECT_EQ(a.xorWith(b).xorWith(b), a);
+    EXPECT_EQ(a.xorWith(a), nix::TracingHash::zero());
+}
+
+TEST(TracingHashTest, XorInPlace)
+{
+    auto a = nix::TracingHash::compute("x");
+    auto b = nix::TracingHash::compute("y");
+    auto c = a;
+    c.xorInPlace(b);
+    EXPECT_EQ(c, a.xorWith(b));
+}
+
+TEST(TracingHashTest, StdHashOfTracingHashIsUsable)
+{
+    std::unordered_map<nix::TracingHash, int> m;
+    m[nix::TracingHash::compute("k1")] = 1;
+    m[nix::TracingHash::compute("k2")] = 2;
+    EXPECT_EQ(m.size(), 2u);
+    EXPECT_EQ(m[nix::TracingHash::compute("k1")], 1);
+}
+
 } // namespace nix::trace

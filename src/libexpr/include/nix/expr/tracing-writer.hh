@@ -419,11 +419,11 @@ public:
     }
 
     /** Phantom tag used to keep SelectorHandle distinct from any
-        other HashFor<X> type. */
+        other HashOf<X> type. */
     struct SelectorPhantom
     {};
     /** Opaque handle linking a query to its result. */
-    using SelectorHandle = HashFor<SelectorPhantom>;
+    using SelectorHandle = HashOf<SelectorPhantom>;
 
     /**
      * Log a root query (evalFile, evalExpr, apply) on a cell. Root
