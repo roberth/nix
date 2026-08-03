@@ -182,18 +182,14 @@ private:
         /* Insert phase: barrier-group only the leftover reqs from cur. */
         if (remaining.empty())
             return;
-        std::map<uint64_t, std::vector<std::pair<Hash, Hash>>> byBarrier;
+        std::map<uint64_t, std::vector<TracingDecisionGraph::Fact>> byBarrier;
         for (auto & [req, br_resp] : facts)
             if (remaining.count(req))
-                byBarrier[br_resp.first].emplace_back(req, br_resp.second);
+                byBarrier[br_resp.first].push_back({req, br_resp.second});
         /* Iterate by barrier group; the barrier value itself isn't
            needed in-loop — sortedness of `byBarrier` drives the order. */
         for (auto & barrierGroup : byBarrier) {
-            auto & entries = barrierGroup.second;
-            std::vector<TracingDecisionGraph::Fact> factList;
-            factList.reserve(entries.size());
-            for (auto & [req, resp] : entries)
-                factList.push_back({req, resp});
+            auto & factList = barrierGroup.second;
 
             /* Alt stamping: if any req in this Ask's rs was a canonical
                replacement, build a companion alt rs with the pre-canonical
@@ -219,9 +215,9 @@ private:
 
             decisionGraph.insertAskSplitting(
                 selectorHash, cur, factList, dispatchedSoFar, altRequestSetHash);
-            for (auto & [req, resp] : entries) {
-                cur = TracingDecisionGraph::xorFactIntoHash(cur, req, resp);
-                dispatchedSoFar.insert(req);
+            for (const auto & f : factList) {
+                cur = TracingDecisionGraph::xorFactIntoHash(cur, f.request, f.response);
+                dispatchedSoFar.insert(f.request);
             }
         }
     }
