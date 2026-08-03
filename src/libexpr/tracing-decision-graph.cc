@@ -959,32 +959,11 @@ bool TracingDecisionGraph::isApplyRequest(const RequestHash & h)
     return std::holds_alternative<trace::SelectorApply>(ovr->query->node);
 }
 
-TracingDecisionGraph::SetHash
-TracingDecisionGraph::insertRequestSet(std::vector<RequestHash> members)
+trace::rst::FrozenNodePtr
+TracingDecisionGraph::internRequestSet(std::vector<RequestHash> members)
 {
-    if (members.empty())
-        return emptySetHash();
-    /* Route through the shared in-memory trie: internSet builds (or
-       reuses via content hash) the FrozenNode tree; persist walks
-       the tree flagging unpersisted subtrees and forwarding them to
-       the writer thread. The FrozenNodeCache is held under the same
-       lock as the rest of DG state — no separate synchronisation. */
     auto state(_state->lock());
-    auto rootPtr = state->requestSetTrieCache.internSet(members);
-    if (rootPtr->size() == 0)
-        return emptySetHash();
-    trace::rst::FrozenNodeCache::PersistSink sink =
-        [&](const Hash & nodeHash, std::string_view payload) {
-            /* Populate the payload cache and enqueue the DB write. */
-            auto [it, inserted] = state->requestSetNodePayloadCache.try_emplace(
-                nodeHash, std::optional<std::string>{std::string(payload)});
-            if (!inserted)
-                return;
-            state->writeQueue->enqueue(
-                WriteInsertRequestSetNode{nodeHash, std::string(payload)});
-        };
-    state->requestSetTrieCache.persist(rootPtr, sink);
-    return rootPtr->hash;
+    return state->requestSetTrieCache.internSet(std::move(members));
 }
 
 TracingDecisionGraph::SetHash
@@ -1042,10 +1021,21 @@ void TracingDecisionGraph::persistRequestSetNode(
 TracingDecisionGraph::SetHash
 TracingDecisionGraph::extendRequestSet(const SetHash & parent, const std::vector<RequestHash> & extras)
 {
-    auto existing = getRequestSet(parent);
-    std::vector<RequestHash> combined = existing.value_or(std::vector<RequestHash>{});
-    combined.insert(combined.end(), extras.begin(), extras.end());
-    return insertRequestSet(std::move(combined));
+    /* Trie-native extension: seed a MutableNode from the parent trie,
+       insert extras (CoW along the modified paths — untouched sibling
+       subtrees stay pointer-identical to parent's), freeze into the
+       shared cache. */
+    auto parentNode = getRequestSetNode(parent);
+    trace::rst::MutableNode mut;
+    if (parentNode)
+        mut = trace::rst::MutableNode(*parentNode);
+    for (const auto & e : extras)
+        mut.insert(e);
+    auto node = [&] {
+        auto state(_state->lock());
+        return mut.freeze(state->requestSetTrieCache);
+    }();
+    return insertRequestSet(node);
 }
 
 TracingDecisionGraph::SetHash
@@ -1364,7 +1354,7 @@ void TracingDecisionGraph::insertAskSplitting(
                 for (const auto & req : exUseful)
                     if (!sharedNode->contains(req))
                         tail.push_back(req);
-                auto tailRsHash = insertRequestSet(tail);
+                auto tailRsHash = insertRequestSet(internRequestSet(std::move(tail)));
                 insertAsk(q, cur, sharedRsHash);
                 insertAsk(q, intermediate, tailRsHash, edge.altRequestSet);
                 removeAsk(q, cur, exRsHash);
@@ -1402,7 +1392,7 @@ void TracingDecisionGraph::insertAskSplitting(
     std::vector<Hash> newReqs;
     newReqs.reserve(remaining.size());
     for (const auto & f : remaining) newReqs.push_back(f.request);
-    auto newRsHash = insertRequestSet(newReqs);
+    auto newRsHash = insertRequestSet(internRequestSet(std::move(newReqs)));
     insertAsk(q, cur, newRsHash, alt);
 }
 

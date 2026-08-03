@@ -187,17 +187,21 @@ public:
     /* The hash of the empty set, common enough to be a constant. */
     static SetHash emptySetHash();
 
-    /* Insert a set into its pool by its full member list. Computes
-       the canonical hash, deduplicates, and stores. Returns the
-       canonical hash. Idempotent on hash. */
-    SetHash insertRequestSet(std::vector<RequestHash> members);
-    SetHash insertFactSet(std::vector<Fact> members);
-
-    /* Trie-native overload: persist a FrozenNodePtr already computed
-       via the rst cache (union/intersection/etc.). Skips the
-       vector-flatten hop. The node MUST have been interned in this
-       DG's requestSetTrieCache. */
+    /* Persist a FrozenNodePtr (assumed to be interned in this DG's
+       requestSetTrieCache — use internRequestSet or a rst set-op
+       result). Idempotent on the node's identity hash. */
     SetHash insertRequestSet(trace::rst::FrozenNodePtr node);
+
+    /* Intern a vector of member hashes into the shared trie cache and
+       return the resulting FrozenNodePtr. Present for callers that
+       intrinsically produce a vector (canonical substitution loop,
+       Fact-list extraction, test literals). Callers that want to
+       persist should chain `insertRequestSet(internRequestSet(vec))`.
+       Callers with a MutableNode should freeze via
+       state->requestSetTrieCache directly (see extendRequestSet). */
+    trace::rst::FrozenNodePtr internRequestSet(std::vector<RequestHash> members);
+
+    SetHash insertFactSet(std::vector<Fact> members);
 
     /* XOR-fold one Fact into a running set hash. Used by callers that
        maintain their factSet hash incrementally to avoid the O(N)

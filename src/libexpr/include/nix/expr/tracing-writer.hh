@@ -214,7 +214,8 @@ private:
                 }
             }
             if (anySubstituted)
-                altRequestSetHash = decisionGraph.insertRequestSet(altReqHashes);
+                altRequestSetHash = decisionGraph.insertRequestSet(
+                    decisionGraph.internRequestSet(std::move(altReqHashes)));
 
             decisionGraph.insertAskSplitting(
                 selectorHash, cur, factList, dispatchedSoFar, altRequestSetHash);

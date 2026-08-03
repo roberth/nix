@@ -135,7 +135,7 @@ TEST_F(TracingDecisionGraphTest, RequestSetInsertRoundTrip)
 {
     TracingDecisionGraph g(dbPath);
     auto a = sha("a"), b = sha("b"), c = sha("c");
-    auto setHash = g.insertRequestSet({a, b, c});
+    auto setHash = g.insertRequestSet(g.internRequestSet({a, b, c}));
 
     auto loaded = g.getRequestSet(setHash);
     ASSERT_TRUE(loaded.has_value());
@@ -188,7 +188,7 @@ TEST_F(TracingDecisionGraphTest, ExtendRequestSetProducesCanonicalUnion)
 {
     TracingDecisionGraph g(dbPath);
     auto a = sha("a"), b = sha("b"), c = sha("c");
-    auto base = g.insertRequestSet({a, b});
+    auto base = g.insertRequestSet(g.internRequestSet({a, b}));
     auto extended = g.extendRequestSet(base, {b, c}); // overlap on b is deduped
     auto canonical = TracingDecisionGraph::computeRequestSetHash({a, b, c});
     EXPECT_EQ(extended, canonical);
@@ -215,7 +215,7 @@ TEST_F(TracingDecisionGraphTest, ExtendIsIdempotentWhenAddingExistingMembers)
 {
     TracingDecisionGraph g(dbPath);
     auto a = sha("a"), b = sha("b");
-    auto base = g.insertRequestSet({a, b});
+    auto base = g.insertRequestSet(g.internRequestSet({a, b}));
     auto re_extended = g.extendRequestSet(base, {a, b}); // nothing new
     EXPECT_EQ(base, re_extended);
 }
@@ -229,7 +229,7 @@ TEST_F(TracingDecisionGraphTest, AsksInsertGetRoundTrip)
     TracingDecisionGraph g(dbPath);
     auto q = sha("Q");
     auto factSet = g.insertFactSet({});
-    auto requestSet = g.insertRequestSet({sha("a"), sha("b")});
+    auto requestSet = g.insertRequestSet(g.internRequestSet({sha("a"), sha("b")}));
 
     g.insertAsk(q, factSet, requestSet);
 
@@ -247,9 +247,9 @@ TEST_F(TracingDecisionGraphTest, AsksInsertRoundTripWithAltRequestSet)
     TracingDecisionGraph g(dbPath);
     auto q = sha("Q");
     auto factSet = TracingDecisionGraph::emptySetHash();
-    auto primary = g.insertRequestSet({sha("a")});
-    auto alt = g.insertRequestSet({sha("a"), sha("b")});
-    auto otherAlt = g.insertRequestSet({sha("c")});
+    auto primary = g.insertRequestSet(g.internRequestSet({sha("a")}));
+    auto alt = g.insertRequestSet(g.internRequestSet({sha("a"), sha("b")}));
+    auto otherAlt = g.insertRequestSet(g.internRequestSet({sha("c")}));
 
     g.insertAsk(q, factSet, primary, alt);
     /* Repeat insert with a different alt is a no-op via INSERT OR IGNORE. */
@@ -268,7 +268,7 @@ TEST_F(TracingDecisionGraphTest, AsksInsertIsIdempotent)
     TracingDecisionGraph g(dbPath);
     auto q = sha("Q");
     auto factSet = TracingDecisionGraph::emptySetHash();
-    auto requestSet = g.insertRequestSet({sha("a")});
+    auto requestSet = g.insertRequestSet(g.internRequestSet({sha("a")}));
 
     g.insertAsk(q, factSet, requestSet);
     g.insertAsk(q, factSet, requestSet);
@@ -283,8 +283,8 @@ TEST_F(TracingDecisionGraphTest, AsksMultipleOutgoingPerPosition)
     TracingDecisionGraph g(dbPath);
     auto q = sha("Q");
     auto factSet = TracingDecisionGraph::emptySetHash();
-    auto rs1 = g.insertRequestSet({sha("a")});
-    auto rs2 = g.insertRequestSet({sha("b")});
+    auto rs1 = g.insertRequestSet(g.internRequestSet({sha("a")}));
+    auto rs2 = g.insertRequestSet(g.internRequestSet({sha("b")}));
 
     g.insertAsk(q, factSet, rs1);
     g.insertAsk(q, factSet, rs2);
@@ -301,8 +301,8 @@ TEST_F(TracingDecisionGraphTest, AsksRemovePicksTheRightEdge)
     TracingDecisionGraph g(dbPath);
     auto q = sha("Q");
     auto factSet = TracingDecisionGraph::emptySetHash();
-    auto rs1 = g.insertRequestSet({sha("a")});
-    auto rs2 = g.insertRequestSet({sha("b")});
+    auto rs1 = g.insertRequestSet(g.internRequestSet({sha("a")}));
+    auto rs2 = g.insertRequestSet(g.internRequestSet({sha("b")}));
 
     g.insertAsk(q, factSet, rs1);
     g.insertAsk(q, factSet, rs2);
@@ -319,8 +319,8 @@ TEST_F(TracingDecisionGraphTest, AsksIsolatedByQ)
     TracingDecisionGraph g(dbPath);
     auto q1 = sha("Q1"), q2 = sha("Q2");
     auto factSet = TracingDecisionGraph::emptySetHash();
-    auto rs1 = g.insertRequestSet({sha("a")});
-    auto rs2 = g.insertRequestSet({sha("b")});
+    auto rs1 = g.insertRequestSet(g.internRequestSet({sha("a")}));
+    auto rs2 = g.insertRequestSet(g.internRequestSet({sha("b")}));
 
     g.insertAsk(q1, factSet, rs1);
     g.insertAsk(q2, factSet, rs2);
@@ -414,7 +414,7 @@ TEST_F(TracingDecisionGraphTest, InsertAskSplittingDisjointCoexists)
     ASSERT_EQ(edges.size(), 2u);
     std::set<Hash> got;
     for (auto & e : edges) got.insert(e.requestSet);
-    EXPECT_EQ(got, std::set<Hash>({g.insertRequestSet({a}), g.insertRequestSet({b})}));
+    EXPECT_EQ(got, std::set<Hash>({g.insertRequestSet(g.internRequestSet({a})), g.insertRequestSet(g.internRequestSet({b}))}));
 }
 
 TEST_F(TracingDecisionGraphTest, InsertAskSplittingPartialOverlapSplits)
@@ -445,7 +445,7 @@ TEST_F(TracingDecisionGraphTest, InsertAskSplittingPartialOverlapSplits)
     ASSERT_EQ(atIntermediate.size(), 2u);
     std::set<Hash> got;
     for (auto & e : atIntermediate) got.insert(e.requestSet);
-    EXPECT_EQ(got, std::set<Hash>({g.insertRequestSet({b}), g.insertRequestSet({c})}));
+    EXPECT_EQ(got, std::set<Hash>({g.insertRequestSet(g.internRequestSet({b})), g.insertRequestSet(g.internRequestSet({c}))}));
 }
 
 TEST_F(TracingDecisionGraphTest, InsertAskSplittingNewSubsumesExisting)
@@ -463,12 +463,12 @@ TEST_F(TracingDecisionGraphTest, InsertAskSplittingNewSubsumesExisting)
 
     auto atCur = g.getAsks(q, cur);
     ASSERT_EQ(atCur.size(), 1u);
-    EXPECT_EQ(atCur[0].requestSet, g.insertRequestSet({a}));
+    EXPECT_EQ(atCur[0].requestSet, g.insertRequestSet(g.internRequestSet({a})));
 
     auto intermediate = TracingDecisionGraph::xorFactIntoHash(cur, a, va);
     auto atIntermediate = g.getAsks(q, intermediate);
     ASSERT_EQ(atIntermediate.size(), 1u);
-    EXPECT_EQ(atIntermediate[0].requestSet, g.insertRequestSet({b}));
+    EXPECT_EQ(atIntermediate[0].requestSet, g.insertRequestSet(g.internRequestSet({b})));
 }
 
 TEST_F(TracingDecisionGraphTest, InsertAskSplittingExistingSubsumesNew)
@@ -486,12 +486,12 @@ TEST_F(TracingDecisionGraphTest, InsertAskSplittingExistingSubsumesNew)
 
     auto atCur = g.getAsks(q, cur);
     ASSERT_EQ(atCur.size(), 1u);
-    EXPECT_EQ(atCur[0].requestSet, g.insertRequestSet({a}));
+    EXPECT_EQ(atCur[0].requestSet, g.insertRequestSet(g.internRequestSet({a})));
 
     auto intermediate = TracingDecisionGraph::xorFactIntoHash(cur, a, va);
     auto atIntermediate = g.getAsks(q, intermediate);
     ASSERT_EQ(atIntermediate.size(), 1u);
-    EXPECT_EQ(atIntermediate[0].requestSet, g.insertRequestSet({b}));
+    EXPECT_EQ(atIntermediate[0].requestSet, g.insertRequestSet(g.internRequestSet({b})));
 }
 
 TEST_F(TracingDecisionGraphTest, InsertAskSplittingIdenticalDedups)
@@ -508,7 +508,7 @@ TEST_F(TracingDecisionGraphTest, InsertAskSplittingIdenticalDedups)
 
     auto edges = g.getAsks(q, cur);
     ASSERT_EQ(edges.size(), 1u);
-    EXPECT_EQ(edges[0].requestSet, g.insertRequestSet({a, b}));
+    EXPECT_EQ(edges[0].requestSet, g.insertRequestSet(g.internRequestSet({a, b})));
 }
 
 TEST_F(TracingDecisionGraphTest, InsertAskSplittingCascadesThroughMultipleOverlaps)
@@ -531,7 +531,7 @@ TEST_F(TracingDecisionGraphTest, InsertAskSplittingCascadesThroughMultipleOverla
 
     auto atCur = g.getAsks(q, cur);
     ASSERT_EQ(atCur.size(), 1u);
-    EXPECT_EQ(atCur[0].requestSet, g.insertRequestSet({a}));
+    EXPECT_EQ(atCur[0].requestSet, g.insertRequestSet(g.internRequestSet({a})));
 
     auto intermediate = TracingDecisionGraph::xorFactIntoHash(cur, a, va);
     auto atIntermediate = g.getAsks(q, intermediate);
@@ -539,9 +539,9 @@ TEST_F(TracingDecisionGraphTest, InsertAskSplittingCascadesThroughMultipleOverla
     std::set<Hash> got;
     for (auto & e : atIntermediate) got.insert(e.requestSet);
     std::set<Hash> want{
-        g.insertRequestSet({b}),
-        g.insertRequestSet({c}),
-        g.insertRequestSet({d})};
+        g.insertRequestSet(g.internRequestSet({b})),
+        g.insertRequestSet(g.internRequestSet({c})),
+        g.insertRequestSet(g.internRequestSet({d}))};
     EXPECT_EQ(got, want)
         << "each tail must be exactly ex_rs \\ shared — any tail containing `a` "
         << "would XOR-cancel and land walkers at wrong curs";
@@ -603,10 +603,10 @@ TEST_F(TracingDecisionGraphTest, InsertAskSplittingPreservesExistingAltOnTail)
     auto a = sha("a"), va = sha("va");
     auto b = sha("b"), vb = sha("vb");
     auto c = sha("c"), vc = sha("vc");
-    auto altRs = g.insertRequestSet({sha("alt")});
+    auto altRs = g.insertRequestSet(g.internRequestSet({sha("alt")}));
 
     /* Insert existing {a, b} with an alt. */
-    g.insertAsk(q, cur, g.insertRequestSet({a, b}), altRs);
+    g.insertAsk(q, cur, g.insertRequestSet(g.internRequestSet({a, b})), altRs);
     /* Split it by inserting {a, c}. */
     g.insertAskSplitting(q, cur, {{a, va}, {c, vc}});
 
@@ -616,7 +616,7 @@ TEST_F(TracingDecisionGraphTest, InsertAskSplittingPreservesExistingAltOnTail)
     ASSERT_EQ(atIntermediate.size(), 2u);
     bool foundAltPreserved = false;
     for (auto & e : atIntermediate) {
-        if (e.requestSet == g.insertRequestSet({b})) {
+        if (e.requestSet == g.insertRequestSet(g.internRequestSet({b}))) {
             ASSERT_TRUE(e.altRequestSet.has_value())
                 << "existing's tail should retain the alt";
             EXPECT_EQ(*e.altRequestSet, altRs);
@@ -640,8 +640,8 @@ TEST_F(TracingDecisionGraphTest, WalkAltFallbackFindsTerminalAndCopiesEdge)
     auto reqAlt = sha("req-alt"), respAlt = sha("respA");
     auto result = sha("R");
 
-    auto rsPrimary = g.insertRequestSet({reqPrimary});
-    auto rsAlt = g.insertRequestSet({reqAlt});
+    auto rsPrimary = g.insertRequestSet(g.internRequestSet({reqPrimary}));
+    auto rsAlt = g.insertRequestSet(g.internRequestSet({reqAlt}));
 
     /* Compute the fold targets by hand. */
     auto emptyFs = TracingDecisionGraph::emptySetHash();
@@ -816,7 +816,7 @@ TEST_F(TracingDecisionGraphTest, PersistsAcrossReopen)
     auto rs = TracingDecisionGraph::computeRequestSetHash({sha("a")});
     {
         TracingDecisionGraph g(dbPath);
-        g.insertRequestSet({sha("a")});
+        g.insertRequestSet(g.internRequestSet({sha("a")}));
         g.insertAsk(q, TracingDecisionGraph::emptySetHash(), rs);
         g.insertTerminal(q, TracingDecisionGraph::emptySetHash(), sha("R"));
     }
