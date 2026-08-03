@@ -34,18 +34,18 @@ static nlohmann::json readResponse(
     tracingCacheLog(
         "rlo: read %s reqHash=%s",
         Q::tag,
-        reqHash.to_string(HashFormat::Base16, false).substr(0, 12));
+        reqHash.toHex().substr(0, 12));
     /* Under the #103 redesign, every outer probe's response is
        carried in the CallbackApply query's `argObsSet` — the
        consumer at dispatch time populates `obsSetResponses` with
        that CAS content. No secondary storage. Miss here is a real
        error. */
     if (obsSetResponses) {
-        auto it = obsSetResponses->find(reqHash);
+        auto it = obsSetResponses->find(reqHash.toNixHash());
         if (it != obsSetResponses->end()) {
             tracingCacheLog(
                 "rlo: obsSet HIT reqHash=%s",
-                reqHash.to_string(HashFormat::Base16, false).substr(0, 12));
+                reqHash.toHex().substr(0, 12));
             return cborStringToJson(it->second);
         }
     }

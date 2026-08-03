@@ -49,7 +49,7 @@ inline nlohmann::json cborStringToJson(const std::string & s)
  */
 struct TriePosition
 {
-    Hash resultNodeHash;          // ResultHash for this result
+    TracingHash resultNodeHash;   // ResultHash for this result
     std::string queryHashStr;     // hex of the selectorHash that produced it
     /* Walker-side: the cur the history landed on when committing
        this terminal. Used by child Q lookups as a candidate startCur
@@ -57,7 +57,7 @@ struct TriePosition
        starts from its parent's reached factSet rather than from
        session-leaky envCur. Empty hash on TracingReplayObjects synthesized
        outside the walker (recording side). */
-    Hash factSetHash = trace::tracingZeroHash();
+    TracingHash factSetHash = trace::tracingZeroHash();
 };
 
 /**
@@ -70,10 +70,10 @@ class TracingWriter
     TracingDecisionGraph & decisionGraph;
 
     /* Dedup guard for fact insertion — skips XOR-cancelling duplicates. */
-    std::unordered_set<Hash> seenRequests;
+    std::unordered_set<TracingHash> seenRequests;
 
     /* request → response lookup, maintained as facts arrive. */
-    std::unordered_map<Hash, Hash> responseFor;
+    std::unordered_map<TracingHash, TracingHash> responseFor;
 
     /* Incremental trie of all requests observed in this session.
        Built via the new rst:: MutableNode + FrozenNodeCache pair:
@@ -93,7 +93,7 @@ class TracingWriter
        one-shot alt fallback uses that alt to reach recordings that
        used the pre-canonical shape. See main doc's
        "state/observation-creep canonicalisation" note, record side. */
-    std::unordered_map<Hash, Hash> canonicalReplacements;
+    std::unordered_map<TracingHash, TracingHash> canonicalReplacements;
 
     /* Writer-global barrier counter (Foundational principle 9). Each
        fact recorded gets stamped with the CURRENT value; bumped AFTER
@@ -120,9 +120,9 @@ private:
         ambiguity. When no existing Ask matches, insert the remaining
         facts as barrier-grouped Asks from the current cur. */
     void insertBarrieredChain(
-        const Hash & selectorHash,
-        const Hash & startCur,
-        const std::unordered_map<Hash, std::pair<uint64_t, Hash>> & facts)
+        const TracingHash & selectorHash,
+        const TracingHash & startCur,
+        const std::unordered_map<TracingHash, std::pair<uint64_t, TracingHash>> & facts)
     {
         if (facts.empty())
             return;
@@ -131,7 +131,7 @@ private:
            iff `!dispatchedSoFar.count(req)` — no need to materialise
            a separate set; querying `facts` directly is O(1) too. */
         auto cur = startCur;
-        std::unordered_set<Hash> dispatchedSoFar;
+        std::unordered_set<TracingHash> dispatchedSoFar;
 
         /* Follow phase: greedy consume any existing edge whose useful
            subset is fully covered by facts \ dispatchedSoFar. Reads
@@ -142,7 +142,7 @@ private:
                 auto rsMembers = decisionGraph.getRequestSet(edge.requestSet);
                 if (!rsMembers)
                     continue;
-                std::vector<Hash> useful;
+                std::vector<TracingHash> useful;
                 useful.reserve(rsMembers->size());
                 for (const auto & req : *rsMembers)
                     if (!dispatchedSoFar.count(req))
@@ -150,7 +150,7 @@ private:
                 if (useful.empty())
                     continue;
                 bool subset = std::all_of(useful.begin(), useful.end(),
-                    [&](const Hash & req) { return facts.count(req) > 0; });
+                    [&](const TracingHash & req) { return facts.count(req) > 0; });
                 if (!subset)
                     continue;
                 /* Follow: fold each useful req/resp into cur, mark
@@ -162,8 +162,8 @@ private:
                     dispatchedSoFar.insert(req);
                 }
                 tracingCacheLog("insertBarrieredChain follow Q=%s cur→%s (consumed %zu req)",
-                                selectorHash.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
-                                cur.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
+                                selectorHash.toHex().substr(0, 12).c_str(),
+                                cur.toHex().substr(0, 12).c_str(),
                                 useful.size());
                 followed = true;
                 break; // restart to see fresh outgoing at new cur
@@ -195,25 +195,24 @@ private:
                If the identity is already in the trie cache we skip the
                vector build entirely. Under matching-until-divergence
                and heavy rs-reuse, the fast path fires often. */
-            std::optional<Hash> altRequestSetHash;
-            Hash altXor = trace::tracingZeroHash();
+            std::optional<TracingHash> altRequestSetHash;
+            TracingHash altXor = trace::tracingZeroHash();
             bool anySubstituted = false;
             for (const auto & f : factList) {
                 auto it = canonicalReplacements.find(f.request);
-                Hash req = f.request;
+                TracingHash req = f.request;
                 if (it != canonicalReplacements.end()) {
                     req = it->second;
                     anySubstituted = true;
                 }
-                for (size_t i = 0; i < altXor.hashSize; ++i)
-                    altXor.hash[i] ^= req.hash[i];
+                altXor.xorInPlace(req);
             }
             if (anySubstituted) {
                 trace::rst::FrozenNodePtr altNode = [&] {
-                    if (auto existing = decisionGraph.tryFindRequestSet(altXor))
+                    if (auto existing = decisionGraph.tryFindRequestSet(altXor.toNixHash()))
                         return *existing;
                     /* Miss: materialise the vector and intern. */
-                    std::vector<Hash> altReqHashes;
+                    std::vector<TracingHash> altReqHashes;
                     altReqHashes.reserve(factList.size());
                     for (const auto & f : factList) {
                         auto it = canonicalReplacements.find(f.request);
@@ -245,7 +244,7 @@ private:
 
         Both chains reach the same final cur = cell.factSetHash(). */
     void insertBarrieredAskChain(
-        const Hash & selectorHash,
+        const TracingHash & selectorHash,
         const std::shared_ptr<const ArgCell> & cell)
     {
         /* Structural chain (task 1a, task 1b enabler): if this
@@ -263,7 +262,7 @@ private:
            Limited to getter→getter to avoid cross-cell interactions
            at Apply/CallbackApply boundaries. */
         bool structuralInserted = false;
-        if (auto sel = decisionGraph.selectorPool.find(selectorHash)) {
+        if (auto sel = decisionGraph.selectorPool.find(selectorHash.toNixHash())) {
             std::optional<Hash> parentHash;
             std::visit(overloaded{
                 [&](const trace::SelectorGetAttr & g) {
@@ -300,14 +299,15 @@ private:
                        search finds the first tail entry >= threshold
                        and we iterate only what we need — no scan of the
                        pre-parent-record prefix. */
-                    std::unordered_map<Hash, std::pair<uint64_t, Hash>> deltaFacts;
+                    std::unordered_map<TracingHash, std::pair<uint64_t, TracingHash>> deltaFacts;
                     auto threshold = it->second.barrierAtRecord;
                     for (auto c = cell.get(); c; c = c->parent.get()) {
                         auto & v = c->factsInOrder;
                         auto lb = std::lower_bound(v.begin(), v.end(), threshold,
                             [](const auto & p, uint64_t t) { return p.second.barrier < t; });
                         for (auto j = lb; j != v.end(); ++j)
-                            deltaFacts.try_emplace(j->first, j->second.barrier, j->second.response);
+                            deltaFacts.try_emplace(TracingHash::of(j->first),
+                                j->second.barrier, TracingHash::of(j->second.response));
                     }
                     if (!deltaFacts.empty())
                         insertBarrieredChain(selectorHash,
@@ -319,10 +319,11 @@ private:
 
         if (!structuralInserted) {
             /* Full chain: cell + ancestors, from ∅. */
-            std::unordered_map<Hash, std::pair<uint64_t, Hash>> allFacts;
+            std::unordered_map<TracingHash, std::pair<uint64_t, TracingHash>> allFacts;
             for (auto c = cell.get(); c; c = c->parent.get())
                 for (auto & [req, entry] : c->factsInOrder)
-                    allFacts.try_emplace(req, entry.barrier, entry.response);
+                    allFacts.try_emplace(TracingHash::of(req),
+                        entry.barrier, TracingHash::of(entry.response));
             insertBarrieredChain(selectorHash,
                 TracingDecisionGraph::emptySetHash(), allFacts);
 
@@ -330,9 +331,10 @@ private:
                parent.terminalCur. Covers callback-firing nesting where
                the structural-parent isn't on the same cell. */
             if (cell->parent && !cell->factsInOrder.empty()) {
-                std::unordered_map<Hash, std::pair<uint64_t, Hash>> ownFacts;
+                std::unordered_map<TracingHash, std::pair<uint64_t, TracingHash>> ownFacts;
                 for (auto & [req, entry] : cell->factsInOrder)
-                    ownFacts.try_emplace(req, entry.barrier, entry.response);
+                    ownFacts.try_emplace(TracingHash::of(req),
+                        entry.barrier, TracingHash::of(entry.response));
                 auto parentCur = cell->parent->factSetHash();
                 insertBarrieredChain(selectorHash, parentCur, ownFacts);
             }
@@ -393,7 +395,7 @@ public:
             ref<const trace::Selector> fnRef = fnParent;
             try {
                 auto fnHash = trace::parseTracingHex(cs.fnStateHashHex);
-                if (auto found = decisionGraph.selectorPool.find(fnHash))
+                if (auto found = decisionGraph.selectorPool.find(fnHash.toNixHash()))
                     fnRef = *found;
             } catch (...) {}
             auto qcaSel = decisionGraph.selectorPool.intern(trace::SelectorCallbackApply{
@@ -440,10 +442,10 @@ public:
         nlohmann::json qj = query;
         tracingCacheLog(
             "writer logRootSelectorOnCell: Q=%s queryJSON=%s",
-            selectorHash.to_string(HashFormat::Base16, false).substr(0, 12),
+            selectorHash.toHex().substr(0, 12),
             qj.dump());
         auto qState = std::make_shared<QState>();
-        qState->currentQ = selectorHash;
+        qState->currentQ = selectorHash.toNixHash();
         if (cell) {
             /* Cross-link both directions atomically. QState needs the
                back-ref for cell->factSetHash() lookups during Ask/Terminal
@@ -453,7 +455,7 @@ public:
             cell->qState = qState;
             qState->cell = cell;
         }
-        return {valueNum, SelectorHandle{selectorHash}};
+        return {valueNum, SelectorHandle{selectorHash.toNixHash()}};
     }
 
     /**
@@ -470,11 +472,11 @@ public:
         nlohmann::json qj = query;
         tracingCacheLog(
             "writer logSelectorOnCell: Q=%s queryJSON=%s",
-            selectorHash.to_string(HashFormat::Base16, false).substr(0, 12),
+            selectorHash.toHex().substr(0, 12),
             qj.dump());
-        SelectorHandle qh{selectorHash};
+        SelectorHandle qh{selectorHash.toNixHash()};
         auto qState = std::make_shared<QState>();
-        qState->currentQ = selectorHash;
+        qState->currentQ = selectorHash.toNixHash();
         if (cell) {
             /* Cross-link both directions atomically. QState needs the
                back-ref for cell->factSetHash() lookups during Ask/Terminal
@@ -502,9 +504,9 @@ public:
         nlohmann::json qj = query;
         tracingCacheLog(
             "writer logQuery: Q=%s queryJSON=%s",
-            selectorHash.to_string(HashFormat::Base16, false).substr(0, 12),
+            selectorHash.toHex().substr(0, 12),
             qj.dump());
-        return {valueNum, SelectorHandle{selectorHash}};
+        return {valueNum, SelectorHandle{selectorHash.toNixHash()}};
     }
 
     /**
@@ -517,25 +519,25 @@ public:
         ValueHandle valueNum,
         const R & result,
         const SelectorHandle & qh,
-        const Hash & anchorCur,
+        const TracingHash & anchorCur,
         const std::shared_ptr<const ArgCell> & cell = {})
     {
         sink.logResult(valueNum, result);
         nlohmann::json j = result;
         auto resultPayload = jsonToCborString(j);
-        auto resultNodeHash = TracingDecisionGraph::computeResponseHash(resultPayload);
+        auto resultNodeHash = TracingHash::of(TracingDecisionGraph::computeResponseHash(resultPayload));
         /* #182: if a cell is provided (getter was pushed via logQuery),
            write Terminal at the LIVE post-fold cell.factSetHash() —
            not the pre-fold anchor snapshot. Then pop the matching
            in-progress entry. */
-        Hash terminalCur = cell ? cell->factSetHash() : anchorCur;
+        TracingHash terminalCur = cell ? cell->factSetHash() : anchorCur;
         decisionGraph.insertResult(resultNodeHash, resultPayload);
         /* #187 principle 9: barrier-based Ask chain, one Ask per barrier
            group (one value probe per group). Walker dispatches each
            edge's requestSet live, folds, reaches next cur; a divergent
            live response at any barrier misses cleanly there. */
         if (cell) {
-            insertBarrieredAskChain(qh.raw, cell);
+            insertBarrieredAskChain(TracingHash::of(qh.raw), cell);
             /* task 1a: record oldest terminalCur per Selector on the
                cell so descendant Qs can anchor structural chains here.
                Bump the barrier and snapshot post-bump so subsequent
@@ -549,18 +551,18 @@ public:
                 ArgCell::FirstTerminalRecord{terminalCur, peekBarrier(),
                     cell->canonicalisationEpochChain()});
         }
-        decisionGraph.insertTerminal(qh.raw, terminalCur, resultNodeHash);
+        decisionGraph.insertTerminal(TracingHash::of(qh.raw), terminalCur, resultNodeHash);
         tracingCacheLog(
             "writer logQueryResult: Q=%s anchor=%s -> result=%s",
             qh.raw.to_string(HashFormat::Base16, false).substr(0, 12),
-            terminalCur.to_string(HashFormat::Base16, false).substr(0, 12),
-            resultNodeHash.to_string(HashFormat::Base16, false).substr(0, 12));
+            terminalCur.toHex().substr(0, 12),
+            resultNodeHash.toHex().substr(0, 12));
         if (cell) {
             tracingCacheLog("  logResult cell chain (%p):", (const void *) cell.get());
             for (auto c = cell.get(); c; c = c->parent.get()) {
                 tracingCacheLog("    cell=%p depth=%d facts=%zu factSetHash=%s",
                     (const void *) c, c->depth, c->facts.size(),
-                    c->factSetHash().to_string(HashFormat::Base16, false).substr(0, 12).c_str());
+                    c->factSetHash().toHex().substr(0, 12).c_str());
                 for (const auto & [req, entry] : c->facts) {
                     tracingCacheLog("      fact req=%s resp=%s",
                         req.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
@@ -590,7 +592,7 @@ public:
         nlohmann::json respJson = resp.response;
         auto selectorHash = TracingDecisionGraph::computeSelectorHash(resp.request);
         auto responsePayload = jsonToCborString(respJson);
-        auto responseHash = TracingDecisionGraph::computeResponseHash(responsePayload);
+        auto responseHash = TracingHash::of(TracingDecisionGraph::computeResponseHash(responsePayload));
         decisionGraph.insertRequest(selectorHash, jsonToCborString(reqJson));
         auto factHash = TracingDecisionGraph::xorFactIntoHash(
             trace::tracingZeroHash(), selectorHash, responseHash);
@@ -606,9 +608,9 @@ public:
            filter correctness is maintained by bumping the barrier at
            logQueryResult time, which separates facts folded into
            parent's terminalCur from later ones. */
-        sessionRootCell->addFact(selectorHash, responseHash, peekBarrier());
+        sessionRootCell->addFact(selectorHash.toNixHash(), responseHash.toNixHash(), peekBarrier());
         responseFor.emplace(selectorHash, responseHash);
-        sessionRequestsMutable.insert(selectorHash);
+        sessionRequestsMutable.insert(selectorHash.toNixHash());
     }
 
     /**
@@ -671,7 +673,7 @@ public:
 
         nlohmann::json j = result;
         auto resultPayload = jsonToCborString(j);
-        auto resultNodeHash = TracingDecisionGraph::computeResponseHash(resultPayload);
+        auto resultNodeHash = TracingHash::of(TracingDecisionGraph::computeResponseHash(resultPayload));
         decisionGraph.insertResult(resultNodeHash, resultPayload);
 
         {
@@ -692,23 +694,23 @@ public:
         /* #177 pull model: Terminal keyed at the completing Q's
            cell.factSetHash() — this cell's own facts XORed with
            ancestor factSetHashes on demand. */
-        Hash terminalCur = cell ? cell->factSetHash() : sessionRootCell->factSetHash();
+        TracingHash terminalCur = cell ? cell->factSetHash() : sessionRootCell->factSetHash();
         tracingCacheLog("logResult: Q=%s factSet=%s -> result",
                         finalQ.to_string(HashFormat::Base16, false).substr(0, 12),
-                        terminalCur.to_string(HashFormat::Base16, false).substr(0, 12));
+                        terminalCur.toHex().substr(0, 12));
 
         /* #187 principle 9: barrier-based Ask chain (see comment on
            insertBarrieredAskChain). One Ask edge per barrier group,
            each carrying at most one value probe. */
         if (cell) {
-            insertBarrieredAskChain(finalQ, cell);
+            insertBarrieredAskChain(TracingHash::of(finalQ), cell);
             /* task 1a: record oldest terminalCur per Selector on the
                cell so descendant Qs can anchor structural chains here. */
             cell->firstTerminalCurs.try_emplace(finalQ,
                 ArgCell::FirstTerminalRecord{terminalCur, peekBarrier(),
                     cell->canonicalisationEpochChain()});
         }
-        decisionGraph.insertTerminal(finalQ, terminalCur, resultNodeHash);
+        decisionGraph.insertTerminal(TracingHash::of(finalQ), terminalCur, resultNodeHash);
 
         return TriePosition{
             .resultNodeHash = resultNodeHash,

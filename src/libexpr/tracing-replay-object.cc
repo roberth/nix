@@ -44,15 +44,15 @@ std::optional<std::pair<R, Hash>> TracingReplayObject::lookupResult(const Q & qu
     auto anchorCur = triePos.factSetHash;
     tracingCacheLog("walker lookup: %s Q=%s anchor=%s (direct, fullQ=%s fullAnchor=%s)",
                     Q::tag,
-                    selectorHash.to_string(HashFormat::Base16, false).substr(0, 12),
-                    anchorCur.to_string(HashFormat::Base16, false).substr(0, 12),
-                    selectorHash.to_string(HashFormat::Base16, false),
-                    anchorCur.to_string(HashFormat::Base16, false));
+                    selectorHash.toHex().substr(0, 12),
+                    anchorCur.toHex().substr(0, 12),
+                    selectorHash.toHex(),
+                    anchorCur.toHex());
     auto resultNodeHash = evaluator.getDecisionGraph().getTerminal(selectorHash, anchorCur);
     if (!resultNodeHash) {
         tracingCacheLog("walker lookup: %s MISS-Terminal Q=%s",
                         Q::tag,
-                        selectorHash.to_string(HashFormat::Base16, false).substr(0, 12));
+                        selectorHash.toHex().substr(0, 12));
         tracingCacheStats().misses++;
         return std::nullopt;
     }
@@ -60,8 +60,8 @@ std::optional<std::pair<R, Hash>> TracingReplayObject::lookupResult(const Q & qu
     if (!typed) {
         tracingCacheLog("walker lookup: %s MISS-Result Q=%s resultHash=%s",
                         Q::tag,
-                        selectorHash.to_string(HashFormat::Base16, false).c_str(),
-                        resultNodeHash->to_string(HashFormat::Base16, false).c_str());
+                        selectorHash.toHex().c_str(),
+                        resultNodeHash->toHex().c_str());
         tracingCacheStats().misses++;
         return std::nullopt;
     }
@@ -74,7 +74,7 @@ std::optional<std::pair<R, Hash>> TracingReplayObject::lookupResult(const Q & qu
     }
     tracingCacheLog("replay hit: %s", Q::tag);
     tracingCacheStats().hits++;
-    return std::make_pair(*val, *resultNodeHash);
+    return std::make_pair(*val, resultNodeHash->toNixHash());
 }
 
 template<typename Q, typename R>

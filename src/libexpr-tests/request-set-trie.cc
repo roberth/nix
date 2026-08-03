@@ -13,7 +13,7 @@ class RequestSetTrieTest : public ::testing::Test
 protected:
     static Hash h(uint64_t seed)
     {
-        return tracingHash("req#" + std::to_string(seed));
+        return tracingHash("req#" + std::to_string(seed)).toNixHash();
     }
 
     static std::vector<Hash> hashes(size_t n)

@@ -51,7 +51,7 @@ TEST_F(TraceTypesTest, ResolveUnresolveRoundTrip)
     auto deep = pool.intern(SelectorGetAttr{"deep", list});
     auto app  = pool.intern(SelectorApply{imp});
     auto cba  = pool.intern(SelectorCallbackApply{
-        trace::parseTracingHex("00000000000000000000000000abc123"), imp});
+        trace::parseTracingHex("00000000000000000000000000abc123").toNixHash(), imp});
 
     for (auto sel : std::vector{leaf, step, deep, app, cba}) {
         auto raw = unresolve(sel->node);
@@ -91,7 +91,7 @@ TEST_F(TraceTypesTest, InternIdempotence)
    the unresolve → CBOR → DB → CBOR → resolve → intern pipeline. */
 TEST_F(TraceTypesTest, DbFacadeCrossPoolFind)
 {
-    Hash h = trace::tracingZeroHash();
+    Hash h = trace::tracingZeroHash().toNixHash();
     {
         TracingDecisionGraph g(dbPath);
         auto sel = g.selectorPool.intern(SelectorImport{"/target.nix"});
@@ -128,7 +128,7 @@ TEST_F(TraceTypesTest, FindByHexHitMissAndMalformed)
 
     // Valid-shape hex that no Selector has produced — memory miss + DB miss.
     auto neverInterned = trace::tracingHash("never-interned");
-    EXPECT_FALSE(pool.findByHex(neverInterned.to_string(HashFormat::Base16, false)).has_value());
+    EXPECT_FALSE(pool.findByHex(neverInterned.toHex()).has_value());
 }
 
 /* 5. Deep-chain DB reconstruction — depth-N Selector's find recurses
@@ -136,7 +136,7 @@ TEST_F(TraceTypesTest, FindByHexHitMissAndMalformed)
    and the resolved chain matches the interned shape. */
 TEST_F(TraceTypesTest, DeepChainDbReconstruction)
 {
-    Hash outerHash = trace::tracingZeroHash();
+    Hash outerHash = trace::tracingZeroHash().toNixHash();
     {
         TracingDecisionGraph g(dbPath);
         auto & pool = g.selectorPool;
@@ -205,7 +205,7 @@ TEST(TracingHashTest, TruncatesFromNixHash)
 {
     /* compute() and of(tracingHash) agree on the first 16 bytes. */
     auto direct = nix::TracingHash::compute("some content");
-    auto viaHash = nix::TracingHash::of(tracingHash("some content"));
+    auto viaHash = nix::TracingHash::of(tracingHash("some content").toNixHash());
     EXPECT_EQ(direct, viaHash);
 }
 

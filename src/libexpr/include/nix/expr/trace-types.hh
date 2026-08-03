@@ -741,9 +741,9 @@ Hash computeSelectorHash(const SelectorNode & query);
  * untouched.
  */
 inline constexpr size_t tracingHashSize = 16;
-Hash tracingHash(std::string_view bytes);
-Hash parseTracingHex(std::string_view hex);
-Hash tracingZeroHash();
+TracingHash tracingHash(std::string_view bytes);
+TracingHash parseTracingHex(std::string_view hex);
+TracingHash tracingZeroHash();
 
 /** Serialise a Query variant to its inner JSON payload
     (`{"query": <tag>, "params": {...}}`). */

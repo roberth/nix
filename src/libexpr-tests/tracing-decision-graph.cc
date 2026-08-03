@@ -24,7 +24,7 @@ protected:
         std::filesystem::remove_all(tempDir);
     }
 
-    static Hash sha(std::string_view s)
+    static TracingHash sha(std::string_view s)
     {
         return trace::tracingHash(s);
     }
@@ -141,8 +141,8 @@ TEST_F(TracingDecisionGraphTest, RequestSetInsertRoundTrip)
     ASSERT_TRUE(loaded.has_value());
     EXPECT_EQ(loaded->size(), 3u);
     /* Stored sorted; verify order-independent lookup by checking set membership. */
-    std::set<Hash> got(loaded->begin(), loaded->end());
-    std::set<Hash> want{a, b, c};
+    std::set<TracingHash> got(loaded->begin(), loaded->end());
+    std::set<TracingHash> want{a, b, c};
     EXPECT_EQ(got, want);
 }
 
@@ -195,8 +195,8 @@ TEST_F(TracingDecisionGraphTest, ExtendRequestSetProducesCanonicalUnion)
 
     auto loaded = g.getRequestSet(extended);
     ASSERT_TRUE(loaded.has_value());
-    std::set<Hash> got(loaded->begin(), loaded->end());
-    std::set<Hash> want{a, b, c};
+    std::set<TracingHash> got(loaded->begin(), loaded->end());
+    std::set<TracingHash> want{a, b, c};
     EXPECT_EQ(got, want);
 }
 
@@ -290,9 +290,9 @@ TEST_F(TracingDecisionGraphTest, AsksMultipleOutgoingPerPosition)
     g.insertAsk(q, factSet, rs2);
 
     auto edges = g.getAsks(q, factSet);
-    std::set<Hash> got;
+    std::set<TracingHash> got;
     for (auto & e : edges) got.insert(e.requestSet);
-    std::set<Hash> want{rs1, rs2};
+    std::set<TracingHash> want{rs1, rs2};
     EXPECT_EQ(got, want);
 }
 
@@ -387,10 +387,10 @@ TEST_F(TracingDecisionGraphTest, RecordThenWalkSimpleHit)
 
     /* Walk with a dispatch that returns the same Responses the
        recorder saw — we should hit. */
-    auto hit = g.walk(q, [&](const Hash & req) {
+    auto hit = g.walk(q, [&](const TracingHash & req) {
         if (req == req1) return resp1;
         if (req == req2) return resp2;
-        ADD_FAILURE() << "unexpected dispatch for " << req.to_string(HashFormat::Base16, false);
+        ADD_FAILURE() << "unexpected dispatch for " << req.toHex();
         return trace::tracingZeroHash();
     });
     ASSERT_TRUE(hit.has_value());
@@ -412,9 +412,9 @@ TEST_F(TracingDecisionGraphTest, InsertAskSplittingDisjointCoexists)
 
     auto edges = g.getAsks(q, cur);
     ASSERT_EQ(edges.size(), 2u);
-    std::set<Hash> got;
+    std::set<TracingHash> got;
     for (auto & e : edges) got.insert(e.requestSet);
-    EXPECT_EQ(got, std::set<Hash>({g.insertRequestSet(g.internRequestSet({a})), g.insertRequestSet(g.internRequestSet({b}))}));
+    EXPECT_EQ(got, std::set<TracingHash>({g.insertRequestSet(g.internRequestSet({a})), g.insertRequestSet(g.internRequestSet({b}))}));
 }
 
 TEST_F(TracingDecisionGraphTest, InsertAskSplittingPartialOverlapSplits)
@@ -438,14 +438,14 @@ TEST_F(TracingDecisionGraphTest, InsertAskSplittingPartialOverlapSplits)
     ASSERT_EQ(atCur.size(), 1u);
     auto shared = g.getRequestSet(atCur[0].requestSet);
     ASSERT_TRUE(shared.has_value());
-    EXPECT_EQ(std::set<Hash>(shared->begin(), shared->end()), std::set<Hash>({a}));
+    EXPECT_EQ(std::set<TracingHash>(shared->begin(), shared->end()), std::set<TracingHash>({a}));
 
     auto intermediate = TracingDecisionGraph::xorFactIntoHash(cur, a, va);
     auto atIntermediate = g.getAsks(q, intermediate);
     ASSERT_EQ(atIntermediate.size(), 2u);
-    std::set<Hash> got;
+    std::set<TracingHash> got;
     for (auto & e : atIntermediate) got.insert(e.requestSet);
-    EXPECT_EQ(got, std::set<Hash>({g.insertRequestSet(g.internRequestSet({b})), g.insertRequestSet(g.internRequestSet({c}))}));
+    EXPECT_EQ(got, std::set<TracingHash>({g.insertRequestSet(g.internRequestSet({b})), g.insertRequestSet(g.internRequestSet({c}))}));
 }
 
 TEST_F(TracingDecisionGraphTest, InsertAskSplittingNewSubsumesExisting)
@@ -536,9 +536,9 @@ TEST_F(TracingDecisionGraphTest, InsertAskSplittingCascadesThroughMultipleOverla
     auto intermediate = TracingDecisionGraph::xorFactIntoHash(cur, a, va);
     auto atIntermediate = g.getAsks(q, intermediate);
     ASSERT_EQ(atIntermediate.size(), 3u);
-    std::set<Hash> got;
+    std::set<TracingHash> got;
     for (auto & e : atIntermediate) got.insert(e.requestSet);
-    std::set<Hash> want{
+    std::set<TracingHash> want{
         g.insertRequestSet(g.internRequestSet({b})),
         g.insertRequestSet(g.internRequestSet({c})),
         g.insertRequestSet(g.internRequestSet({d}))};
@@ -574,7 +574,7 @@ TEST_F(TracingDecisionGraphTest, InsertAskSplittingWalkerReachesTerminalViaSplit
     g.insertTerminal(q, fs2, rB);
 
     /* Walk with vb but wrong c — only R-A chain matches. */
-    auto hitA = g.walk(q, [&](const Hash & req) {
+    auto hitA = g.walk(q, [&](const TracingHash & req) {
         if (req == a) return va;
         if (req == b) return vb;
         if (req == c) return sha("wrong-c");
@@ -584,7 +584,7 @@ TEST_F(TracingDecisionGraphTest, InsertAskSplittingWalkerReachesTerminalViaSplit
     EXPECT_EQ(hitA->resultHash, rA);
 
     /* Walk with vc but wrong b — only R-B chain matches. */
-    auto hitB = g.walk(q, [&](const Hash & req) {
+    auto hitB = g.walk(q, [&](const TracingHash & req) {
         if (req == a) return va;
         if (req == b) return sha("wrong-b");
         if (req == c) return vc;
@@ -655,7 +655,7 @@ TEST_F(TracingDecisionGraphTest, WalkAltFallbackFindsTerminalAndCopiesEdge)
     g.insertAsk(q, emptyFs, rsPrimary, rsAlt);
 
     auto dispatchCount = 0;
-    auto dispatch = [&](const Hash & r) {
+    auto dispatch = [&](const TracingHash & r) {
         ++dispatchCount;
         if (r == reqPrimary) return respPrimary;
         if (r == reqAlt) return respAlt;
@@ -692,7 +692,7 @@ TEST_F(TracingDecisionGraphTest, WalkMissesWhenDispatchReturnsDifferentResponse)
     g.record(q, factSetHash, result);
 
     /* Replay with a different Response: should miss. */
-    auto miss = g.walk(q, [&](const Hash &) { return wrongResp; });
+    auto miss = g.walk(q, [&](const TracingHash &) { return wrongResp; });
     EXPECT_FALSE(miss.has_value());
 }
 
@@ -700,7 +700,7 @@ TEST_F(TracingDecisionGraphTest, WalkMissesOnEmptyGraph)
 {
     TracingDecisionGraph g(dbPath);
     auto q = sha("Q");
-    auto miss = g.walk(q, [](const Hash &) { return trace::tracingZeroHash(); });
+    auto miss = g.walk(q, [](const TracingHash &) { return trace::tracingZeroHash(); });
     EXPECT_FALSE(miss.has_value());
 }
 
@@ -727,7 +727,7 @@ TEST_F(TracingDecisionGraphTest, TwoRec_TwoFactsEach_DivergentSecond)
     /* Replay where reqC's response doesn't match fs2's stored
        response — fs2's path is unreachable; the walk must take
        fs1's path. */
-    auto hit1 = g.walk(q, [&](const Hash & req) {
+    auto hit1 = g.walk(q, [&](const TracingHash & req) {
         if (req == reqA) return respA;
         if (req == reqB) return respB;
         if (req == reqC) return sha("bogus-c-resp");
@@ -754,11 +754,11 @@ TEST_F(TracingDecisionGraphTest, DivergentResponses_Minimal)
     g.record(q, fs1, r1);
     g.record(q, fs2, r2);
 
-    auto hit1 = g.walk(q, [&](const Hash &) { return v1; });
+    auto hit1 = g.walk(q, [&](const TracingHash &) { return v1; });
     ASSERT_TRUE(hit1.has_value());
     EXPECT_EQ(hit1->resultHash, r1);
 
-    auto hit2 = g.walk(q, [&](const Hash &) { return v2; });
+    auto hit2 = g.walk(q, [&](const TracingHash &) { return v2; });
     ASSERT_TRUE(hit2.has_value());
     EXPECT_EQ(hit2->resultHash, r2);
 }
@@ -779,7 +779,7 @@ TEST_F(TracingDecisionGraphTest, DivergentResponses_OnlyOneRecording)
     auto r1 = sha("Result-1");
     g.record(q, factSet1, r1);
 
-    auto hit = g.walk(q, [&](const Hash & req) {
+    auto hit = g.walk(q, [&](const TracingHash & req) {
         if (req == reqA) return contentV1;
         if (req == reqB) return respB;
         ADD_FAILURE() << "unexpected dispatch";
@@ -801,7 +801,7 @@ TEST_F(TracingDecisionGraphTest, IdempotentRecord)
     g.record(q, factSet, result);
     g.record(q, factSet, result);
 
-    auto hit = g.walk(q, [&](const Hash & req) {
+    auto hit = g.walk(q, [&](const TracingHash & req) {
         if (req == sha("r1")) return sha("v1");
         if (req == sha("r2")) return sha("v2");
         return trace::tracingZeroHash();
@@ -845,7 +845,7 @@ TEST_F(TracingDecisionGraphTest, ManyQueriesAreIsolated)
     TracingDecisionGraph g(dbPath);
     constexpr size_t N = 100;
 
-    std::vector<Hash> qs, results;
+    std::vector<TracingHash> qs, results;
     std::vector<TracingDecisionGraph::SetHash> factSets;
     for (size_t i = 0; i < N; ++i) {
         auto q = sha("Q-" + std::to_string(i));
@@ -863,7 +863,7 @@ TEST_F(TracingDecisionGraphTest, ManyQueriesAreIsolated)
     /* Replay each Q with the *correct* dispatch — should hit its
        own Result. */
     for (size_t i = 0; i < N; ++i) {
-        auto hit = g.walk(qs[i], [&](const Hash & req) {
+        auto hit = g.walk(qs[i], [&](const TracingHash & req) {
             EXPECT_EQ(req, sha("req-" + std::to_string(i)))
                 << "dispatch invoked with unexpected Request for Q " << i;
             return sha("resp-" + std::to_string(i));
@@ -874,7 +874,7 @@ TEST_F(TracingDecisionGraphTest, ManyQueriesAreIsolated)
 
     /* Replay Q[0] with Q[1]'s response — should miss (wrong
        Response → wrong next FactSet hash). */
-    auto wrongMiss = g.walk(qs[0], [&](const Hash &) {
+    auto wrongMiss = g.walk(qs[0], [&](const TracingHash &) {
         return sha("resp-1");
     });
     EXPECT_FALSE(wrongMiss.has_value())
@@ -892,7 +892,7 @@ TEST_F(TracingDecisionGraphTest, ManyRecordingsSameQDeepRecordings)
 
     auto q = sha("Q");
     std::vector<std::vector<TracingDecisionGraph::Fact>> allFactSets;
-    std::vector<Hash> allResults;
+    std::vector<TracingHash> allResults;
 
     for (size_t i = 0; i < N_RECORDINGS; ++i) {
         std::vector<TracingDecisionGraph::Fact> facts;
@@ -911,11 +911,11 @@ TEST_F(TracingDecisionGraphTest, ManyRecordingsSameQDeepRecordings)
     /* Every recording should be replayable with its own dispatch
        table. */
     for (size_t i = 0; i < N_RECORDINGS; ++i) {
-        std::map<Hash, Hash> table;
+        std::map<TracingHash, TracingHash> table;
         for (const auto & f : allFactSets[i])
             table.emplace(f.request, f.response);
 
-        auto hit = g.walk(q, [&](const Hash & req) -> Hash {
+        auto hit = g.walk(q, [&](const TracingHash & req) -> TracingHash {
             auto it = table.find(req);
             if (it == table.end()) {
                 /* This is the wrong-branch case: walk speculated an
@@ -923,7 +923,7 @@ TEST_F(TracingDecisionGraphTest, ManyRecordingsSameQDeepRecordings)
                    wrong response so the candidate FactSet doesn't
                    match storage and we fall through to the right
                    branch. */
-                return sha("bogus-" + req.to_string(HashFormat::Base16, false).substr(0, 8));
+                return sha("bogus-" + req.toHex().substr(0, 8));
             }
             return it->second;
         });
@@ -948,7 +948,7 @@ TEST_F(TracingDecisionGraphTest, DeepRecordingPersistsAcrossReopen)
     }
     /* Reopen and walk; the recording should be replayable. */
     TracingDecisionGraph g(dbPath);
-    auto hit = g.walk(q, [](const Hash & req) {
+    auto hit = g.walk(q, [](const TracingHash & req) {
         /* Use the same naming convention; extract i from the seeded
            Request name doesn't work without round-tripping. Instead
            build a static dispatch table on demand. */
@@ -977,12 +977,12 @@ struct OnEventRecorder
     TracingDecisionGraph & graph;
     std::vector<TracingDecisionGraph::Fact> factSet; // mutable, sorted on demand
 
-    void onResponse(const Hash & request, const Hash & response)
+    void onResponse(const TracingHash & request, const TracingHash & response)
     {
         factSet.push_back({request, response});
     }
 
-    void onResult(const Hash & selectorHash, const Hash & resultHash)
+    void onResult(const TracingHash & selectorHash, const TracingHash & resultHash)
     {
         auto fsHash = graph.insertFactSet(factSet);
         graph.record(selectorHash, fsHash, resultHash);
@@ -1023,7 +1023,7 @@ TEST_F(TracingDecisionGraphTest, EndToEndOnEventThenWalk)
     }
 
     /* Replay in v1 world: dispatch returns contentA_v1 for reqA. */
-    auto hit_v1 = g.walk(q, [&](const Hash & req) {
+    auto hit_v1 = g.walk(q, [&](const TracingHash & req) {
         if (req == reqA) return contentA_v1;
         if (req == reqB) return contentB;
         return trace::tracingZeroHash();
@@ -1032,7 +1032,7 @@ TEST_F(TracingDecisionGraphTest, EndToEndOnEventThenWalk)
     EXPECT_EQ(hit_v1->resultHash, result_v1);
 
     /* Replay in v2 world: dispatch returns contentA_v2 for reqA. */
-    auto hit_v2 = g.walk(q, [&](const Hash & req) {
+    auto hit_v2 = g.walk(q, [&](const TracingHash & req) {
         if (req == reqA) return contentA_v2;
         if (req == reqB) return contentB;
         return trace::tracingZeroHash();
@@ -1042,7 +1042,7 @@ TEST_F(TracingDecisionGraphTest, EndToEndOnEventThenWalk)
 
     /* Replay in a third world (a.nix is some unknown content):
        should miss because no recording covers this scenario. */
-    auto miss = g.walk(q, [&](const Hash & req) {
+    auto miss = g.walk(q, [&](const TracingHash & req) {
         if (req == reqA) return sha("a_unknown_v3");
         if (req == reqB) return contentB;
         return trace::tracingZeroHash();
@@ -1085,7 +1085,7 @@ TEST_F(TracingDecisionGraphTest, EndToEndNestedQueries)
     /* Replay inner-Q: must provide both outerReq's and innerReq's
        responses because inner's recorded precondition includes
        both. */
-    auto innerHit = g.walk(innerQ, [&](const Hash & req) {
+    auto innerHit = g.walk(innerQ, [&](const TracingHash & req) {
         if (req == outerReq) return outerResp;
         if (req == innerReq) return innerResp;
         return trace::tracingZeroHash();
@@ -1094,7 +1094,7 @@ TEST_F(TracingDecisionGraphTest, EndToEndNestedQueries)
     EXPECT_EQ(innerHit->resultHash, innerResult);
 
     /* Replay outer-Q similarly. */
-    auto outerHit = g.walk(outerQ, [&](const Hash & req) {
+    auto outerHit = g.walk(outerQ, [&](const TracingHash & req) {
         if (req == outerReq) return outerResp;
         if (req == innerReq) return innerResp;
         return trace::tracingZeroHash();
@@ -1155,12 +1155,12 @@ TEST_F(TracingDecisionGraphTest, Phase1_RecordEmitsSingleEdgeForFirstRecording)
     /* That edge's RequestSet contains all three requests. */
     auto rs = g.getRequestSet(outgoing[0].requestSet);
     ASSERT_TRUE(rs.has_value());
-    std::set<Hash> got(rs->begin(), rs->end());
-    std::set<Hash> want{req1, req2, req3};
+    std::set<TracingHash> got(rs->begin(), rs->end());
+    std::set<TracingHash> want{req1, req2, req3};
     EXPECT_EQ(got, want);
 
     /* Replay still works end-to-end. */
-    auto hit = g.walk(q, [&](const Hash & req) {
+    auto hit = g.walk(q, [&](const TracingHash & req) {
         if (req == req1) return resp1;
         if (req == req2) return resp2;
         if (req == req3) return resp3;
@@ -1197,8 +1197,8 @@ TEST_F(TracingDecisionGraphTest, Phase1_RecordReusesEdgeWhenExtendingSuperset)
     ASSERT_EQ(rootEdges.size(), 1u);
     auto rs0 = g.getRequestSet(rootEdges[0].requestSet);
     ASSERT_TRUE(rs0.has_value());
-    std::set<Hash> root_want{r1, r2};
-    std::set<Hash> root_got(rs0->begin(), rs0->end());
+    std::set<TracingHash> root_want{r1, r2};
+    std::set<TracingHash> root_got(rs0->begin(), rs0->end());
     EXPECT_EQ(root_got, root_want);
 
     /* (Q, fs1) carries one edge for the second recording's
@@ -1207,12 +1207,12 @@ TEST_F(TracingDecisionGraphTest, Phase1_RecordReusesEdgeWhenExtendingSuperset)
     ASSERT_EQ(fs1Edges.size(), 1u);
     auto rs1 = g.getRequestSet(fs1Edges[0].requestSet);
     ASSERT_TRUE(rs1.has_value());
-    std::set<Hash> ext_want{r3};
-    std::set<Hash> ext_got(rs1->begin(), rs1->end());
+    std::set<TracingHash> ext_want{r3};
+    std::set<TracingHash> ext_got(rs1->begin(), rs1->end());
     EXPECT_EQ(ext_got, ext_want);
 
     /* Both walks still hit correctly. */
-    auto dispatch = [&](const Hash & req) {
+    auto dispatch = [&](const TracingHash & req) {
         if (req == r1) return v1;
         if (req == r2) return v2;
         if (req == r3) return v3;
@@ -1263,13 +1263,13 @@ TEST_F(TracingDecisionGraphTest, Phase1_PatriciaSplitsOnOverlappingDivergence)
 
     auto rsShared = g.getRequestSet(root[0].requestSet);
     ASSERT_TRUE(rsShared.has_value());
-    std::set<Hash> shared_got(rsShared->begin(), rsShared->end());
-    std::set<Hash> shared_want{a, b};
+    std::set<TracingHash> shared_got(rsShared->begin(), rsShared->end());
+    std::set<TracingHash> shared_want{a, b};
     EXPECT_EQ(shared_got, shared_want)
         << "the single outgoing edge's RS should be the shared prefix {a,b}";
 
     /* Both walks reach the correct terminal. */
-    auto hit1 = g.walk(q, [&](const Hash & req) {
+    auto hit1 = g.walk(q, [&](const TracingHash & req) {
         if (req == a) return va;
         if (req == b) return vb;
         if (req == c) return vc;
@@ -1284,7 +1284,7 @@ TEST_F(TracingDecisionGraphTest, Phase1_PatriciaSplitsOnOverlappingDivergence)
 
     /* Walk where d's response is wrong: only the c-branch survives,
        must hit R1. */
-    auto hitC = g.walk(q, [&](const Hash & req) {
+    auto hitC = g.walk(q, [&](const TracingHash & req) {
         if (req == a) return va;
         if (req == b) return vb;
         if (req == c) return vc;
@@ -1296,7 +1296,7 @@ TEST_F(TracingDecisionGraphTest, Phase1_PatriciaSplitsOnOverlappingDivergence)
 
     /* Walk where c's response is wrong: only the d-branch survives,
        must hit R2. */
-    auto hitD = g.walk(q, [&](const Hash & req) {
+    auto hitD = g.walk(q, [&](const TracingHash & req) {
         if (req == a) return va;
         if (req == b) return vb;
         if (req == c) return sha("wrong-c");
@@ -1342,7 +1342,7 @@ TEST_F(TracingDecisionGraphTest, Phase1_WalkDispatchesMultiElementRequestSet)
        is unambiguous. */
     constexpr int N = 10;
     std::vector<TracingDecisionGraph::Fact> facts;
-    std::map<Hash, Hash> dispatchMap;
+    std::map<TracingHash, TracingHash> dispatchMap;
     for (int i = 0; i < N; ++i) {
         auto req = sha("req-" + std::to_string(i));
         auto resp = sha("resp-" + std::to_string(i));
@@ -1359,7 +1359,7 @@ TEST_F(TracingDecisionGraphTest, Phase1_WalkDispatchesMultiElementRequestSet)
     ASSERT_TRUE(rs.has_value());
     EXPECT_EQ(rs->size(), static_cast<size_t>(N));
 
-    auto hit = g.walk(q, [&](const Hash & req) {
+    auto hit = g.walk(q, [&](const TracingHash & req) {
         auto it = dispatchMap.find(req);
         if (it == dispatchMap.end()) {
             ADD_FAILURE() << "unexpected dispatch";

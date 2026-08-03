@@ -216,7 +216,7 @@ ref<Object> TracingEvaluator::mkString(const std::string & s)
     auto result = inner->mkString(s);
     // Deterministic identity from content — no trie entry needed.
     auto hash = trace::tracingHash("mkString:" + s);
-    auto hashStr = hash.to_string(HashFormat::Base16, false);
+    auto hashStr = hash.toHex();
     auto triePos = TriePosition{.resultNodeHash = hash, .queryHashStr = hashStr};
     auto v = writer.getSink().allocValue();
     return TracingObject::create(result, writer, v, triePos);
@@ -226,7 +226,7 @@ ref<Object> TracingEvaluator::mkInt(NixInt i)
 {
     auto result = inner->mkInt(i);
     auto hash = trace::tracingHash("mkInt:" + std::to_string(i.value));
-    auto hashStr = hash.to_string(HashFormat::Base16, false);
+    auto hashStr = hash.toHex();
     auto triePos = TriePosition{.resultNodeHash = hash, .queryHashStr = hashStr};
     auto v = writer.getSink().allocValue();
     return TracingObject::create(result, writer, v, triePos);
@@ -236,7 +236,7 @@ ref<Object> TracingEvaluator::mkBool(bool b)
 {
     auto result = inner->mkBool(b);
     auto hash = trace::tracingHash(b ? "mkBool:true" : "mkBool:false");
-    auto hashStr = hash.to_string(HashFormat::Base16, false);
+    auto hashStr = hash.toHex();
     auto triePos = TriePosition{.resultNodeHash = hash, .queryHashStr = hashStr};
     auto v = writer.getSink().allocValue();
     return TracingObject::create(result, writer, v, triePos);
@@ -260,7 +260,7 @@ ref<Object> TracingEvaluator::mkPath(const RootedPath & path)
         content += fmt("addr:%p", (void *) &*path.root);
     content += ":" + path.path.abs();
     auto hash = trace::tracingHash(content);
-    auto hashStr = hash.to_string(HashFormat::Base16, false);
+    auto hashStr = hash.toHex();
     auto triePos = TriePosition{.resultNodeHash = hash, .queryHashStr = hashStr};
     auto v = writer.getSink().allocValue();
     return TracingObject::create(result, writer, v, triePos);
@@ -270,7 +270,7 @@ ref<Object> TracingEvaluator::getInternalPrimOp(const std::string & name)
 {
     auto result = inner->getInternalPrimOp(name);
     auto hash = trace::tracingHash("internalPrimOp:" + name);
-    auto hashStr = hash.to_string(HashFormat::Base16, false);
+    auto hashStr = hash.toHex();
     auto triePos = TriePosition{.resultNodeHash = hash, .queryHashStr = hashStr};
     auto v = writer.getSink().allocValue();
     return TracingObject::create(result, writer, v, triePos);
@@ -288,7 +288,7 @@ ref<Object> TracingEvaluator::mkAttrs(const std::map<std::string, ref<Object>> &
         content += ",";
     }
     auto hash = trace::tracingHash(content);
-    auto hashStr = hash.to_string(HashFormat::Base16, false);
+    auto hashStr = hash.toHex();
     auto triePos = TriePosition{.resultNodeHash = hash, .queryHashStr = hashStr};
     auto v = writer.getSink().allocValue();
     return TracingObject::create(result, writer, v, triePos);

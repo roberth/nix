@@ -118,7 +118,7 @@ std::optional<std::string> TracingObject::getProducerSelectorHex(TracingWriter &
         auto qcaSel = dg.selectorPool.intern(trace::SelectorCallbackApply{
             obsSetHash, *fnRef});
         nlohmann::json qcaJson = trace::toJson(*qcaSel);
-        dg.insertRequest(qcaSel->cachedHash, jsonToCborString(qcaJson));
+        dg.insertRequest(TracingHash::of(qcaSel->cachedHash), jsonToCborString(qcaJson));
         return qcaSel->cachedHash.to_string(HashFormat::Base16, false);
     }
     /* Under the Selector-is-a-sequence model, the wrapper's producer

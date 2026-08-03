@@ -175,10 +175,10 @@ OuterApplyResult OuterApply::run(
     trace::SelectorArg argProducer{localCell->depth};
     auto argStateHash = TracingDecisionGraph::computeSelectorHash(argProducer);
     tracingCacheLog("OuterApply::run: argStateHash=%s",
-                    argStateHash.to_string(HashFormat::Base16, false).substr(0, 12));
+                    argStateHash.toHex().substr(0, 12));
 
     auto fnIdStr  = fnId.to_string(HashFormat::Base16, false);
-    auto argStateHashStr = argStateHash.to_string(HashFormat::Base16, false);
+    auto argStateHashStr = argStateHash.toHex();
 
     /* Intern SelectorApply{parent=fnProducer} — the apply's identity. */
     auto & pool = innerWriter->getDecisionGraph().selectorPool;
@@ -293,13 +293,13 @@ OuterApplyResult OuterApply::run(
                 try {
                     auto fnHash = trace::parseTracingHex(
                         localCell->callbackState->fnStateHashHex);
-                    if (auto found = dg.selectorPool.find(fnHash))
+                    if (auto found = dg.selectorPool.find(fnHash.toNixHash()))
                         fnRef = *found;
                 } catch (...) {}
                 auto qcaSel = dg.selectorPool.intern(trace::SelectorCallbackApply{
                     obsSetHash, fnRef});
                 nlohmann::json qcaJson = trace::toJson(*qcaSel);
-                dg.insertRequest(qcaSel->cachedHash, jsonToCborString(qcaJson));
+                dg.insertRequest(TracingHash::of(qcaSel->cachedHash), jsonToCborString(qcaJson));
                 return qcaSel;
             }
             return applySel;

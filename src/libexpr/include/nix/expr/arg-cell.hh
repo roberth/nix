@@ -188,7 +188,7 @@ struct ArgCell : std::enable_shared_from_this<ArgCell>
         if (inserted) {
             factsInOrder.emplace_back(reqHash, it->second);
             cachedOwnFactSetHash = TracingDecisionGraph::xorFactIntoHash(
-                cachedOwnFactSetHash, reqHash, respHash);
+                cachedOwnFactSetHash, TracingHash::of(reqHash), TracingHash::of(respHash));
         }
         return inserted;
     }
@@ -208,7 +208,7 @@ struct ArgCell : std::enable_shared_from_this<ArgCell>
         if (it == facts.end())
             return;
         cachedOwnFactSetHash = TracingDecisionGraph::xorFactIntoHash(
-            cachedOwnFactSetHash, reqHash, it->second.response);
+            cachedOwnFactSetHash, TracingHash::of(reqHash), TracingHash::of(it->second.response));
         factsInOrder.erase(
             std::remove_if(factsInOrder.begin(), factsInOrder.end(),
                 [&](const auto & p) { return p.first == reqHash; }),

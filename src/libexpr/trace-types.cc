@@ -533,7 +533,7 @@ Hash computeSelectorHash(const SelectorNode & query)
     to_json(j, query);
     auto cbor = nlohmann::json::to_cbor(j);
     return tracingHash(
-        std::string_view(reinterpret_cast<const char *>(cbor.data()), cbor.size()));
+        std::string_view(reinterpret_cast<const char *>(cbor.data()), cbor.size())).toNixHash();
 }
 
 static uint8_t hexNibble(char c)
@@ -544,38 +544,19 @@ static uint8_t hexNibble(char c)
     throw Error("tracing hash: bad hex nibble '%c'", c);
 }
 
-Hash tracingHash(std::string_view bytes)
+TracingHash tracingHash(std::string_view bytes)
 {
-    Hash h = hashString(HashAlgorithm::SHA256, bytes);
-    /* Truncate in place — hashSize governs comparison, hex output,
-       and SQLite blob binding, so all downstream users honour the
-       128-bit width automatically. Bytes past hashSize are unused
-       storage in Hash's fixed 64-byte buffer. */
-    h.hashSize = tracingHashSize;
-    return h;
+    return TracingHash::compute(bytes);
 }
 
-Hash parseTracingHex(std::string_view hex)
+TracingHash parseTracingHex(std::string_view hex)
 {
-    if (hex.size() != tracingHashSize * 2)
-        throw Error("tracing hash: hex length %d, expected %d",
-            hex.size(), tracingHashSize * 2);
-    Hash h(HashAlgorithm::SHA256);
-    h.hashSize = tracingHashSize;
-    for (size_t i = 0; i < tracingHashSize; ++i)
-        h.hash[i] = (hexNibble(hex[i * 2]) << 4) | hexNibble(hex[i * 2 + 1]);
-    return h;
+    return TracingHash::parseHex(hex);
 }
 
-Hash tracingZeroHash()
+TracingHash tracingZeroHash()
 {
-    static const Hash z = []() {
-        Hash h(HashAlgorithm::SHA256);
-        h.hashSize = tracingHashSize;
-        std::memset(h.hash, 0, tracingHashSize);
-        return h;
-    }();
-    return z;
+    return TracingHash::zero();
 }
 
 } // namespace nix::trace
@@ -672,15 +653,15 @@ ref<const Selector> SelectorPool::intern(SelectorNode node)
        recorder that already wrote the same row is a harmless no-op. */
     auto cbor = nlohmann::json::to_cbor(toJson(*s));
     backing->insertSelector(
-        h, std::string_view(reinterpret_cast<const char *>(cbor.data()), cbor.size()));
+        TracingHash::of(h), std::string_view(reinterpret_cast<const char *>(cbor.data()), cbor.size()));
     return s;
 }
 
 std::optional<ref<const Selector>> SelectorPool::findByHex(std::string_view hex)
 {
-    Hash h = tracingZeroHash();
+    Hash h = tracingZeroHash().toNixHash();
     try {
-        h = parseTracingHex(hex);
+        h = parseTracingHex(hex).toNixHash();
     } catch (const std::exception &) {
         return std::nullopt;
     }
@@ -696,7 +677,7 @@ std::optional<ref<const Selector>> SelectorPool::find(const Hash & h)
        pool for parent hashes, so a whole chain reconstructs
        depth-first from the leaf up. Chains are shallow (< a dozen
        even under nixpkgs attribute nesting), so recursion is fine. */
-    auto payload = backing->getSelectorPayload(h);
+    auto payload = backing->getSelectorPayload(TracingHash::of(h));
     if (!payload) return std::nullopt;
     auto bytes = reinterpret_cast<const uint8_t *>(payload->data());
     auto j = nlohmann::json::from_cbor(bytes, bytes + payload->size());
@@ -811,7 +792,7 @@ std::optional<ref<const Selector>> resolve(const StringSelectorNode & raw, Selec
         [&](const StringSelectorCallbackApply & s) -> std::optional<ref<const Selector>> {
             auto p = pool.findByHex(s.parent);
             if (!p) return std::nullopt;
-            auto obsSetHash = parseTracingHex(s.argObsSet);
+            auto obsSetHash = parseTracingHex(s.argObsSet).toNixHash();
             return pool.intern(SelectorCallbackApply{obsSetHash, *p});
         },
     }, raw);

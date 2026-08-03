@@ -51,11 +51,11 @@ public:
     /* Role-keyed hash aliases for readability. All are SHA-256 in
        the canonical Hash type — distinguishing them is a typing
        discipline, not a runtime check. */
-    using RequestHash = Hash;  // d>0 query atom
-    using ResponseHash = Hash; // d>0 response atom
-    using QueryHash = Hash;    // d=0 query atom (operation + params + inputHashes)
-    using ResultHash = Hash;   // d=0 result atom
-    using SetHash = Hash;      // RequestSet or FactSet content hash
+    using RequestHash = TracingHash;  // d>0 query atom
+    using ResponseHash = TracingHash; // d>0 response atom
+    using QueryHash = TracingHash;    // d=0 query atom (operation + params + inputHashes)
+    using ResultHash = TracingHash;   // d=0 result atom
+    using SetHash = TracingHash;      // RequestSet or FactSet content hash
 
     /* A (Request, Response) pair. The atomic unit of observed
        evaluation context. Facts aren't separately content-addressed
@@ -153,7 +153,7 @@ public:
        member list. Idempotent via INSERT OR IGNORE. */
     struct InlineFact
     {
-        Hash reqHash = trace::tracingZeroHash();
+        Hash reqHash = trace::tracingZeroHash().toNixHash();
         /* CBOR bytes of the observed response (a
            `trace::ResultVariant`). Used by the walker at replay to
            serve callback probes via an obsSet-answering proxy. */
@@ -224,9 +224,9 @@ public:
     /* XOR-fold one Fact into a running set hash. Used by callers that
        maintain their factSet hash incrementally to avoid the O(N)
        cost of insertFactSet. */
-    static Hash xorFactIntoHash(const Hash & h, const Hash & request, const Hash & response);
+    static TracingHash xorFactIntoHash(const TracingHash & h, const TracingHash & request, const TracingHash & response);
 
-    static Hash xorHashes(const Hash & a, const Hash & b);
+    static TracingHash xorHashes(const TracingHash & a, const TracingHash & b);
 
     /* Extend an existing set by adding new members. Computes the
        resulting set's canonical hash, inserts it into the pool if

@@ -546,7 +546,7 @@ static Hash dg_factElementHash(const Hash & request, const Hash & response)
     buf.reserve(request.hashSize + response.hashSize);
     buf.append(reinterpret_cast<const char *>(request.hash), request.hashSize);
     buf.append(reinterpret_cast<const char *>(response.hash), response.hashSize);
-    return trace::tracingHash(buf);
+    return trace::tracingHash(buf).toNixHash();
 }
 
 static Hash dg_xorHash(const Hash & a, const Hash & b)
@@ -557,9 +557,9 @@ static Hash dg_xorHash(const Hash & a, const Hash & b)
     return out;
 }
 
-Hash TracingDecisionGraph::xorHashes(const Hash & a, const Hash & b)
+TracingHash TracingDecisionGraph::xorHashes(const TracingHash & a, const TracingHash & b)
 {
-    return dg_xorHash(a, b);
+    return a.xorWith(b);
 }
 
 /* ──────────────────────────────────────────────────────────────────────
@@ -584,7 +584,7 @@ static std::filesystem::path dg_defaultDbPath()
 
 Hash TracingDecisionGraph::computeResponseHash(const std::string & payload)
 {
-    return trace::tracingHash(payload);
+    return trace::tracingHash(payload).toNixHash();
 }
 
 TracingDecisionGraph::TracingDecisionGraph()
@@ -685,8 +685,9 @@ void TracingDecisionGraph::waitForWrites()
    own level with the JSON payload. This macro just records the
    kind + size. */
 #define ATOM_INSERT_CACHED(NAME, CACHE, OP)                                      \
-    void TracingDecisionGraph::insert##NAME(const Hash & h, std::string_view p) \
+    void TracingDecisionGraph::insert##NAME(const TracingHash & th, std::string_view p) \
     {                                                                            \
+        auto h = th.toNixHash();                                                 \
         auto state(_state->lock());                                              \
         /* Mirror INSERT OR IGNORE in memory. On repeat, skip enqueue. */        \
         auto [it, inserted] = state->CACHE.try_emplace(                          \
@@ -697,8 +698,9 @@ void TracingDecisionGraph::waitForWrites()
     }
 
 #define ATOM_INSERT_PLAIN(NAME, OP)                                              \
-    void TracingDecisionGraph::insert##NAME(const Hash & h, std::string_view p) \
+    void TracingDecisionGraph::insert##NAME(const TracingHash & th, std::string_view p) \
     {                                                                            \
+        auto h = th.toNixHash();                                                 \
         auto state(_state->lock());                                              \
         state->writeQueue->enqueue(OP{h, std::string(p)});                       \
     }
@@ -711,8 +713,9 @@ ATOM_INSERT_CACHED(Result, resultPayloadCache, WriteInsertResult)
 
 #define ATOM_GET_CACHED(NAME, CACHE)                                            \
     std::optional<std::string> TracingDecisionGraph::get##NAME##Payload(        \
-        const Hash & h)                                                         \
+        const TracingHash & th)                                                 \
     {                                                                           \
+        auto h = th.toNixHash();                                                \
         auto state(_state->lock());                                             \
         if (auto it = state->CACHE.find(h); it != state->CACHE.end())           \
             return it->second;                                                  \
@@ -727,8 +730,9 @@ ATOM_INSERT_CACHED(Result, resultPayloadCache, WriteInsertResult)
 
 #define ATOM_GET_PLAIN(NAME)                                                    \
     std::optional<std::string> TracingDecisionGraph::get##NAME##Payload(        \
-        const Hash & h)                                                         \
+        const TracingHash & th)                                                 \
     {                                                                           \
+        auto h = th.toNixHash();                                                \
         auto state(_state->lock());                                             \
         auto query = state->select##NAME.use();                                 \
         dg_bindBlob(query, dg_hashToBlob(h));                                   \
@@ -743,14 +747,15 @@ ATOM_GET_CACHED(Result, resultPayloadCache)
 #undef ATOM_GET_CACHED
 #undef ATOM_GET_PLAIN
 
-std::optional<trace::Request> TracingDecisionGraph::getRequest(const Hash & h)
+std::optional<trace::Request> TracingDecisionGraph::getRequest(const TracingHash & th)
 {
+    auto h = th.toNixHash();
     {
         auto state(_state->lock());
         if (auto it = state->requestCache.find(h); it != state->requestCache.end())
             return it->second;
     }
-    auto payload = getRequestPayload(h);
+    auto payload = getRequestPayload(th);
     if (!payload) {
         auto state(_state->lock());
         state->requestCache.emplace(h, std::nullopt);
@@ -766,14 +771,15 @@ std::optional<trace::Request> TracingDecisionGraph::getRequest(const Hash & h)
     return typed;
 }
 
-std::optional<trace::ResultVariant> TracingDecisionGraph::getResult(const Hash & h)
+std::optional<trace::ResultVariant> TracingDecisionGraph::getResult(const TracingHash & th)
 {
+    auto h = th.toNixHash();
     {
         auto state(_state->lock());
         if (auto it = state->resultCache.find(h); it != state->resultCache.end())
             return it->second;
     }
-    auto payload = getResultPayload(h);
+    auto payload = getResultPayload(th);
     if (!payload) {
         auto state(_state->lock());
         state->resultCache.emplace(h, std::nullopt);
@@ -830,7 +836,7 @@ Hash TracingDecisionGraph::insertObservationSet(
 {
     auto sorted = dg_sortAndDedup(std::move(members));
     auto payload = dg_observationSetPayload(sorted);
-    auto h = trace::tracingHash(payload);
+    auto h = trace::tracingHash(payload).toNixHash();
 
     /* Early return if we've inserted this obsSet before in this session.
        `obsSetDepthMemo` is populated only after a successful insert
@@ -897,7 +903,7 @@ TracingDecisionGraph::getObservationSet(const Hash & h)
     members.reserve(arr.size());
     for (const auto & elt : arr) {
         InlineFact m;
-        m.reqHash = trace::parseTracingHex(elt.at("q").get<std::string>());
+        m.reqHash = trace::parseTracingHex(elt.at("q").get<std::string>()).toNixHash();
         auto & binVal = elt.at("p").get_binary();
         m.responsePayload.assign(binVal.begin(), binVal.end());
         members.push_back(std::move(m));
@@ -911,12 +917,12 @@ TracingDecisionGraph::computeRequestSetHash(const std::vector<RequestHash> & mem
     /* XOR-fold of the dedup'd member set — matches rst::FrozenNode's
        identity so this and insertRequestSet(members) always agree
        on the canonical hash. Empty set → all-zero (emptySetHash). */
-    Hash acc = emptySetHash();
-    std::unordered_set<Hash> seen;
+    SetHash acc = emptySetHash();
+    std::unordered_set<RequestHash> seen;
     seen.reserve(members.size());
     for (const auto & m : members)
         if (seen.insert(m).second)
-            acc = dg_xorHash(acc, m);
+            acc = acc.xorWith(m);
     return acc;
 }
 
@@ -926,7 +932,7 @@ TracingDecisionGraph::computeFactSetHash(const std::vector<Fact> & members)
     auto canonical = dg_sortAndDedup(members);
     SetHash out = emptySetHash();
     for (const auto & f : canonical)
-        out = dg_xorHash(out, dg_factElementHash(f.request, f.response));
+        out = TracingHash::of(dg_xorHash(out.toNixHash(), dg_factElementHash(f.request.toNixHash(), f.response.toNixHash())));
     return out;
 }
 
@@ -962,8 +968,12 @@ bool TracingDecisionGraph::isApplyRequest(const RequestHash & h)
 trace::rst::FrozenNodePtr
 TracingDecisionGraph::internRequestSet(std::vector<RequestHash> members)
 {
+    std::vector<Hash> hashMembers;
+    hashMembers.reserve(members.size());
+    for (const auto & m : members)
+        hashMembers.push_back(m.toNixHash());
     auto state(_state->lock());
-    return state->requestSetTrieCache.internSet(std::move(members));
+    return state->requestSetTrieCache.internSet(std::move(hashMembers));
 }
 
 std::optional<trace::rst::FrozenNodePtr>
@@ -978,8 +988,13 @@ TracingDecisionGraph::insertSortedMembers(
     const trace::rst::FrozenNodePtr & node,
     std::span<const RequestHash> sortedMembers)
 {
+    std::vector<Hash> hashMembers;
+    hashMembers.reserve(sortedMembers.size());
+    for (const auto & m : sortedMembers)
+        hashMembers.push_back(m.toNixHash());
     auto state(_state->lock());
-    return trace::rst::insertSortedMembers(node, sortedMembers, state->requestSetTrieCache);
+    return trace::rst::insertSortedMembers(
+        node, std::span<const Hash>(hashMembers), state->requestSetTrieCache);
 }
 
 TracingDecisionGraph::SetHash
@@ -998,7 +1013,7 @@ TracingDecisionGraph::insertRequestSet(trace::rst::FrozenNodePtr node)
                 WriteInsertRequestSetNode{nodeHash, std::string(payload)});
         };
     state->requestSetTrieCache.persist(node, sink);
-    return node->hash;
+    return TracingHash::of(node->hash);
 }
 
 TracingDecisionGraph::SetHash
@@ -1011,16 +1026,17 @@ TracingDecisionGraph::insertFactSet(std::vector<Fact> members)
     auto canonical = dg_sortAndDedup(std::move(members));
     SetHash setHash = emptySetHash();
     for (const auto & f : canonical)
-        setHash = dg_xorHash(setHash, dg_factElementHash(f.request, f.response));
+        setHash = TracingHash::of(dg_xorHash(setHash.toNixHash(), dg_factElementHash(f.request.toNixHash(), f.response.toNixHash())));
     auto state(_state->lock());
-    state->factSetCache.try_emplace(setHash, std::optional{std::move(canonical)});
+    state->factSetCache.try_emplace(setHash.toNixHash(), std::optional{std::move(canonical)});
     return setHash;
 }
 
-Hash TracingDecisionGraph::xorFactIntoHash(
-    const Hash & h, const Hash & request, const Hash & response)
+TracingHash TracingDecisionGraph::xorFactIntoHash(
+    const TracingHash & h, const TracingHash & request, const TracingHash & response)
 {
-    return dg_xorHash(h, dg_factElementHash(request, response));
+    Hash elem = dg_factElementHash(request.toNixHash(), response.toNixHash());
+    return h.xorWith(TracingHash::of(elem));
 }
 
 void TracingDecisionGraph::persistRequestSetNode(
@@ -1046,7 +1062,7 @@ TracingDecisionGraph::extendRequestSet(const SetHash & parent, const std::vector
     if (parentNode)
         mut = trace::rst::MutableNode(*parentNode);
     for (const auto & e : extras)
-        mut.insert(e);
+        mut.insert(e.toNixHash());
     auto node = [&] {
         auto state(_state->lock());
         return mut.freeze(state->requestSetTrieCache);
@@ -1102,7 +1118,12 @@ TracingDecisionGraph::getRequestSet(const SetHash & h)
     auto node = getRequestSetNode(h);
     if (!node)
         return std::nullopt;
-    return (*node)->allMembers();
+    auto raw = (*node)->allMembers();
+    std::vector<RequestHash> out;
+    out.reserve(raw.size());
+    for (const auto & m : raw)
+        out.push_back(TracingHash::of(m));
+    return out;
 }
 
 std::optional<trace::rst::FrozenNodePtr>
@@ -1113,9 +1134,10 @@ TracingDecisionGraph::getRequestSetNode(const SetHash & h)
         auto state(_state->lock());
         return state->requestSetTrieCache.internSet({});
     }
+    auto hNix = h.toNixHash();
     auto state(_state->lock());
     /* Quick hit: node already in the trie cache. */
-    if (auto existing = state->requestSetTrieCache.lookup(h))
+    if (auto existing = state->requestSetTrieCache.lookup(hNix))
         return *existing;
     /* Load top-down: fetch our payload, recursively load children (so
        they're interned before we intern ourselves — required by
@@ -1148,7 +1170,7 @@ TracingDecisionGraph::getRequestSetNode(const SetHash & h)
                 return std::nullopt;
         return state->requestSetTrieCache.intern(nodeHash, *payload);
     };
-    return loadNode(h);
+    return loadNode(hNix);
 }
 
 std::optional<std::vector<TracingDecisionGraph::Fact>>
@@ -1157,7 +1179,7 @@ TracingDecisionGraph::getFactSet(const SetHash & h)
     if (h == emptySetHash())
         return std::vector<Fact>{};
     auto state(_state->lock());
-    if (auto it = state->factSetCache.find(h); it != state->factSetCache.end())
+    if (auto it = state->factSetCache.find(h.toNixHash()); it != state->factSetCache.end())
         return it->second;
     /* FactSets aren't persisted; if not in the in-process cache it's
        unknown to us. Walks reconstruct curFacts incrementally and
@@ -1175,8 +1197,14 @@ void TracingDecisionGraph::insertAsk(
     const SetHash & requestSet,
     const std::optional<SetHash> & altRequestSet)
 {
+    auto qNix = q.toNixHash();
+    auto factSetNix = factSet.toNixHash();
+    auto requestSetNix = requestSet.toNixHash();
+    std::optional<Hash> altRequestSetNix;
+    if (altRequestSet)
+        altRequestSetNix = altRequestSet->toNixHash();
     auto state(_state->lock());
-    auto key = std::make_pair(q, factSet);
+    auto key = std::make_pair(qNix, factSetNix);
     /* Populate cache from DB if not seen yet, then append the new
        edge. On a cache miss the DB load runs synchronously (no writer
        thread involvement — this Ask isn't queued yet). Subsequent
@@ -1185,13 +1213,13 @@ void TracingDecisionGraph::insertAsk(
     auto it = state->askEdgesCache.find(key);
     if (it == state->askEdgesCache.end()) {
             auto query = state->selectAsks.use();
-        dg_bindBlob(query, dg_hashToBlob(q));
-        dg_bindBlob(query, dg_hashToBlob(factSet));
+        dg_bindBlob(query, dg_hashToBlob(qNix));
+        dg_bindBlob(query, dg_hashToBlob(factSetNix));
         std::vector<AskEdge> loaded;
         while (query.next()) {
-            AskEdge e{dg_blobToHash(query.getBlob(0)), std::nullopt};
+            AskEdge e{TracingHash::of(dg_blobToHash(query.getBlob(0))), std::nullopt};
             if (!query.isNull(1))
-                e.altRequestSet = dg_blobToHash(query.getBlob(1));
+                e.altRequestSet = TracingHash::of(dg_blobToHash(query.getBlob(1)));
             loaded.push_back(std::move(e));
         }
         it = state->askEdgesCache.emplace(key, std::move(loaded)).first;
@@ -1205,14 +1233,16 @@ void TracingDecisionGraph::insertAsk(
             return;
     }
     it->second.push_back(AskEdge{requestSet, altRequestSet});
-    state->writeQueue->enqueue(WriteInsertAsk{q, factSet, requestSet, altRequestSet});
+    state->writeQueue->enqueue(WriteInsertAsk{qNix, factSetNix, requestSetNix, altRequestSetNix});
 }
 
 std::vector<TracingDecisionGraph::AskEdge>
 TracingDecisionGraph::getAsks(const QueryHash & q, const SetHash & factSet)
 {
+    auto qNix = q.toNixHash();
+    auto factSetNix = factSet.toNixHash();
     auto state(_state->lock());
-    auto key = std::make_pair(q, factSet);
+    auto key = std::make_pair(qNix, factSetNix);
     /* In-memory cache is authoritative for (q, factSet) once populated.
        Populated lazily on first read from DB, then kept in sync by
        insertAsk / removeAsk. Avoids blocking readers on the async
@@ -1222,13 +1252,13 @@ TracingDecisionGraph::getAsks(const QueryHash & q, const SetHash & factSet)
         return it->second;
     /* First read: load from DB and cache. */
     auto query = state->selectAsks.use();
-    dg_bindBlob(query, dg_hashToBlob(q));
-    dg_bindBlob(query, dg_hashToBlob(factSet));
+    dg_bindBlob(query, dg_hashToBlob(qNix));
+    dg_bindBlob(query, dg_hashToBlob(factSetNix));
     std::vector<AskEdge> out;
     while (query.next()) {
-        AskEdge e{dg_blobToHash(query.getBlob(0)), std::nullopt};
+        AskEdge e{TracingHash::of(dg_blobToHash(query.getBlob(0))), std::nullopt};
         if (!query.isNull(1))
-            e.altRequestSet = dg_blobToHash(query.getBlob(1));
+            e.altRequestSet = TracingHash::of(dg_blobToHash(query.getBlob(1)));
         out.push_back(std::move(e));
     }
     state->askEdgesCache.emplace(key, out);
@@ -1238,8 +1268,11 @@ TracingDecisionGraph::getAsks(const QueryHash & q, const SetHash & factSet)
 void TracingDecisionGraph::removeAsk(
     const QueryHash & q, const SetHash & factSet, const SetHash & requestSet)
 {
+    auto qNix = q.toNixHash();
+    auto factSetNix = factSet.toNixHash();
+    auto requestSetNix = requestSet.toNixHash();
     auto state(_state->lock());
-    auto key = std::make_pair(q, factSet);
+    auto key = std::make_pair(qNix, factSetNix);
     auto it = state->askEdgesCache.find(key);
     if (it != state->askEdgesCache.end()) {
         auto & v = it->second;
@@ -1252,7 +1285,7 @@ void TracingDecisionGraph::removeAsk(
        reflect the removal after the writer flushes. Missing an
        in-session cache load here is fine because we don't need to
        report the removed rows. */
-    state->writeQueue->enqueue(WriteDeleteAsk{q, factSet, requestSet});
+    state->writeQueue->enqueue(WriteDeleteAsk{qNix, factSetNix, requestSetNix});
 }
 
 void TracingDecisionGraph::insertAskSplitting(
@@ -1273,16 +1306,15 @@ void TracingDecisionGraph::insertAskSplitting(
        split subtracts the consumed reqs' XOR from it (XOR is
        self-inverse). Avoids re-folding remaining every trySplitOne
        call. */
-    Hash remainingXor = emptySetHash();
+    TracingHash remainingXor = emptySetHash();
     for (const auto & f : remaining)
-        for (size_t i = 0; i < remainingXor.hashSize; ++i)
-            remainingXor.hash[i] ^= f.request.hash[i];
+        remainingXor.xorInPlace(f.request);
 
     struct SplitStep
     {
-        Hash newCur;
+        TracingHash newCur;
         std::vector<Fact> remainingAfterConsume;
-        Hash remainingXorAfterConsume;
+        TracingHash remainingXorAfterConsume;
     };
 
     /* trySplitOne: find an overlap between remaining and an existing
@@ -1298,15 +1330,15 @@ void TracingDecisionGraph::insertAskSplitting(
     auto trySplitOne =
         [&](const SetHash & cur,
             const std::vector<Fact> & remaining,
-            const Hash & remainingXor) -> std::optional<SplitStep>
+            const TracingHash & remainingXor) -> std::optional<SplitStep>
     {
         /* XOR-first-lookup: skip the vector build when remainingNode's
            identity is already cached (heavy reuse under matching-until-
            divergence). */
         trace::rst::FrozenNodePtr remainingNode = [&] {
-            if (auto existing = tryFindRequestSet(remainingXor))
+            if (auto existing = tryFindRequestSet(remainingXor.toNixHash()))
                 return *existing;
-            std::vector<Hash> vec;
+            std::vector<RequestHash> vec;
             vec.reserve(remaining.size());
             for (const auto & f : remaining) vec.push_back(f.request);
             return internRequestSet(std::move(vec));
@@ -1337,7 +1369,13 @@ void TracingDecisionGraph::insertAskSplitting(
                rs. Route through the trie node we already have from
                getRequestSetNode above — allMembers is memoised on the
                FrozenNode, so no re-walk on repeat visits. */
-            auto exUseful = usefulDispatch(exNode->allMembers(), dispatchedSoFar);
+            std::vector<RequestHash> exAllMembers;
+            {
+                auto raw = exNode->allMembers();
+                exAllMembers.reserve(raw.size());
+                for (const auto & h : raw) exAllMembers.push_back(TracingHash::of(h));
+            }
+            auto exUseful = usefulDispatch(exAllMembers, dispatchedSoFar);
             if (exUseful.empty())
                 continue;
 
@@ -1355,22 +1393,20 @@ void TracingDecisionGraph::insertAskSplitting(
                Accumulate consumed reqs' XOR into consumedXor as we
                go, so the next outer iteration inherits an incremental
                remainingXor without re-folding. */
-            Hash intermediate = cur;
-            Hash consumedXor = emptySetHash();
+            TracingHash intermediate = cur;
+            TracingHash consumedXor = emptySetHash();
             std::vector<Fact> tailNew;
             tailNew.reserve(remaining.size() - sharedSize);
             for (const auto & f : remaining) {
-                if (sharedNode->contains(f.request)) {
-                    intermediate = dg_xorHash(intermediate, dg_factElementHash(f.request, f.response));
-                    for (size_t i = 0; i < consumedXor.hashSize; ++i)
-                        consumedXor.hash[i] ^= f.request.hash[i];
+                if (sharedNode->contains(f.request.toNixHash())) {
+                    intermediate = xorFactIntoHash(intermediate, f.request, f.response);
+                    consumedXor.xorInPlace(f.request);
                 } else {
                     tailNew.push_back(f);
                 }
             }
-            Hash newRemainingXor = remainingXor;
-            for (size_t i = 0; i < newRemainingXor.hashSize; ++i)
-                newRemainingXor.hash[i] ^= consumedXor.hash[i];
+            TracingHash newRemainingXor = remainingXor;
+            newRemainingXor.xorInPlace(consumedXor);
 
             /* Persist shared via the trie-native overload — no
                vector-flatten hop, and the FrozenNode is already
@@ -1392,17 +1428,16 @@ void TracingDecisionGraph::insertAskSplitting(
                    cache-lookup without materialising the tail vector.
                    Under matching-until-divergence the same tail
                    identity shows up across splits and hits often. */
-                Hash tailXor = emptySetHash();
+                TracingHash tailXor = emptySetHash();
                 for (const auto & req : exUseful)
-                    if (!sharedNode->contains(req))
-                        for (size_t i = 0; i < tailXor.hashSize; ++i)
-                            tailXor.hash[i] ^= req.hash[i];
-                auto tailNode = tryFindRequestSet(tailXor);
+                    if (!sharedNode->contains(req.toNixHash()))
+                        tailXor.xorInPlace(req);
+                auto tailNode = tryFindRequestSet(tailXor.toNixHash());
                 if (!tailNode) {
-                    std::vector<Hash> tail;
+                    std::vector<RequestHash> tail;
                     tail.reserve(exUseful.size() - sharedSize);
                     for (const auto & req : exUseful)
-                        if (!sharedNode->contains(req))
+                        if (!sharedNode->contains(req.toNixHash()))
                             tail.push_back(req);
                     tailNode = internRequestSet(std::move(tail));
                 }
@@ -1417,12 +1452,12 @@ void TracingDecisionGraph::insertAskSplitting(
             tracingCacheLog(
                 "insertAskSplitting Q=%s split at cur=%s: shared=%zu, exUseful=%zu, newRemaining=%zu "
                 "(intermediate=%s, sharedRS=%s, exRS=%s)",
-                q.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
-                cur.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
+                q.toHex().substr(0, 12).c_str(),
+                cur.toHex().substr(0, 12).c_str(),
                 sharedSize, exUseful.size(), remaining.size(),
-                intermediate.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
-                sharedRsHash.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
-                exRsHash.to_string(HashFormat::Base16, false).substr(0, 12).c_str());
+                intermediate.toHex().substr(0, 12).c_str(),
+                sharedRsHash.toHex().substr(0, 12).c_str(),
+                exRsHash.toHex().substr(0, 12).c_str());
 
             return SplitStep{intermediate, std::move(tailNew), newRemainingXor};
         }
@@ -1445,9 +1480,9 @@ void TracingDecisionGraph::insertAskSplitting(
         return;
     /* XOR-first-lookup fast path — remainingXor is maintained
        incrementally by the trySplitOne loop, so we already have it. */
-    auto newNode = tryFindRequestSet(remainingXor);
+    auto newNode = tryFindRequestSet(remainingXor.toNixHash());
     if (!newNode) {
-        std::vector<Hash> newReqs;
+        std::vector<RequestHash> newReqs;
         newReqs.reserve(remaining.size());
         for (const auto & f : remaining) newReqs.push_back(f.request);
         newNode = internRequestSet(std::move(newReqs));
@@ -1471,8 +1506,11 @@ void TracingDecisionGraph::copyOutgoing(
 void TracingDecisionGraph::insertTerminal(
     const QueryHash & q, const SetHash & factSet, const ResultHash & result)
 {
+    auto qNix = q.toNixHash();
+    auto factSetNix = factSet.toNixHash();
+    auto resultNix = result.toNixHash();
     auto state(_state->lock());
-    auto key = std::make_pair(q, factSet);
+    auto key = std::make_pair(qNix, factSetNix);
     /* Mirror INSERT OR IGNORE: only the first Terminal wins for a
        given (q, factSet). If a cached Terminal already exists, don't
        overwrite it. */
@@ -1480,31 +1518,33 @@ void TracingDecisionGraph::insertTerminal(
     if (!inserted && it->second.has_value())
         return;
     it->second = result;
-    state->writeQueue->enqueue(WriteInsertTerminal{q, factSet, result});
+    state->writeQueue->enqueue(WriteInsertTerminal{qNix, factSetNix, resultNix});
 }
 
 std::optional<TracingDecisionGraph::ResultHash>
 TracingDecisionGraph::getTerminal(const QueryHash & q, const SetHash & factSet)
 {
+    auto qNix = q.toNixHash();
+    auto factSetNix = factSet.toNixHash();
     auto state(_state->lock());
-    auto key = std::make_pair(q, factSet);
+    auto key = std::make_pair(qNix, factSetNix);
     auto it = state->terminalCache.find(key);
     if (it != state->terminalCache.end()) {
         tracingCacheLog("getTerminal(q=%s, fs=%s) CACHE %s",
-                        q.to_string(HashFormat::Base16, false).c_str(),
-                        factSet.to_string(HashFormat::Base16, false).c_str(),
+                        q.toHex().c_str(),
+                        factSet.toHex().c_str(),
                         it->second ? "HIT" : "MISS");
         return it->second;
     }
     auto query = state->selectTerminal.use();
-    dg_bindBlob(query, dg_hashToBlob(q));
-    dg_bindBlob(query, dg_hashToBlob(factSet));
+    dg_bindBlob(query, dg_hashToBlob(qNix));
+    dg_bindBlob(query, dg_hashToBlob(factSetNix));
     std::optional<ResultHash> result;
     if (query.next())
-        result = dg_blobToHash(query.getBlob(0));
+        result = TracingHash::of(dg_blobToHash(query.getBlob(0)));
     tracingCacheLog("getTerminal(q=%s, fs=%s) SQL %s",
-                    q.to_string(HashFormat::Base16, false).c_str(),
-                    factSet.to_string(HashFormat::Base16, false).c_str(),
+                    q.toHex().c_str(),
+                    factSet.toHex().c_str(),
                     result ? "HIT" : "MISS");
     state->terminalCache.emplace(key, result);
     return result;
@@ -1519,33 +1559,33 @@ TracingDecisionGraph::getTerminal(const QueryHash & q, const SetHash & factSet)
    consumed so far". remaining-as-set = allRequests \ dispatchedSoFar. */
 static void dg_recordImpl(
     TracingDecisionGraph & g,
-    const Hash & q,
-    const Hash & factSetHash,
-    const Hash & result,
-    const std::unordered_map<Hash, Hash> & responseFor,
-    const std::unordered_set<Hash> & allRequests,
-    Hash startFactSetHash = TracingDecisionGraph::emptySetHash())
+    const TracingHash & q,
+    const TracingHash & factSetHash,
+    const TracingHash & result,
+    const std::unordered_map<TracingHash, TracingHash> & responseFor,
+    const std::unordered_set<TracingHash> & allRequests,
+    TracingHash startFactSetHash = TracingDecisionGraph::emptySetHash())
 {
     auto cur = startFactSetHash;
-    std::unordered_set<Hash> dispatchedSoFar;
+    std::unordered_set<TracingHash> dispatchedSoFar;
 
-    auto isInRemaining = [&](const Hash & req) {
+    auto isInRemaining = [&](const TracingHash & req) {
         return allRequests.count(req) && !dispatchedSoFar.count(req);
     };
 
-    auto extendCurFromReqs = [&](const std::vector<Hash> & reqs) {
+    auto extendCurFromReqs = [&](const std::vector<TracingHash> & reqs) {
         for (const auto & req : reqs) {
             assert(!dispatchedSoFar.count(req));
             auto it = responseFor.find(req);
             assert(it != responseFor.end());
-            cur = dg_xorHash(cur, dg_factElementHash(req, it->second));
+            cur = TracingDecisionGraph::xorFactIntoHash(cur, req, it->second);
             dispatchedSoFar.insert(req);
         }
     };
     auto extendCurFromFacts = [&](const std::vector<TracingDecisionGraph::Fact> & facts) {
         for (const auto & f : facts) {
             assert(!dispatchedSoFar.count(f.request));
-            cur = dg_xorHash(cur, dg_factElementHash(f.request, f.response));
+            cur = TracingDecisionGraph::xorFactIntoHash(cur, f.request, f.response);
             dispatchedSoFar.insert(f.request);
         }
     };
@@ -1557,7 +1597,7 @@ static void dg_recordImpl(
            optimisation, and any residual Ask insert splits against
            existing at the same cur. */
 
-        std::optional<std::vector<Hash>> followUseful;
+        std::optional<std::vector<TracingHash>> followUseful;
         for (const auto & edge : g.getAsks(q, cur)) {
             auto rsHash = edge.requestSet;
             auto rsMembers = g.getRequestSet(rsHash);
@@ -1609,9 +1649,9 @@ void TracingDecisionGraph::record(
     /* Build the per-call responseFor / allRequests from the cached
        factSet members. Callers with these maintained incrementally
        should use the fast-path overload below instead. */
-    std::unordered_map<Hash, Hash> responseFor;
+    std::unordered_map<TracingHash, TracingHash> responseFor;
     responseFor.reserve(facts->size());
-    std::unordered_set<Hash> allRequests;
+    std::unordered_set<TracingHash> allRequests;
     allRequests.reserve(facts->size());
     for (const auto & f : *facts) {
         responseFor.emplace(f.request, f.response);
@@ -1622,8 +1662,10 @@ void TracingDecisionGraph::record(
 
 bool TracingDecisionGraph::hasAnyEdge(const QueryHash & q, const SetHash & factSet)
 {
+    auto qNix = q.toNixHash();
+    auto factSetNix = factSet.toNixHash();
     auto state(_state->lock());
-    auto key = std::make_pair(q, factSet);
+    auto key = std::make_pair(qNix, factSetNix);
     /* If either cache has a positive answer, no DB round-trip needed. */
     if (auto it = state->askEdgesCache.find(key); it != state->askEdgesCache.end() && !it->second.empty())
         return true;
@@ -1634,14 +1676,14 @@ bool TracingDecisionGraph::hasAnyEdge(const QueryHash & q, const SetHash & factS
        table on disk because the caches are per-table. */
     {
         auto check = state->countAsks.use();
-        dg_bindBlob(check, dg_hashToBlob(q));
-        dg_bindBlob(check, dg_hashToBlob(factSet));
+        dg_bindBlob(check, dg_hashToBlob(qNix));
+        dg_bindBlob(check, dg_hashToBlob(factSetNix));
         if (check.next())
             return true;
     }
     auto check = state->countTerminals.use();
-    dg_bindBlob(check, dg_hashToBlob(q));
-    dg_bindBlob(check, dg_hashToBlob(factSet));
+    dg_bindBlob(check, dg_hashToBlob(qNix));
+    dg_bindBlob(check, dg_hashToBlob(factSetNix));
     return check.next();
 }
 
@@ -1651,7 +1693,7 @@ std::optional<TracingDecisionGraph::WalkHit> TracingDecisionGraph::walk(
     const std::function<void(bool committed, const std::vector<RequestHash> &)> & onEdgeAttempt,
     const SetHash & startCur)
 {
-    Hash q = q_initial;
+    TracingHash q = q_initial;
     auto cur = startCur;
     /* dispatchedSoFar speeds up the "is this request already in cur?"
        filter on each edge, and (since dispatch filters them out
@@ -1659,27 +1701,27 @@ std::optional<TracingDecisionGraph::WalkHit> TracingDecisionGraph::walk(
        that's already folded into cur. */
     std::unordered_set<RequestHash> dispatchedSoFar;
     tracingCacheLog("history Q=%s startCur=%s",
-                    q.to_string(HashFormat::Base16, false).substr(0, 12),
-                    cur.to_string(HashFormat::Base16, false).substr(0, 12));
+                    q.toHex().substr(0, 12),
+                    cur.toHex().substr(0, 12));
     for (;;) {
         if (auto term = getTerminal(q, cur)) {
             tracingCacheLog("history Q=%s TERMINAL at cur=%s",
-                            q.to_string(HashFormat::Base16, false).substr(0, 12),
-                            cur.to_string(HashFormat::Base16, false).substr(0, 12));
+                            q.toHex().substr(0, 12),
+                            cur.toHex().substr(0, 12));
             return WalkHit{*term, cur};
         }
 
         auto outgoing = getAsks(q, cur);
         if (outgoing.empty()) {
             tracingCacheLog("history Q=%s NO OUTGOING at cur=%s -> miss",
-                            q.to_string(HashFormat::Base16, false).substr(0, 12),
-                            cur.to_string(HashFormat::Base16, false).substr(0, 12));
+                            q.toHex().substr(0, 12),
+                            cur.toHex().substr(0, 12));
             return std::nullopt; // no path forward, no terminal
         }
 
         tracingCacheLog("history Q=%s cur=%s outgoing=%zu",
-                        q.to_string(HashFormat::Base16, false).substr(0, 12),
-                        cur.to_string(HashFormat::Base16, false).substr(0, 12),
+                        q.toHex().substr(0, 12),
+                        cur.toHex().substr(0, 12),
                         outgoing.size());
 
         bool advanced = false;
@@ -1691,8 +1733,8 @@ std::optional<TracingDecisionGraph::WalkHit> TracingDecisionGraph::walk(
            bool committed. */
         auto tryDispatchRs = [&](
             const SetHash & rsHash,
-            std::vector<Hash> * outUseful,
-            Hash * outNextCur) -> bool
+            std::vector<RequestHash> * outUseful,
+            TracingHash * outNextCur) -> bool
         {
             auto rsOpt = getRequestSet(rsHash);
             if (!rsOpt)
@@ -1700,10 +1742,10 @@ std::optional<TracingDecisionGraph::WalkHit> TracingDecisionGraph::walk(
             auto useful = usefulDispatch(*rsOpt, dispatchedSoFar);
             if (useful.empty())
                 return false;
-            Hash nextCur = cur;
+            TracingHash nextCur = cur;
             for (const auto & req : useful) {
                 auto resp = dispatch(req);
-                nextCur = dg_xorHash(nextCur, dg_factElementHash(req, resp));
+                nextCur = xorFactIntoHash(nextCur, req, resp);
             }
             *outUseful = std::move(useful);
             *outNextCur = nextCur;
@@ -1713,8 +1755,8 @@ std::optional<TracingDecisionGraph::WalkHit> TracingDecisionGraph::walk(
         for (const auto & edge : outgoing) {
             auto requestSetHash = edge.requestSet;
 
-            std::vector<Hash> useful;
-            Hash nextCur{HashAlgorithm::SHA256};
+            std::vector<RequestHash> useful;
+            TracingHash nextCur = TracingHash::zero();
             if (!tryDispatchRs(requestSetHash, &useful, &nextCur))
                 continue;
 
@@ -1744,10 +1786,10 @@ std::optional<TracingDecisionGraph::WalkHit> TracingDecisionGraph::walk(
                over the divergence with a stored response. */
             if (!hasAnyEdge(q, nextCur)) {
                 tracingCacheLog("history Q=%s rs=%s useful=%zu nextCur=%s NO RECORDED EDGE -> try alt/next",
-                                q.to_string(HashFormat::Base16, false).substr(0, 12),
-                                requestSetHash.to_string(HashFormat::Base16, false).substr(0, 12),
+                                q.toHex().substr(0, 12),
+                                requestSetHash.toHex().substr(0, 12),
                                 useful.size(),
-                                nextCur.to_string(HashFormat::Base16, false).substr(0, 12));
+                                nextCur.toHex().substr(0, 12));
                 if (onEdgeAttempt)
                     onEdgeAttempt(/*committed=*/ false, useful);
 
@@ -1757,19 +1799,19 @@ std::optional<TracingDecisionGraph::WalkHit> TracingDecisionGraph::walk(
                    state at nextCur_alt onto nextCur_primary so future
                    walks reach it via primary directly. */
                 if (edge.altRequestSet) {
-                    std::vector<Hash> altUseful;
-                    Hash altNextCur{HashAlgorithm::SHA256};
+                    std::vector<RequestHash> altUseful;
+                    TracingHash altNextCur = TracingHash::zero();
                     if (tryDispatchRs(*edge.altRequestSet, &altUseful, &altNextCur)
                         && hasAnyEdge(q, altNextCur))
                     {
                         tracingCacheLog(
                             "history Q=%s ALT-FALLBACK altRs=%s useful=%zu cur=%s -> altNextCur=%s (copying to primary %s)",
-                            q.to_string(HashFormat::Base16, false).substr(0, 12),
-                            edge.altRequestSet->to_string(HashFormat::Base16, false).substr(0, 12),
+                            q.toHex().substr(0, 12),
+                            edge.altRequestSet->toHex().substr(0, 12),
                             altUseful.size(),
-                            cur.to_string(HashFormat::Base16, false).substr(0, 12),
-                            altNextCur.to_string(HashFormat::Base16, false).substr(0, 12),
-                            nextCur.to_string(HashFormat::Base16, false).substr(0, 12));
+                            cur.toHex().substr(0, 12),
+                            altNextCur.toHex().substr(0, 12),
+                            nextCur.toHex().substr(0, 12));
                         copyOutgoing(q, altNextCur, nextCur);
                         useful = std::move(altUseful);
                         nextCur = altNextCur;
@@ -1783,11 +1825,11 @@ std::optional<TracingDecisionGraph::WalkHit> TracingDecisionGraph::walk(
             }
 
             tracingCacheLog("history Q=%s rs=%s useful=%zu cur=%s -> nextCur=%s",
-                            q.to_string(HashFormat::Base16, false).substr(0, 12),
-                            requestSetHash.to_string(HashFormat::Base16, false).substr(0, 12),
+                            q.toHex().substr(0, 12),
+                            requestSetHash.toHex().substr(0, 12),
                             useful.size(),
-                            cur.to_string(HashFormat::Base16, false).substr(0, 12),
-                            nextCur.to_string(HashFormat::Base16, false).substr(0, 12));
+                            cur.toHex().substr(0, 12),
+                            nextCur.toHex().substr(0, 12));
             cur = nextCur;
             for (const auto & req : useful) {
                 /* Env-layer requests are stable (same request → same
@@ -1804,8 +1846,8 @@ std::optional<TracingDecisionGraph::WalkHit> TracingDecisionGraph::walk(
 
         if (!advanced) {
             tracingCacheLog("history Q=%s NO EDGE COMMITTED at cur=%s -> miss",
-                            q.to_string(HashFormat::Base16, false).substr(0, 12),
-                            cur.to_string(HashFormat::Base16, false).substr(0, 12));
+                            q.toHex().substr(0, 12),
+                            cur.toHex().substr(0, 12));
             return std::nullopt;
         }
     }

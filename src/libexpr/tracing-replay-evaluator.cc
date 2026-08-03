@@ -67,10 +67,10 @@ TracingReplayEvaluator::walk(
     auto commitEdge = [&]() {
         if (pendingEdgeObservations.empty())
             return;
-        Hash fingerprint(HashAlgorithm::SHA256);
+        TracingHash fingerprint = TracingHash::zero();
         for (const auto & f : pendingEdgeObservations)
-            fingerprint = TracingDecisionGraph::xorHashes(fingerprint, f.elementHash);
-        if (committedEdgeFingerprints.insert(fingerprint).second) {
+            fingerprint = TracingDecisionGraph::xorHashes(fingerprint, TracingHash::of(f.elementHash));
+        if (committedEdgeFingerprints.insert(fingerprint.toNixHash()).second) {
             /* Replay validation must not mutate writer state — recording
                and replay run through the same TracingWriter but their
                cells are semantically distinct. Prior code attributed
@@ -98,7 +98,7 @@ TracingReplayEvaluator::walk(
        their responses differ. After that probe the fold
        advances state hashes, so subsequent probes discriminate
        via requestHash naturally. */
-    auto dispatch = [&](const Hash & requestHash) -> Hash {
+    auto dispatch = [&](const TracingHash & requestHash) -> TracingHash {
         auto req = decisionGraph.getRequest(requestHash);
         if (!req)
             return trace::tracingZeroHash();
@@ -117,8 +117,8 @@ TracingReplayEvaluator::walk(
             },
         }, *req);
         if (!willMoveStateHash) {
-            if (auto it = responseFor.find(requestHash); it != responseFor.end())
-                return it->second;
+            if (auto it = responseFor.find(requestHash.toNixHash()); it != responseFor.end())
+                return TracingHash::of(it->second);
         }
         /* Cell-migration Phase B: SelectorApply is now walkable (its
            Terminal is inserted by TracingEvaluator::apply after
@@ -129,11 +129,11 @@ TracingReplayEvaluator::walk(
         if (!currentResp) {
             tracingCacheLog(
                 "dispatch FAIL req=%s payload=%s (no current response)",
-                requestHash.to_string(HashFormat::Base16, false).substr(0, 12),
+                requestHash.toHex().substr(0, 12),
                 queryDescription);
             return trace::tracingZeroHash();
         }
-        auto h = TracingDecisionGraph::computeResponseHash(*currentResp);
+        auto h = TracingHash::of(TracingDecisionGraph::computeResponseHash(*currentResp));
         /* Env dispatch MUST NOT read stored responses to substitute
            for a live response that differs from cold's — doing so
            masks legitimate outer-body change detection (per the
@@ -146,7 +146,7 @@ TracingReplayEvaluator::walk(
            substitute on DISPATCH FAILURE (see the block above), not
            on mismatch. */
         if (!willMoveStateHash)
-            responseFor.emplace(requestHash, h);
+            responseFor.emplace(requestHash.toNixHash(), h.toNixHash());
         /* Walker-side dispatch is validation, not new recording.
            The observation being validated was already emitted by the
            original interpreter run (via logResponse or
@@ -172,9 +172,9 @@ TracingReplayEvaluator::walk(
                cold runs otherwise. */
             tracingCacheLog(
                 "dispatch outer: req=%s payload=%s resp=%s\n  reqJSON=%s\n  respJSON=%s",
-                requestHash.to_string(HashFormat::Base16, false).substr(0, 12),
+                requestHash.toHex().substr(0, 12),
                 queryDescription,
-                h.to_string(HashFormat::Base16, false).substr(0, 12),
+                h.toHex().substr(0, 12),
                 std::visit([](const auto & r) { return nlohmann::json(r).dump(); }, *req),
                 [&]() -> std::string {
                     try { return cborStringToJson(*currentResp).dump(); }
@@ -185,22 +185,22 @@ TracingReplayEvaluator::walk(
                left null — commitEdge routes null to sessionRootCell). */
             pendingEdgeObservations.push_back({
                 TracingDecisionGraph::xorFactIntoHash(
-                    trace::tracingZeroHash(), requestHash, h),
-                requestHash,
-                h,
+                    trace::tracingZeroHash(), requestHash, h).toNixHash(),
+                requestHash.toNixHash(),
+                h.toNixHash(),
                 std::weak_ptr<const ArgCell>{},
             });
             tracingCacheLog(
                 "dispatch env: req=%s payload=%s resp=%s",
-                requestHash.to_string(HashFormat::Base16, false).substr(0, 12),
+                requestHash.toHex().substr(0, 12),
                 queryDescription,
-                h.to_string(HashFormat::Base16, false).substr(0, 12));
+                h.toHex().substr(0, 12));
         }
         return h;
     };
 
     std::vector<Observation> rejectedObs;
-    auto commitRejected = [&](const std::vector<Hash> &) {
+    auto commitRejected = [&](const std::vector<TracingHash> &) {
         for (auto & obs : pendingEdgeObservations)
             rejectedObs.push_back(std::move(obs));
         pendingEdgeObservations.clear();
@@ -233,9 +233,9 @@ TracingReplayEvaluator::walk(
     /* #177: anchor at cell.factSetHash() — under the pull model, cold's
        writer keys Terminals at cell.factSetHash(); walker's startCur
        must match. */
-    Hash cellAnchor = cell ? cell->factSetHash() : TracingDecisionGraph::emptySetHash();
-    walkHit = decisionGraph.walk(selectorHash, dispatch,
-        [&](bool committed, const std::vector<Hash> & useful) {
+    TracingHash cellAnchor = cell ? cell->factSetHash() : TracingDecisionGraph::emptySetHash();
+    walkHit = decisionGraph.walk(TracingHash::of(selectorHash), dispatch,
+        [&](bool committed, const std::vector<TracingHash> & useful) {
             if (committed) commitEdge();
             else commitRejected(useful);
         },
@@ -255,11 +255,11 @@ TracingReplayEvaluator::walk(
             if (structuralAnchor != cellAnchor
                 && structuralAnchor != TracingDecisionGraph::emptySetHash()) {
                 tracingCacheLog("walk fallback: retrying at parent-TRO structural anchor %s",
-                                structuralAnchor.to_string(HashFormat::Base16, false).substr(0, 12).c_str());
+                                structuralAnchor.toHex().substr(0, 12).c_str());
                 pendingEdgeObservations.clear();
                 rejectedObs.clear();
-                walkHit = decisionGraph.walk(selectorHash, dispatch,
-                    [&](bool committed, const std::vector<Hash> & useful) {
+                walkHit = decisionGraph.walk(TracingHash::of(selectorHash), dispatch,
+                    [&](bool committed, const std::vector<TracingHash> & useful) {
                         if (committed) commitEdge();
                         else commitRejected(useful);
                     },
@@ -276,8 +276,8 @@ TracingReplayEvaluator::walk(
         tracingCacheLog("walk fallback: retrying from ∅");
         pendingEdgeObservations.clear();
         rejectedObs.clear();
-        walkHit = decisionGraph.walk(selectorHash, dispatch,
-            [&](bool committed, const std::vector<Hash> & useful) {
+        walkHit = decisionGraph.walk(TracingHash::of(selectorHash), dispatch,
+            [&](bool committed, const std::vector<TracingHash> & useful) {
                 if (committed) commitEdge();
                 else commitRejected(useful);
             },
@@ -293,7 +293,7 @@ TracingReplayEvaluator::walk(
         return std::nullopt;
     }
     tracingCacheStats().hits++;
-    return WalkResult{std::move(*payload), walkHit->resultHash, walkHit->terminalCur};
+    return WalkResult{std::move(*payload), walkHit->resultHash.toNixHash(), walkHit->terminalCur.toNixHash()};
 }
 
 std::optional<std::string> TracingReplayEvaluator::computeLiveResponse(const trace::Request & req, ResolutionContext & ctx)
@@ -387,9 +387,9 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveIdentity(const std::strin
     }
     tracingCacheLog("resolve %s: cell-chain exhausted, falling through to pool", idStr.substr(0, 12));
 
-    Hash idHash = trace::tracingZeroHash();
+    Hash idHash = trace::tracingZeroHash().toNixHash();
     try {
-        idHash = trace::parseTracingHex(idStr);
+        idHash = trace::parseTracingHex(idStr).toNixHash();
     } catch (const std::exception &) { extern thread_local bool rcaBailFlag; if (rcaBailFlag) throw; /* rca-bail-diagnostic */
         return nullptr;
     }
@@ -572,7 +572,7 @@ std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nl
                    producer-hex equality, return WHNF of the resolved
                    liveObject. */
                 auto selfHash = TracingDecisionGraph::computeSelectorHash(q);
-                auto selfHex = selfHash.to_string(HashFormat::Base16, false);
+                auto selfHex = selfHash.toHex();
                 auto obj = resolveIdentity(selfHex, ctx);
                 if (!obj) {
                     tracingCacheLog(
@@ -647,7 +647,7 @@ std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nl
                    cell chain — the callback firing's TracingCallbackArg
                    / ReplayCallbackArg reports the matching hex. */
                 auto selfHash = TracingDecisionGraph::computeSelectorHash(q);
-                auto selfHex = selfHash.to_string(HashFormat::Base16, false);
+                auto selfHex = selfHash.toHex();
                 auto obj = resolveIdentity(selfHex, ctx);
                 if (!obj) {
                     tracingCacheLog(
@@ -722,16 +722,16 @@ TracingReplayEvaluator::lookup(const Q & query, std::shared_ptr<Object> currentP
        Phase F: forward the cell so walker's per-walk state lives on
        cell.qState. Callers with a cell (evalFile/evalExpr root cell,
        apply's applyResult cell) pass it; others pass nullptr. */
-    auto walkResult = walk(selectorHash, std::move(currentProxy), std::move(cell));
+    auto walkResult = walk(selectorHash.toNixHash(), std::move(currentProxy), std::move(cell));
     if (!walkResult)
         return std::nullopt;
     tracingCacheLog("replay hit: %s", Q::tag);
     return std::make_pair(
         walkResult->payload,
         TriePosition{
-            .resultNodeHash = walkResult->resultNodeHash,
-            .queryHashStr = selectorHash.to_string(HashFormat::Base16, false),
-            .factSetHash = walkResult->terminalCur,
+            .resultNodeHash = TracingHash::of(walkResult->resultNodeHash),
+            .queryHashStr = selectorHash.toHex(),
+            .factSetHash = TracingHash::of(walkResult->terminalCur),
         });
 }
 

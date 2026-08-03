@@ -58,7 +58,7 @@ struct TracingHash
     static TracingHash parseHex(std::string_view hex);
 
     /** Truncating conversion from a full nix::Hash (first 16 bytes).
-        Precondition: h.hashSize >= 16. */
+        Precondition: h.hashSize >= 16. Explicit — callers must ask. */
     static TracingHash of(const Hash & h);
 
     /** Reconstruct a full nix::Hash (algo=SHA-256, hashSize=16). Only

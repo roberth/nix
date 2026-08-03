@@ -253,7 +253,7 @@ void TracingCallbackArg::recordObservation(ref<const trace::Selector> query, con
     auto rPayload = jsonToCborString(rJson);
     auto & dg = writer.getDecisionGraph();
     nlohmann::json qJson = trace::toJson(*query);
-    dg.insertRequest(qh, jsonToCborString(qJson));
+    dg.insertRequest(TracingHash::of(qh), jsonToCborString(qJson));
     argCell->callbackState->runningObsSet.push_back({qh, rPayload});
 }
 
@@ -304,7 +304,7 @@ std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> a
         nlohmann::json rJson = std::visit(
             [](const auto & r) -> nlohmann::json { return r; }, qr.result);
         auto rPayload = jsonToCborString(rJson);
-        dg.insertRequest(q->cachedHash, jsonToCborString(trace::toJson(*q)));
+        dg.insertRequest(TracingHash::of(q->cachedHash), jsonToCborString(trace::toJson(*q)));
         layer2Cell->callbackState->runningObsSet.push_back({q->cachedHash, rPayload});
         return qr;
     };
@@ -351,7 +351,7 @@ std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> a
             nlohmann::json rJson = std::visit(
                 [](const auto & r) -> nlohmann::json { return r; }, qr.result);
             auto rPayload = jsonToCborString(rJson);
-            dg.insertRequest(q->cachedHash, jsonToCborString(trace::toJson(*q)));
+            dg.insertRequest(TracingHash::of(q->cachedHash), jsonToCborString(trace::toJson(*q)));
             nestedCell->callbackState->runningObsSet.push_back({q->cachedHash, rPayload});
             return qr;
         };
