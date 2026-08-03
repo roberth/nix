@@ -484,6 +484,60 @@ TEST_F(RequestSetTrieTest, IntersectionPartialOverlap)
     for (size_t i = 30; i < 60; ++i) EXPECT_FALSE(ab->contains(h(i)));
 }
 
+TEST_F(RequestSetTrieTest, UnionSameSetIsSelf)
+{
+    FrozenNodeCache cache;
+    auto a = cache.internSet(hashes(50));
+    EXPECT_EQ(union_(a, a, cache), a);
+}
+
+TEST_F(RequestSetTrieTest, UnionWithEmptyIsSelf)
+{
+    FrozenNodeCache cache;
+    auto a = cache.internSet(hashes(50));
+    auto empty = cache.internSet({});
+    EXPECT_EQ(union_(a, empty, cache), a);
+    EXPECT_EQ(union_(empty, a, cache), a);
+}
+
+TEST_F(RequestSetTrieTest, UnionDisjointCombines)
+{
+    FrozenNodeCache cache;
+    std::vector<Hash> aM, bM;
+    for (size_t i = 0; i < 20; ++i) aM.push_back(h(i));
+    for (size_t i = 100; i < 120; ++i) bM.push_back(h(i));
+    auto a = cache.internSet(aM);
+    auto b = cache.internSet(bM);
+    auto ab = union_(a, b, cache);
+    EXPECT_EQ(ab->size(), 40u);
+    for (size_t i = 0; i < 20; ++i)   EXPECT_TRUE(ab->contains(h(i)));
+    for (size_t i = 100; i < 120; ++i) EXPECT_TRUE(ab->contains(h(i)));
+    EXPECT_FALSE(ab->contains(h(50)));
+}
+
+TEST_F(RequestSetTrieTest, UnionSupersetSubsetIsSuperset)
+{
+    FrozenNodeCache cache;
+    std::vector<Hash> full, sub;
+    for (size_t i = 0; i < 30; ++i) full.push_back(h(i));
+    for (size_t i = 0; i < 10; ++i) sub.push_back(h(i));
+    auto fullN = cache.internSet(full);
+    auto subN  = cache.internSet(sub);
+    EXPECT_EQ(union_(fullN, subN, cache), fullN);
+    EXPECT_EQ(union_(subN, fullN, cache), fullN);
+}
+
+TEST_F(RequestSetTrieTest, UnionCommutative)
+{
+    FrozenNodeCache cache;
+    std::vector<Hash> aM, bM;
+    for (size_t i = 0; i < 40; ++i) aM.push_back(h(i));
+    for (size_t i = 20; i < 60; ++i) bM.push_back(h(i));
+    auto a = cache.internSet(aM);
+    auto b = cache.internSet(bM);
+    EXPECT_EQ(union_(a, b, cache), union_(b, a, cache));
+}
+
 TEST_F(RequestSetTrieTest, IntersectionCommutative)
 {
     FrozenNodeCache cache;

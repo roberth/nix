@@ -223,4 +223,11 @@ bool isSubset(const FrozenNode & a, const FrozenNode & b);
     can be returned by handing back the caller's own reference. */
 FrozenNodePtr intersection(const FrozenNodePtr & a, const FrozenNodePtr & b, FrozenNodeCache & cache);
 
+/** A ∪ B — merged trie. Same-identity short-circuit; otherwise seed
+    a MutableNode from the larger side and insert the smaller side's
+    members. Under CoW MutableNode this preserves all shared subtrees
+    of the larger side that aren't touched by the smaller side's
+    inserts. Named `union_` because `union` is a C++ keyword. */
+FrozenNodePtr union_(const FrozenNodePtr & a, const FrozenNodePtr & b, FrozenNodeCache & cache);
+
 } // namespace nix::trace::rst

@@ -1107,6 +1107,27 @@ TracingDecisionGraph::insertRequestSet(std::vector<RequestHash> members)
 }
 
 TracingDecisionGraph::SetHash
+TracingDecisionGraph::insertRequestSet(trace::rst::FrozenNodePtr node)
+{
+    if (node->size() == 0)
+        return emptySetHash();
+    auto state(_state->lock());
+    trace::rst::FrozenNodeCache::PersistSink sink =
+        [&](const Hash & nodeHash, std::string_view payload) {
+            auto [it, inserted] = state->requestSetNodePayloadCache.try_emplace(
+                nodeHash, std::optional<std::string>{std::string(payload)});
+            if (!inserted)
+                return;
+            state->writeQueue->enqueue(
+                WriteInsertRequestSetNode{nodeHash, std::string(payload)});
+        };
+    state->requestSetTrieCache.persist(node, sink);
+    state->requestSetCache.try_emplace(node->hash,
+        std::optional<std::vector<Hash>>{node->allMembers()});
+    return node->hash;
+}
+
+TracingDecisionGraph::SetHash
 TracingDecisionGraph::insertFactSet(std::vector<Fact> members)
 {
     /* FactSets are not persisted; only the hash is meaningful as a key
@@ -1436,9 +1457,9 @@ void TracingDecisionGraph::insertAskSplitting(
                 return trace::rst::intersection(exNode, remainingNode,
                     state->requestSetTrieCache);
             }();
-            if (sharedNode->size() == 0)
+            auto sharedSize = sharedNode->size();
+            if (sharedSize == 0)
                 continue;
-            auto shared = sharedNode->allMembers();
 
             /* Keep exUseful for the split-shape check + tail
                construction — its size drives whether we do a "shared
@@ -1453,23 +1474,28 @@ void TracingDecisionGraph::insertAskSplitting(
 
             /* Full identity: existing rs is exactly remaining. Nothing
                to insert; signal completion by returning empty remaining. */
-            if (shared.size() == exUseful.size() && shared.size() == remaining.size())
+            if (sharedSize == exUseful.size() && sharedSize == remaining.size())
                 return SplitStep{cur, {}};
 
             /* Fold shared facts into cur → intermediate; partition
-               remaining into consumed vs tailNew. */
-            std::unordered_set<Hash> sharedSet(shared.begin(), shared.end());
+               remaining into consumed vs tailNew. Route membership
+               through sharedNode->contains — the HAMT lookup is
+               O(depth), same complexity as an unordered_set hit but
+               without the intermediate set construction. */
             Hash intermediate = cur;
             std::vector<Fact> tailNew;
-            tailNew.reserve(remaining.size() - shared.size());
+            tailNew.reserve(remaining.size() - sharedSize);
             for (const auto & f : remaining) {
-                if (sharedSet.count(f.request))
+                if (sharedNode->contains(f.request))
                     intermediate = dg_xorHash(intermediate, dg_factElementHash(f.request, f.response));
                 else
                     tailNew.push_back(f);
             }
 
-            auto sharedRsHash = insertRequestSet(shared);
+            /* Persist shared via the trie-native overload — no
+               vector-flatten hop, and the FrozenNode is already
+               interned in the cache. */
+            auto sharedRsHash = insertRequestSet(sharedNode);
 
             /* Split shape:
                - shared < exUseful: existing must be re-anchored — insert
@@ -1481,11 +1507,11 @@ void TracingDecisionGraph::insertAskSplitting(
                  reqs a second time, cancelling them out of cur.
                - shared == exUseful: existing IS the shared prefix;
                  sharedRsHash dedups against it. No re-anchor. */
-            if (shared.size() != exUseful.size()) {
+            if (sharedSize != exUseful.size()) {
                 std::vector<Hash> tail;
-                tail.reserve(exUseful.size() - shared.size());
+                tail.reserve(exUseful.size() - sharedSize);
                 for (const auto & req : exUseful)
-                    if (!sharedSet.count(req))
+                    if (!sharedNode->contains(req))
                         tail.push_back(req);
                 auto tailRsHash = insertRequestSet(tail);
                 insertAsk(q, cur, sharedRsHash);
@@ -1500,7 +1526,7 @@ void TracingDecisionGraph::insertAskSplitting(
                 "(intermediate=%s, sharedRS=%s, exRS=%s)",
                 q.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
                 cur.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
-                shared.size(), exUseful.size(), remaining.size(),
+                sharedSize, exUseful.size(), remaining.size(),
                 intermediate.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
                 sharedRsHash.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
                 exRsHash.to_string(HashFormat::Base16, false).substr(0, 12).c_str());

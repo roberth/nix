@@ -193,6 +193,12 @@ public:
     SetHash insertRequestSet(std::vector<RequestHash> members);
     SetHash insertFactSet(std::vector<Fact> members);
 
+    /* Trie-native overload: persist a FrozenNodePtr already computed
+       via the rst cache (union/intersection/etc.). Skips the
+       vector-flatten hop. The node MUST have been interned in this
+       DG's requestSetTrieCache. */
+    SetHash insertRequestSet(trace::rst::FrozenNodePtr node);
+
     /* XOR-fold one Fact into a running set hash. Used by callers that
        maintain their factSet hash incrementally to avoid the O(N)
        cost of insertFactSet. */

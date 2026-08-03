@@ -686,4 +686,18 @@ FrozenNodePtr intersection(const FrozenNodePtr & a, const FrozenNodePtr & b, Fro
     return cache.internSet(std::move(keep));
 }
 
+FrozenNodePtr union_(const FrozenNodePtr & a, const FrozenNodePtr & b, FrozenNodeCache & cache)
+{
+    if (a->hash == b->hash) return a;
+    /* Seed a MutableNode from the larger side so its whole subtree
+       stays as frozen refs (CoW) — inserting the smaller side's
+       members clones only the paths that actually change. */
+    const FrozenNodePtr & larger  = (a->size() >= b->size()) ? a : b;
+    const FrozenNodePtr & smaller = (a->size() >= b->size()) ? b : a;
+    MutableNode mut(larger);
+    for (const auto & m : smaller->allMembers())
+        mut.insert(m);
+    return mut.freeze(cache);
+}
+
 } // namespace nix::trace::rst
