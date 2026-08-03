@@ -202,6 +202,14 @@ public:
        state->requestSetTrieCache directly (see extendRequestSet). */
     trace::rst::FrozenNodePtr internRequestSet(std::vector<RequestHash> members);
 
+    /* Look up an interned rs by its identity hash without building
+       anything. Since identity = XOR of members, callers who can
+       compute the XOR streaming (without materialising the member
+       vector) can try this first — under matching-until-divergence,
+       many rs identities are reused across chains, and a hit skips
+       the vector build + internSet entirely. */
+    std::optional<trace::rst::FrozenNodePtr> tryFindRequestSet(const Hash & identity);
+
     /* Insert `sortedMembers` (sorted+deduped) into `node`, producing a
        new FrozenNodePtr with `persisted=false` on newly-created nodes.
        Direct on the immutable structure — no MutableNode intermediate,

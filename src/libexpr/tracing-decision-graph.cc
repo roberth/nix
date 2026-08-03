@@ -966,6 +966,13 @@ TracingDecisionGraph::internRequestSet(std::vector<RequestHash> members)
     return state->requestSetTrieCache.internSet(std::move(members));
 }
 
+std::optional<trace::rst::FrozenNodePtr>
+TracingDecisionGraph::tryFindRequestSet(const Hash & identity)
+{
+    auto state(_state->lock());
+    return state->requestSetTrieCache.lookup(identity);
+}
+
 trace::rst::FrozenNodePtr
 TracingDecisionGraph::insertSortedMembers(
     const trace::rst::FrozenNodePtr & node,
@@ -1355,12 +1362,25 @@ void TracingDecisionGraph::insertAskSplitting(
                - shared == exUseful: existing IS the shared prefix;
                  sharedRsHash dedups against it. No re-anchor. */
             if (sharedSize != exUseful.size()) {
-                std::vector<Hash> tail;
-                tail.reserve(exUseful.size() - sharedSize);
+                /* Compute the tail's XOR-identity streaming so we can
+                   cache-lookup without materialising the tail vector.
+                   Under matching-until-divergence the same tail
+                   identity shows up across splits and hits often. */
+                Hash tailXor = emptySetHash();
                 for (const auto & req : exUseful)
                     if (!sharedNode->contains(req))
-                        tail.push_back(req);
-                auto tailRsHash = insertRequestSet(internRequestSet(std::move(tail)));
+                        for (size_t i = 0; i < tailXor.hashSize; ++i)
+                            tailXor.hash[i] ^= req.hash[i];
+                auto tailNode = tryFindRequestSet(tailXor);
+                if (!tailNode) {
+                    std::vector<Hash> tail;
+                    tail.reserve(exUseful.size() - sharedSize);
+                    for (const auto & req : exUseful)
+                        if (!sharedNode->contains(req))
+                            tail.push_back(req);
+                    tailNode = internRequestSet(std::move(tail));
+                }
+                auto tailRsHash = insertRequestSet(*tailNode);
                 insertAsk(q, cur, sharedRsHash);
                 insertAsk(q, intermediate, tailRsHash, edge.altRequestSet);
                 removeAsk(q, cur, exRsHash);
@@ -1395,10 +1415,19 @@ void TracingDecisionGraph::insertAskSplitting(
        edge, preserving alt. Empty remaining = nothing to insert. */
     if (remaining.empty())
         return;
-    std::vector<Hash> newReqs;
-    newReqs.reserve(remaining.size());
-    for (const auto & f : remaining) newReqs.push_back(f.request);
-    auto newRsHash = insertRequestSet(internRequestSet(std::move(newReqs)));
+    /* XOR-first-lookup fast path. */
+    Hash newXor = emptySetHash();
+    for (const auto & f : remaining)
+        for (size_t i = 0; i < newXor.hashSize; ++i)
+            newXor.hash[i] ^= f.request.hash[i];
+    auto newNode = tryFindRequestSet(newXor);
+    if (!newNode) {
+        std::vector<Hash> newReqs;
+        newReqs.reserve(remaining.size());
+        for (const auto & f : remaining) newReqs.push_back(f.request);
+        newNode = internRequestSet(std::move(newReqs));
+    }
+    auto newRsHash = insertRequestSet(*newNode);
     insertAsk(q, cur, newRsHash, alt);
 }
 

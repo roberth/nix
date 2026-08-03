@@ -195,23 +195,42 @@ private:
                replacement, build a companion alt rs with the pre-canonical
                req substituted. Walker's one-shot fallback lets replay
                reach cross-session recordings that used the pre-canonical
-               shape. See main doc's canonicalisation note, record side. */
+               shape. See main doc's canonicalisation note, record side.
+
+               First pass computes the alt rs's identity (XOR of the
+               substituted request hashes) streaming — no vector alloc.
+               If the identity is already in the trie cache we skip the
+               vector build entirely. Under matching-until-divergence
+               and heavy rs-reuse, the fast path fires often. */
             std::optional<Hash> altRequestSetHash;
-            std::vector<Hash> altReqHashes;
-            altReqHashes.reserve(factList.size());
+            Hash altXor = trace::tracingZeroHash();
             bool anySubstituted = false;
             for (const auto & f : factList) {
                 auto it = canonicalReplacements.find(f.request);
+                Hash req = f.request;
                 if (it != canonicalReplacements.end()) {
-                    altReqHashes.push_back(it->second);
+                    req = it->second;
                     anySubstituted = true;
-                } else {
-                    altReqHashes.push_back(f.request);
                 }
+                for (size_t i = 0; i < altXor.hashSize; ++i)
+                    altXor.hash[i] ^= req.hash[i];
             }
-            if (anySubstituted)
-                altRequestSetHash = decisionGraph.insertRequestSet(
-                    decisionGraph.internRequestSet(std::move(altReqHashes)));
+            if (anySubstituted) {
+                trace::rst::FrozenNodePtr altNode = [&] {
+                    if (auto existing = decisionGraph.tryFindRequestSet(altXor))
+                        return *existing;
+                    /* Miss: materialise the vector and intern. */
+                    std::vector<Hash> altReqHashes;
+                    altReqHashes.reserve(factList.size());
+                    for (const auto & f : factList) {
+                        auto it = canonicalReplacements.find(f.request);
+                        altReqHashes.push_back(
+                            it != canonicalReplacements.end() ? it->second : f.request);
+                    }
+                    return decisionGraph.internRequestSet(std::move(altReqHashes));
+                }();
+                altRequestSetHash = decisionGraph.insertRequestSet(altNode);
+            }
 
             decisionGraph.insertAskSplitting(
                 selectorHash, cur, factList, dispatchedSoFar, altRequestSetHash);
