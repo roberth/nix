@@ -519,6 +519,79 @@ TEST_F(RequestSetTrieTest, IncrementalInsertAndFreezeReusesUnchangedSubtrees)
            "freeze isn't reusing unchanged subtrees";
 }
 
+/* ─────────────────────────────────────────────────────────────────────
+   Persistence
+   ───────────────────────────────────────────────────────────────────── */
+
+TEST_F(RequestSetTrieTest, PersistWalksTreeAndEnqueuesEachNodeOnce)
+{
+    FrozenNodeCache cache;
+    auto root = cache.internSet(hashes(200));
+    ASSERT_FALSE(root->isLeaf());
+    /* Count nodes in the tree by walking. */
+    size_t treeNodes = 0;
+    auto count = [&](const FrozenNode & n, auto & self) -> void {
+        ++treeNodes;
+        if (!n.isLeaf())
+            for (const auto & [_, c] : n.asInternal().children)
+                self(*c, self);
+    };
+    count(*root, count);
+
+    /* Capture what would be sent to the DB writer. */
+    std::vector<std::pair<Hash, std::string>> writes;
+    auto sink = [&](const Hash & h, std::string_view p) { writes.emplace_back(h, std::string(p)); };
+
+    cache.persist(root, sink);
+
+    EXPECT_EQ(writes.size(), treeNodes)
+        << "each tree node should be persisted exactly once";
+
+    /* Every node reports as persisted afterward. */
+    auto verifyAllPersisted = [&](const FrozenNode & n, auto & self) -> void {
+        EXPECT_TRUE(n.persisted);
+        if (!n.isLeaf())
+            for (const auto & [_, c] : n.asInternal().children)
+                self(*c, self);
+    };
+    verifyAllPersisted(*root, verifyAllPersisted);
+
+    /* Second persist call is a no-op — persisted=true short-circuits. */
+    writes.clear();
+    cache.persist(root, sink);
+    EXPECT_TRUE(writes.empty())
+        << "already-persisted tree should not re-enqueue any writes";
+}
+
+TEST_F(RequestSetTrieTest, PersistIncrementalOnlyEnqueuesNewSubtrees)
+{
+    FrozenNodeCache cache;
+    /* Freeze + persist a 100-member tree. */
+    auto rootA = cache.internSet(hashes(100));
+    std::vector<Hash> writeHashes;
+    auto sink = [&](const Hash & h, std::string_view) { writeHashes.push_back(h); };
+    cache.persist(rootA, sink);
+    auto persistedBefore = writeHashes.size();
+
+    /* Extend to 105 members via a MutableNode COW from the frozen root. */
+    MutableNode mut(rootA);
+    for (uint64_t i = 100; i < 105; ++i) mut.insert(h(i));
+    auto rootB = mut.freeze(cache);
+
+    /* Persist rootB. Only newly-created subtrees should be enqueued —
+       unchanged subtrees (still bit-identical to rootA's children)
+       were already persisted, so their FrozenNodePtr's `persisted` is
+       true and the walk skips them. */
+    writeHashes.clear();
+    cache.persist(rootB, sink);
+    auto persistedIncremental = writeHashes.size();
+
+    EXPECT_GT(persistedIncremental, 0u)
+        << "some new subtrees should be persisted";
+    EXPECT_LT(persistedIncremental, persistedBefore)
+        << "incremental persist must not rewrite the whole tree";
+}
+
 TEST_F(RequestSetTrieTest, MutableInsertCrossesLeafThreshold)
 {
     FrozenNodeCache cache;

@@ -26,6 +26,7 @@
 #include "nix/util/hash.hh"
 
 #include <array>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -67,6 +68,13 @@ public:
 
     std::variant<Leaf, Internal> body;
     Hash hash{HashAlgorithm::SHA256};
+
+    /** True once the payload has been enqueued to the persistence
+        sink. Morally immutable — mutated only by `FrozenNodeCache::persist`
+        as a bookkeeping bit. Authoritative: `persisted=true` means
+        the sink has (or will) receive the write; the persist walk
+        skips such subtrees. */
+    mutable bool persisted = false;
 
     bool isLeaf() const noexcept { return std::holds_alternative<Leaf>(body); }
     const Leaf & asLeaf() const { return std::get<Leaf>(body); }
@@ -124,6 +132,16 @@ public:
         payload-and-hash operations). Used by tests to prove that
         freeze reuses unchanged subtrees. */
     size_t internAttempts() const noexcept { return internAttemptCount; }
+
+    /** Walk `root` and its subtrees; for each node with `persisted=false`,
+        call `sink(hash, payload)` and flip `persisted=true`. Already-
+        persisted subtrees short-circuit — the walk skips them entirely.
+        Post-order traversal, so children are enqueued before their
+        parent (matches TrieBuilder::persistTree semantics; readers
+        that walk internal nodes' child refs find them already
+        persisted). */
+    using PersistSink = std::function<void(const Hash &, std::string_view)>;
+    void persist(const FrozenNodePtr & root, const PersistSink & sink);
 
 private:
     std::unordered_map<Hash, FrozenNodePtr> byHash;

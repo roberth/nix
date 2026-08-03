@@ -195,6 +195,22 @@ FrozenNodePtr FrozenNodeCache::internInternal(std::vector<std::pair<uint8_t, Fro
     return node;
 }
 
+void FrozenNodeCache::persist(const FrozenNodePtr & root, const PersistSink & sink)
+{
+    if (!root || root->persisted)
+        return;
+    auto walk = [&](const FrozenNode & n, auto & self) -> void {
+        if (n.persisted)
+            return;
+        if (!n.isLeaf())
+            for (const auto & [_, child] : n.asInternal().children)
+                self(*child, self);
+        sink(n.hash, n.toPayload());
+        n.persisted = true;
+    };
+    walk(*root, walk);
+}
+
 FrozenNodePtr FrozenNodeCache::internSet(std::vector<Hash> members)
 {
     auto sorted = sortAndDedup(std::move(members));
