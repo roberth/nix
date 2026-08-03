@@ -120,9 +120,11 @@ struct ArgCell : std::enable_shared_from_this<ArgCell>
         walker can reach cheaply.
 
         `barrierAtRecord` snapshots writer.peekBarrier() at Q's
-        record moment. A child Q's structural delta chain includes
-        only facts with barrier > barrierAtRecord — facts folded
-        into parent's terminalCur are excluded, avoiding XOR-cancel.
+        record moment; `epochAtRecord` snapshots the cell's
+        canonicalisationEpoch. A child Q's structural delta chain
+        includes only facts with barrier >= barrierAtRecord — facts
+        folded into parent's terminalCur are excluded, avoiding
+        XOR-cancel.
 
         Lives on the cell (not global) because the same Selector on
         different argument cells resolves to different terminalCurs.
@@ -132,8 +134,32 @@ struct ArgCell : std::enable_shared_from_this<ArgCell>
     {
         TracingDecisionGraph::SetHash terminalCur;
         uint64_t barrierAtRecord;
+        uint64_t epochAtRecord;
     };
     mutable std::map<Hash, FirstTerminalRecord> firstTerminalCurs;
+
+    /** Bumped on every removeFact call. FirstTerminalRecord captures
+        the aggregate ancestry epoch (see canonicalisationEpochChain)
+        at record time; a mismatch on lookup signals a canonicalisation
+        happened between record and now on this cell OR any ancestor,
+        so the recorded terminalCur no longer aligns with the current
+        cell factset and a barrier-based delta can't reconstruct the
+        removed fact's XOR contribution. Structural chain skips in
+        that case; the ∅-chain fallback keeps correctness. */
+    mutable uint64_t canonicalisationEpoch = 0;
+
+    /** Sum of canonicalisationEpoch over this cell + all ancestors.
+        Cheap: O(depth) walk. Since delta chains fold facts from cell
+        and ancestors, ANY ancestor removeFact invalidates the delta —
+        checking only the child cell's epoch would miss ancestor
+        canonicalisation events. */
+    uint64_t canonicalisationEpochChain() const
+    {
+        uint64_t sum = canonicalisationEpoch;
+        for (auto c = parent.get(); c; c = c->parent.get())
+            sum += c->canonicalisationEpoch;
+        return sum;
+    }
 
     /** Insert a (request, response) fact with an optional barrier
         stamp. Idempotent per request key (first stamp wins).
@@ -155,7 +181,8 @@ struct ArgCell : std::enable_shared_from_this<ArgCell>
         (with the intersected obsSet), and the old one is removed. */
     void removeFact(const Hash & reqHash) const
     {
-        facts.erase(reqHash);
+        if (facts.erase(reqHash))
+            ++canonicalisationEpoch;
     }
 
     /** Cumulative factset visible from this cell: own facts XOR-folded

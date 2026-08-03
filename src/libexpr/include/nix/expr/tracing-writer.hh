@@ -285,39 +285,39 @@ private:
             }, (**sel).node);
             if (parentHash) {
                 auto it = cell->firstTerminalCurs.find(*parentHash);
-                if (it != cell->firstTerminalCurs.end()) {
+                if (it != cell->firstTerminalCurs.end()
+                    && it->second.epochAtRecord == cell->canonicalisationEpochChain())
+                {
+                    /* Epoch matches — no canonicalisation-driven fact
+                       removal on this cell or any ancestor since
+                       parent's record. Now verify the delta actually
+                       folds cleanly. XOR-CANCEL RISK (see below):
+                       when the same req appears in multiple cells,
+                       cell.factSetHash XORs it once per occurrence
+                       (cancelling in pairs), but our deltaFacts map
+                       stores each req once — the fold arithmetic
+                       diverges. Sanity check catches those cases. */
                     std::map<Hash, std::pair<uint64_t, Hash>> deltaFacts;
                     for (auto c = cell.get(); c; c = c->parent.get())
                         for (auto & [req, entry] : c->facts)
                             if (entry.barrier >= it->second.barrierAtRecord)
                                 deltaFacts.try_emplace(req, entry.barrier, entry.response);
-                    /* Sanity check: delta chain must fold from parent's
-                       terminalCur to cell.factSetHash() (this Q's terminalCur).
-                       If not, canonicalisation (tryStateCreepCanonicalise)
-                       likely removed a fact between parent's write and
-                       here — barrier-based delta can't reconstruct that
-                       removal. Skip the structural chain in that case so
-                       the ∅-chain path fires as fallback. */
                     Hash simulated = it->second.terminalCur;
                     for (auto & [req, br_resp] : deltaFacts)
                         simulated = TracingDecisionGraph::xorFactIntoHash(
                             simulated, req, br_resp.second);
-                    Hash finalCur = cell->factSetHash();
-                    if (simulated == finalCur) {
+                    if (simulated == cell->factSetHash()) {
                         if (!deltaFacts.empty())
                             insertBarrieredChain(selectorHash,
                                 it->second.terminalCur, deltaFacts);
-                        /* deltaFacts empty and simulated == finalCur
-                           means parent's terminalCur = this Q's terminal
-                           — Terminal write below sits at parent's
-                           terminalCur, walker finds it directly. */
                         structuralInserted = true;
-                    } else {
-                        tracingCacheLog("structural chain skipped: delta doesn't reach cell.factSetHash() (%s vs %s), falling back to ∅-chain",
-                            simulated.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
-                            finalCur.to_string(HashFormat::Base16, false).substr(0, 12).c_str());
                     }
                 }
+                /* Otherwise (parent not on this cell, canonicalisation
+                   happened, or XOR-cancel divergence): fall through to
+                   ∅-chain. Follow-up work: re-record parent's chain
+                   fresh from current cell state so structural chains
+                   for later child Qs on this cell become usable again. */
             }
         }
 
@@ -543,7 +543,8 @@ public:
             /* task 1a: record oldest terminalCur per Selector on the
                cell so descendant Qs can anchor structural chains here. */
             cell->firstTerminalCurs.try_emplace(qh.raw,
-                ArgCell::FirstTerminalRecord{terminalCur, peekBarrier()});
+                ArgCell::FirstTerminalRecord{terminalCur, peekBarrier(),
+                    cell->canonicalisationEpochChain()});
         }
         decisionGraph.insertTerminal(qh.raw, terminalCur, resultNodeHash);
         tracingCacheLog(
@@ -685,7 +686,8 @@ public:
             /* task 1a: record oldest terminalCur per Selector on the
                cell so descendant Qs can anchor structural chains here. */
             cell->firstTerminalCurs.try_emplace(finalQ,
-                ArgCell::FirstTerminalRecord{terminalCur, peekBarrier()});
+                ArgCell::FirstTerminalRecord{terminalCur, peekBarrier(),
+                    cell->canonicalisationEpochChain()});
         }
         decisionGraph.insertTerminal(finalQ, terminalCur, resultNodeHash);
 
