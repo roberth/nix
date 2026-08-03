@@ -355,53 +355,9 @@ public:
         const SetHash & startCur = trace::tracingZeroHash());
 
     /* Persist one trie node by hash. Idempotent (INSERT OR IGNORE +
-       in-process cache short-circuit). Used by TrieBuilder to push
-       its dirty nodes to storage. */
+       in-process cache short-circuit). Called from the request-set
+       trie's persist walk (see request-set-trie.hh). */
     void persistRequestSetNode(const Hash & nodeHash, std::string_view payload);
-
-    /* ─────────────────────────────────────────────────────────────────
-       Incremental RequestSet builder
-       ─────────────────────────────────────────────────────────────────
-
-       Maintains an in-memory hash-prefix trie that grows by one
-       Request hash at a time. Used by TracingWriter to keep a
-       running canonical RequestSet hash for the global envFactSet's
-       requests without paying O(N) per logResult.
-
-       Insertion is O(log N) amortised — one path-copy from leaf to
-       root, with a split at the leaf if it would exceed
-       TRIE_SPLIT_THRESHOLD. The root hash is computed lazily and
-       cached; calling rootHash() after a mutation re-walks only the
-       dirty path.
-
-       persist(decisionGraph) flushes any unpersisted nodes into the
-       RequestSetNodes pool. Subsequent reads of the same root hash
-       via getRequestSet() will see the trie via the existing
-       per-node payload cache. */
-    class TrieBuilder
-    {
-    public:
-        TrieBuilder();
-        ~TrieBuilder();
-
-        TrieBuilder(const TrieBuilder &) = delete;
-        TrieBuilder & operator=(const TrieBuilder &) = delete;
-
-        /* Insert one Request hash into the trie. Duplicate inserts
-           are no-ops. */
-        void insert(const Hash & request);
-
-        /* Push any unpersisted nodes into the RequestSetNodes pool.
-           Idempotent. */
-        void persist(TracingDecisionGraph & g);
-
-        /* Forward-declared so static helpers in the .cc can name the
-           type; defined in the .cc. */
-        struct Node;
-
-    private:
-        std::unique_ptr<Node> root;
-    };
 
     /* ─────────────────────────────────────────────────────────────────
        Maintenance
