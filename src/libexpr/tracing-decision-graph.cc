@@ -1208,6 +1208,54 @@ TracingDecisionGraph::getRequestSet(const SetHash & h)
     return std::optional{std::move(members)};
 }
 
+std::optional<trace::rst::FrozenNodePtr>
+TracingDecisionGraph::getRequestSetNode(const SetHash & h)
+{
+    /* Empty set: return the empty leaf (interned in the shared cache). */
+    if (h == emptySetHash()) {
+        auto state(_state->lock());
+        return state->requestSetTrieCache.internLeaf({});
+    }
+    auto state(_state->lock());
+    /* Quick hit: node already in the trie cache. */
+    if (auto existing = state->requestSetTrieCache.lookup(h))
+        return *existing;
+    /* Load top-down: fetch our payload, recursively load children (so
+       they're interned before we intern ourselves — required by
+       FrozenNodeCache::intern's contract). */
+    std::function<std::optional<trace::rst::FrozenNodePtr>(const Hash &)> loadNode;
+    loadNode = [&](const Hash & nodeHash) -> std::optional<trace::rst::FrozenNodePtr> {
+        if (auto existing = state->requestSetTrieCache.lookup(nodeHash))
+            return *existing;
+        /* Fetch payload from the payload cache (populated on write) or
+           from SQLite. Duplicates getRequestSetNodePayload's logic but
+           without releasing the state lock — we hold it throughout the
+           top-down walk so the load-then-intern is atomic. */
+        std::optional<std::string> payload;
+        if (auto it = state->requestSetNodePayloadCache.find(nodeHash);
+            it != state->requestSetNodePayloadCache.end())
+            payload = it->second;
+        else {
+            auto query = state->selectRequestSetNode.use();
+            dg_bindBlob(query, dg_hashToBlob(nodeHash));
+            if (query.next())
+                payload = query.getBlob(0);
+            state->requestSetNodePayloadCache.emplace(nodeHash, payload);
+        }
+        if (!payload)
+            return std::nullopt;
+        /* Recursively load children if internal. */
+        if (!payload->empty() && (*payload)[0] == 0x01) {
+            auto parsed = dg_parseTrieNode(*payload);
+            for (const auto & [_, childHash] : parsed.children)
+                if (!loadNode(childHash))
+                    return std::nullopt;
+        }
+        return state->requestSetTrieCache.intern(nodeHash, *payload);
+    };
+    return loadNode(h);
+}
+
 std::optional<std::vector<TracingDecisionGraph::Fact>>
 TracingDecisionGraph::getFactSet(const SetHash & h)
 {

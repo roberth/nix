@@ -22,7 +22,10 @@
 
 #include "nix/expr/trace-types.hh"
 #include "nix/util/hash.hh"
+#include "nix/util/ref.hh"
 #include "nix/util/sync.hh"
+
+namespace nix::trace::rst { class FrozenNode; using FrozenNodePtr = nix::ref<const FrozenNode>; }
 
 #include <nlohmann/json.hpp>
 
@@ -213,6 +216,13 @@ public:
        hash isn't in the pool. */
     std::optional<std::vector<RequestHash>> getRequestSet(const SetHash & h);
     std::optional<std::vector<Fact>> getFactSet(const SetHash & h);
+
+    /* Read a RequestSet as an interned FrozenNodePtr. Loads the trie
+       top-down (children before parents) so future intersection/
+       difference/isSubset calls against related sets can short-circuit
+       at shared subtrees. Returns nullopt if the root hash isn't in
+       the pool. */
+    std::optional<trace::rst::FrozenNodePtr> getRequestSetNode(const SetHash & h);
 
     /* Useful dispatch: the subset of an edge's requestSet whose
        Responses aren't already in cur's facts. This is what record()
