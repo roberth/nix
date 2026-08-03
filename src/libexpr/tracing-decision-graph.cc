@@ -1288,13 +1288,20 @@ void TracingDecisionGraph::insertAskSplitting(
         [&](const SetHash & cur, const std::vector<Fact> & remaining) -> std::optional<SplitStep>
     {
         /* Build remainingNode once per trySplitOne call. remaining is
-           a barrier group's members — typically small. */
-        std::vector<Hash> remainingReqsVec;
-        remainingReqsVec.reserve(remaining.size());
-        for (const auto & f : remaining) remainingReqsVec.push_back(f.request);
+           a barrier group's members — typically small. XOR-first-lookup
+           skips the vector build when the identity's already in the
+           cache (heavy reuse under matching-until-divergence). */
+        Hash remainingXor = emptySetHash();
+        for (const auto & f : remaining)
+            for (size_t i = 0; i < remainingXor.hashSize; ++i)
+                remainingXor.hash[i] ^= f.request.hash[i];
         trace::rst::FrozenNodePtr remainingNode = [&] {
-            auto state(_state->lock());
-            return state->requestSetTrieCache.internSet(std::move(remainingReqsVec));
+            if (auto existing = tryFindRequestSet(remainingXor))
+                return *existing;
+            std::vector<Hash> vec;
+            vec.reserve(remaining.size());
+            for (const auto & f : remaining) vec.push_back(f.request);
+            return internRequestSet(std::move(vec));
         }();
 
         for (const auto & edge : getAsks(q, cur)) {
