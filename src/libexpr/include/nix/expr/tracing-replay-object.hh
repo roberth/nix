@@ -111,6 +111,12 @@ public:
 
     std::optional<std::string> getSelectorHashHex() const override { return triePos.queryHashStr; }
 
+    /** Read-only accessor for the walker's structural-anchor fallback:
+        triePos.factSetHash is this proxy's terminalCur, which serves
+        as the startCur candidate for child-Q walks that anchored their
+        structural landing chain there. */
+    const TriePosition & getTriePos() const { return triePos; }
+
     std::shared_ptr<Object> maybeGetAttr(const std::string & name) override;
     std::vector<std::string> getAttrNames() override;
     std::string getStringIgnoreContext() override;

@@ -246,13 +246,38 @@ TracingReplayEvaluator::walk(
             else commitRejected(useful);
         },
         cellAnchor);
-    /* #187 fallback: if cell-anchored walk misses AND cellAnchor ≠ ∅,
-       retry from ∅. Under barrier-based Ask insertion the writer's
-       chain starts at ∅; walker at parent.terminalCur may not find
-       any Ask edge there. Wrong-hit potential from batched dispatch
-       is closed by the barrier design — each per-probe barrier
-       validates its response live, so a divergent scenario misses
-       at the divergent probe's edge. */
+    /* Task 237: structural-anchor try. If cell-anchor missed, and the
+       walker was invoked with a currentProxy that is a TracingReplayObject,
+       its triePos.factSetHash is the parent-Q's terminalCur (per
+       WalkResult docs). The writer's structural landing chain
+       (tracing-writer.hh insertBarrieredAskChain) inserts Asks under
+       (child.selectorHash, parent.terminalCur); trying that startCur
+       lets the walker reach the structural chain without a full
+       ∅-fallback traversal, and enables task 1b (retiring the ∅-chain
+       for getter-parent-getter cases). */
+    if (!walkHit && ctx.currentProxy) {
+        if (auto tro = std::dynamic_pointer_cast<TracingReplayObject>(ctx.currentProxy)) {
+            auto structuralAnchor = tro->getTriePos().factSetHash;
+            if (structuralAnchor != cellAnchor
+                && structuralAnchor != TracingDecisionGraph::emptySetHash()) {
+                tracingCacheLog("walk fallback: retrying at parent-TRO structural anchor %s",
+                                structuralAnchor.to_string(HashFormat::Base16, false).substr(0, 12).c_str());
+                pendingEdgeObservations.clear();
+                rejectedObs.clear();
+                walkHit = decisionGraph.walk(selectorHash, dispatch,
+                    [&](bool committed, const std::vector<Hash> & useful) {
+                        if (committed) commitEdge();
+                        else commitRejected(useful);
+                    },
+                    structuralAnchor);
+            }
+        }
+    }
+    /* #187 fallback: if cell-anchored + structural-anchor walks missed,
+       retry from ∅. Wrong-hit potential from batched dispatch is
+       closed by the barrier design — each per-probe barrier validates
+       its response live, so a divergent scenario misses at the
+       divergent probe's edge. */
     if (!walkHit && cellAnchor != TracingDecisionGraph::emptySetHash()) {
         tracingCacheLog("walk fallback: retrying from ∅");
         pendingEdgeObservations.clear();

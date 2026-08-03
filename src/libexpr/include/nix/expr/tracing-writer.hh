@@ -249,42 +249,21 @@ private:
                             req.to_string(HashFormat::Base16, false).substr(0, 12).c_str());
         }
 
-        /* Full chain: cell + ancestors, from ∅. */
-        std::map<Hash, std::pair<uint64_t, Hash>> allFacts;
-        for (auto c = cell.get(); c; c = c->parent.get())
-            for (auto & [req, entry] : c->facts)
-                allFacts.try_emplace(req, entry.barrier, entry.response);
-        insertBarrieredChain(selectorHash,
-            TracingDecisionGraph::emptySetHash(), allFacts);
+        /* Structural chain (task 1a, task 1b enabler): if this
+           Selector is a getter whose parent is also a getter recorded
+           on this cell, insert a delta chain anchored at parent's
+           OLDEST terminalCur (only facts with barrier > parent's
+           barrierAtRecord). Walker's structural-anchor fallback
+           (task 237) will start at parent-TRO's terminalCur when the
+           cell-anchor walk misses, hitting this chain.
 
-        /* Cell-topology delta chain: cell's own facts from
-           parent.terminalCur. Complements the structural chain below
-           — this covers callback-firing nesting where the
-           structural-parent isn't on the same cell. */
-        if (cell->parent && !cell->facts.empty()) {
-            std::map<Hash, std::pair<uint64_t, Hash>> ownFacts;
-            for (auto & [req, entry] : cell->facts)
-                ownFacts.try_emplace(req, entry.barrier, entry.response);
-            auto parentCur = cell->parent->factSetHash();
-            insertBarrieredChain(selectorHash, parentCur, ownFacts);
-        }
-
-        /* Structural chain (task 1a): pure-getter chain case. If this
-           Selector is a getter (getAttr/getListElem) whose parent is
-           also a getter recorded on this cell, insert a delta chain
-           from parent's oldest terminalCur, folding only facts added
-           after parent's record moment (barrier > barrierAtRecord).
-
-           Additive: the ∅-chain remains, so a walker that isn't already
-           at parent's terminal can still bootstrap from ∅. On big
-           NixOS workloads dropping the ∅-chain when structural fires
-           (task 1b, WIP) cuts Ask count ~60% and cold time ~6x but
-           regresses warm-DISALLOW on real NixOS — walker's trace-
-           continuing isn't yet robust enough to always be at parent's
-           terminal when starting a child's walk.
+           When it fires, we skip the ∅-chain and the cell-topology
+           delta chain — they'd duplicate this coverage under the
+           walker's new anchor sequence.
 
            Limited to getter→getter to avoid cross-cell interactions
            at Apply/CallbackApply boundaries. */
+        bool structuralInserted = false;
         if (auto sel = decisionGraph.selectorPool.find(selectorHash)) {
             std::optional<Hash> parentHash;
             std::visit(overloaded{
@@ -310,12 +289,56 @@ private:
                     std::map<Hash, std::pair<uint64_t, Hash>> deltaFacts;
                     for (auto c = cell.get(); c; c = c->parent.get())
                         for (auto & [req, entry] : c->facts)
-                            if (entry.barrier > it->second.barrierAtRecord)
+                            if (entry.barrier >= it->second.barrierAtRecord)
                                 deltaFacts.try_emplace(req, entry.barrier, entry.response);
-                    if (!deltaFacts.empty())
-                        insertBarrieredChain(selectorHash,
-                            it->second.terminalCur, deltaFacts);
+                    /* Sanity check: delta chain must fold from parent's
+                       terminalCur to cell.factSetHash() (this Q's terminalCur).
+                       If not, canonicalisation (tryStateCreepCanonicalise)
+                       likely removed a fact between parent's write and
+                       here — barrier-based delta can't reconstruct that
+                       removal. Skip the structural chain in that case so
+                       the ∅-chain path fires as fallback. */
+                    Hash simulated = it->second.terminalCur;
+                    for (auto & [req, br_resp] : deltaFacts)
+                        simulated = TracingDecisionGraph::xorFactIntoHash(
+                            simulated, req, br_resp.second);
+                    Hash finalCur = cell->factSetHash();
+                    if (simulated == finalCur) {
+                        if (!deltaFacts.empty())
+                            insertBarrieredChain(selectorHash,
+                                it->second.terminalCur, deltaFacts);
+                        /* deltaFacts empty and simulated == finalCur
+                           means parent's terminalCur = this Q's terminal
+                           — Terminal write below sits at parent's
+                           terminalCur, walker finds it directly. */
+                        structuralInserted = true;
+                    } else {
+                        tracingCacheLog("structural chain skipped: delta doesn't reach cell.factSetHash() (%s vs %s), falling back to ∅-chain",
+                            simulated.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
+                            finalCur.to_string(HashFormat::Base16, false).substr(0, 12).c_str());
+                    }
                 }
+            }
+        }
+
+        if (!structuralInserted) {
+            /* Full chain: cell + ancestors, from ∅. */
+            std::map<Hash, std::pair<uint64_t, Hash>> allFacts;
+            for (auto c = cell.get(); c; c = c->parent.get())
+                for (auto & [req, entry] : c->facts)
+                    allFacts.try_emplace(req, entry.barrier, entry.response);
+            insertBarrieredChain(selectorHash,
+                TracingDecisionGraph::emptySetHash(), allFacts);
+
+            /* Cell-topology delta chain: cell's own facts from
+               parent.terminalCur. Covers callback-firing nesting where
+               the structural-parent isn't on the same cell. */
+            if (cell->parent && !cell->facts.empty()) {
+                std::map<Hash, std::pair<uint64_t, Hash>> ownFacts;
+                for (auto & [req, entry] : cell->facts)
+                    ownFacts.try_emplace(req, entry.barrier, entry.response);
+                auto parentCur = cell->parent->factSetHash();
+                insertBarrieredChain(selectorHash, parentCur, ownFacts);
             }
         }
     }
