@@ -1268,10 +1268,21 @@ void TracingDecisionGraph::insertAskSplitting(
        any split the alt is dropped (the row's identity changes). */
     auto alt = alt_in;
 
+    /* Track remaining's XOR-identity incrementally across split steps.
+       Compute it once now over the initial facts; each successful
+       split subtracts the consumed reqs' XOR from it (XOR is
+       self-inverse). Avoids re-folding remaining every trySplitOne
+       call. */
+    Hash remainingXor = emptySetHash();
+    for (const auto & f : remaining)
+        for (size_t i = 0; i < remainingXor.hashSize; ++i)
+            remainingXor.hash[i] ^= f.request.hash[i];
+
     struct SplitStep
     {
         Hash newCur;
         std::vector<Fact> remainingAfterConsume;
+        Hash remainingXorAfterConsume;
     };
 
     /* trySplitOne: find an overlap between remaining and an existing
@@ -1285,16 +1296,13 @@ void TracingDecisionGraph::insertAskSplitting(
        intersection collapses to shared subtree pointers rather than
        walking every member. */
     auto trySplitOne =
-        [&](const SetHash & cur, const std::vector<Fact> & remaining) -> std::optional<SplitStep>
+        [&](const SetHash & cur,
+            const std::vector<Fact> & remaining,
+            const Hash & remainingXor) -> std::optional<SplitStep>
     {
-        /* Build remainingNode once per trySplitOne call. remaining is
-           a barrier group's members — typically small. XOR-first-lookup
-           skips the vector build when the identity's already in the
-           cache (heavy reuse under matching-until-divergence). */
-        Hash remainingXor = emptySetHash();
-        for (const auto & f : remaining)
-            for (size_t i = 0; i < remainingXor.hashSize; ++i)
-                remainingXor.hash[i] ^= f.request.hash[i];
+        /* XOR-first-lookup: skip the vector build when remainingNode's
+           identity is already cached (heavy reuse under matching-until-
+           divergence). */
         trace::rst::FrozenNodePtr remainingNode = [&] {
             if (auto existing = tryFindRequestSet(remainingXor))
                 return *existing;
@@ -1336,22 +1344,33 @@ void TracingDecisionGraph::insertAskSplitting(
             /* Full identity: existing rs is exactly remaining. Nothing
                to insert; signal completion by returning empty remaining. */
             if (sharedSize == exUseful.size() && sharedSize == remaining.size())
-                return SplitStep{cur, {}};
+                return SplitStep{cur, {}, emptySetHash()};
 
             /* Fold shared facts into cur → intermediate; partition
                remaining into consumed vs tailNew. Route membership
                through sharedNode->contains — the HAMT lookup is
                O(depth), same complexity as an unordered_set hit but
-               without the intermediate set construction. */
+               without the intermediate set construction.
+
+               Accumulate consumed reqs' XOR into consumedXor as we
+               go, so the next outer iteration inherits an incremental
+               remainingXor without re-folding. */
             Hash intermediate = cur;
+            Hash consumedXor = emptySetHash();
             std::vector<Fact> tailNew;
             tailNew.reserve(remaining.size() - sharedSize);
             for (const auto & f : remaining) {
-                if (sharedNode->contains(f.request))
+                if (sharedNode->contains(f.request)) {
                     intermediate = dg_xorHash(intermediate, dg_factElementHash(f.request, f.response));
-                else
+                    for (size_t i = 0; i < consumedXor.hashSize; ++i)
+                        consumedXor.hash[i] ^= f.request.hash[i];
+                } else {
                     tailNew.push_back(f);
+                }
             }
+            Hash newRemainingXor = remainingXor;
+            for (size_t i = 0; i < newRemainingXor.hashSize; ++i)
+                newRemainingXor.hash[i] ^= consumedXor.hash[i];
 
             /* Persist shared via the trie-native overload — no
                vector-flatten hop, and the FrozenNode is already
@@ -1405,16 +1424,18 @@ void TracingDecisionGraph::insertAskSplitting(
                 sharedRsHash.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
                 exRsHash.to_string(HashFormat::Base16, false).substr(0, 12).c_str());
 
-            return SplitStep{intermediate, std::move(tailNew)};
+            return SplitStep{intermediate, std::move(tailNew), newRemainingXor};
         }
         return std::nullopt;
     };
 
     /* Iterate split steps until no overlap remains. Each successful
-       split drops alt (the row's identity changed). */
-    while (auto step = trySplitOne(cur, remaining)) {
+       split drops alt (the row's identity changed) and shrinks
+       remainingXor by the consumed reqs' XOR. */
+    while (auto step = trySplitOne(cur, remaining, remainingXor)) {
         cur = step->newCur;
         remaining = std::move(step->remainingAfterConsume);
+        remainingXor = step->remainingXorAfterConsume;
         alt = std::nullopt;
     }
 
@@ -1422,12 +1443,9 @@ void TracingDecisionGraph::insertAskSplitting(
        edge, preserving alt. Empty remaining = nothing to insert. */
     if (remaining.empty())
         return;
-    /* XOR-first-lookup fast path. */
-    Hash newXor = emptySetHash();
-    for (const auto & f : remaining)
-        for (size_t i = 0; i < newXor.hashSize; ++i)
-            newXor.hash[i] ^= f.request.hash[i];
-    auto newNode = tryFindRequestSet(newXor);
+    /* XOR-first-lookup fast path — remainingXor is maintained
+       incrementally by the trySplitOne loop, so we already have it. */
+    auto newNode = tryFindRequestSet(remainingXor);
     if (!newNode) {
         std::vector<Hash> newReqs;
         newReqs.reserve(remaining.size());
