@@ -281,11 +281,20 @@ private:
                        bumps the barrier — so the delta filter precisely
                        separates before-parent-record from after, no
                        XOR-cancel arithmetic. */
+                    /* factsInOrder is sorted by barrier (addFact only
+                       appends, peekBarrier is monotonic), so binary
+                       search finds the first tail entry >= threshold
+                       and we iterate only what we need — no scan of the
+                       pre-parent-record prefix. */
                     std::map<Hash, std::pair<uint64_t, Hash>> deltaFacts;
-                    for (auto c = cell.get(); c; c = c->parent.get())
-                        for (auto & [req, entry] : c->facts)
-                            if (entry.barrier >= it->second.barrierAtRecord)
-                                deltaFacts.try_emplace(req, entry.barrier, entry.response);
+                    auto threshold = it->second.barrierAtRecord;
+                    for (auto c = cell.get(); c; c = c->parent.get()) {
+                        auto & v = c->factsInOrder;
+                        auto lb = std::lower_bound(v.begin(), v.end(), threshold,
+                            [](const auto & p, uint64_t t) { return p.second.barrier < t; });
+                        for (auto j = lb; j != v.end(); ++j)
+                            deltaFacts.try_emplace(j->first, j->second.barrier, j->second.response);
+                    }
                     if (!deltaFacts.empty())
                         insertBarrieredChain(selectorHash,
                             it->second.terminalCur, deltaFacts);
@@ -298,7 +307,7 @@ private:
             /* Full chain: cell + ancestors, from ∅. */
             std::map<Hash, std::pair<uint64_t, Hash>> allFacts;
             for (auto c = cell.get(); c; c = c->parent.get())
-                for (auto & [req, entry] : c->facts)
+                for (auto & [req, entry] : c->factsInOrder)
                     allFacts.try_emplace(req, entry.barrier, entry.response);
             insertBarrieredChain(selectorHash,
                 TracingDecisionGraph::emptySetHash(), allFacts);
@@ -306,9 +315,9 @@ private:
             /* Cell-topology delta chain: cell's own facts from
                parent.terminalCur. Covers callback-firing nesting where
                the structural-parent isn't on the same cell. */
-            if (cell->parent && !cell->facts.empty()) {
+            if (cell->parent && !cell->factsInOrder.empty()) {
                 std::map<Hash, std::pair<uint64_t, Hash>> ownFacts;
-                for (auto & [req, entry] : cell->facts)
+                for (auto & [req, entry] : cell->factsInOrder)
                     ownFacts.try_emplace(req, entry.barrier, entry.response);
                 auto parentCur = cell->parent->factSetHash();
                 insertBarrieredChain(selectorHash, parentCur, ownFacts);

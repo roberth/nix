@@ -111,6 +111,19 @@ struct ArgCell : std::enable_shared_from_this<ArgCell>
         const pointer. */
     mutable std::map<Hash, FactEntry> facts;
 
+    /** Same members as `facts`, kept in insertion order. Callers
+        that emit Ask chains iterate this to preserve barrier
+        ordering (map iteration is by reqHash, meaningless here). */
+    mutable std::vector<std::pair<Hash, FactEntry>> factsInOrder;
+
+    /** XOR-fold of just this cell's own facts, maintained
+        incrementally by addFact/removeFact (XOR is self-inverse, so
+        both operations are O(1)). `factSetHash()` composes this with
+        the parent chain via O(depth) hash XORs — no SHA-256 recompute
+        per call. */
+    mutable TracingDecisionGraph::SetHash cachedOwnFactSetHash =
+        TracingDecisionGraph::emptySetHash();
+
     /** Per-Selector oldest recorded terminalCur on this cell — used
         as an anchor for structural-parent-based landing chains.
         Populated by logResult/logQueryResult on the cell the Q's
@@ -171,28 +184,45 @@ struct ArgCell : std::enable_shared_from_this<ArgCell>
         logOuterObservation is the canonical caller). */
     bool addFact(const Hash & reqHash, const Hash & respHash, uint64_t barrier = 0) const
     {
-        return facts.try_emplace(reqHash, FactEntry{respHash, barrier}).second;
+        auto [it, inserted] = facts.try_emplace(reqHash, FactEntry{respHash, barrier});
+        if (inserted) {
+            factsInOrder.emplace_back(reqHash, it->second);
+            cachedOwnFactSetHash = TracingDecisionGraph::xorFactIntoHash(
+                cachedOwnFactSetHash, reqHash, respHash);
+        }
+        return inserted;
     }
 
     /** Remove a fact by request hash. Used by write-time
         canonicalisation (state-creep meet lattice, see main doc's
         "state/observation-creep canonicalisation" note) — a fact
         with a redundant obsSet gets replaced by its canonical form
-        (with the intersected obsSet), and the old one is removed. */
+        (with the intersected obsSet), and the old one is removed.
+
+        XOR is self-inverse, so removal is O(1) for the cached hash.
+        The insertion-order vector needs a linear scan; canonicalisation
+        is rare enough that the O(n) removal cost doesn't dominate. */
     void removeFact(const Hash & reqHash) const
     {
-        if (facts.erase(reqHash))
-            ++canonicalisationEpoch;
+        auto it = facts.find(reqHash);
+        if (it == facts.end())
+            return;
+        cachedOwnFactSetHash = TracingDecisionGraph::xorFactIntoHash(
+            cachedOwnFactSetHash, reqHash, it->second.response);
+        factsInOrder.erase(
+            std::remove_if(factsInOrder.begin(), factsInOrder.end(),
+                [&](const auto & p) { return p.first == reqHash; }),
+            factsInOrder.end());
+        facts.erase(it);
+        ++canonicalisationEpoch;
     }
 
     /** Cumulative factset visible from this cell: own facts XOR-folded
-        with parent's factSetHash. Pull-based (recursive) — computed
-        on demand from `facts`, not stored. */
+        with parent's factSetHash. O(depth) XORs of incrementally-cached
+        per-cell hashes — no SHA-256 recomputation per call. */
     TracingDecisionGraph::SetHash factSetHash() const
     {
-        auto acc = TracingDecisionGraph::emptySetHash();
-        for (auto & [req, entry] : facts)
-            acc = TracingDecisionGraph::xorFactIntoHash(acc, req, entry.response);
+        auto acc = cachedOwnFactSetHash;
         if (parent)
             acc = TracingDecisionGraph::xorHashes(acc, parent->factSetHash());
         return acc;
