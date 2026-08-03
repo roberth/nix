@@ -127,7 +127,7 @@ public:
         ReplayCallbackArg is the arg. */
     std::optional<std::string> getSelectorHashHex() const override
     {
-        return producer->cachedHash.to_string(HashFormat::Base16, false);
+        return producer->cachedHash.toHex();
     }
 
     std::shared_ptr<Object> maybeGetAttr(const std::string & name) override;

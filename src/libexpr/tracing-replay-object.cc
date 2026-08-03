@@ -133,7 +133,7 @@ std::shared_ptr<Object> TracingReplayObject::maybeGetAttr(const std::string & na
     tracingCacheLog(
         "TRO::maybeGetAttr '%s' -> Q=%s (from=%s)",
         name.c_str(),
-        queryHash.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
+        queryHash.toHex().substr(0, 12).c_str(),
         triePos.queryHashStr.substr(0, 12).c_str());
     auto result = lookupStructuralChild<trace::SelectorGetAttr, trace::ResultWHNF>(query);
     if (!result) {

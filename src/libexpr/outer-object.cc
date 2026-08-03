@@ -46,7 +46,7 @@ std::shared_ptr<Object> OuterObject::maybeGetAttr(const std::string & name)
     auto preHex = getSelectorHashHex().value_or(std::string{});
     (void) computeWHNFFromObject(*childProbe);
     auto parentSel = producer();  // post-force snapshot
-    auto parentQHex = parentSel->cachedHash.to_string(HashFormat::Base16, false);
+    auto parentQHex = parentSel->cachedHash.toHex();
     tracingCacheLog(
         "OO::maybeGetAttr '%s' preHex=%s postHex=%s (%s)",
         name.c_str(),

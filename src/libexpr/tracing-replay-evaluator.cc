@@ -69,7 +69,7 @@ TracingReplayEvaluator::walk(
             return;
         TracingHash fingerprint = TracingHash::zero();
         for (const auto & f : pendingEdgeObservations)
-            fingerprint = TracingDecisionGraph::xorHashes(fingerprint, TracingHash::of(f.elementHash));
+            fingerprint = TracingDecisionGraph::xorHashes(fingerprint, f.elementHash);
         if (committedEdgeFingerprints.insert(fingerprint.toNixHash()).second) {
             /* Replay validation must not mutate writer state — recording
                and replay run through the same TracingWriter but their
@@ -185,9 +185,9 @@ TracingReplayEvaluator::walk(
                left null — commitEdge routes null to sessionRootCell). */
             pendingEdgeObservations.push_back({
                 TracingDecisionGraph::xorFactIntoHash(
-                    trace::tracingZeroHash(), requestHash, h).toNixHash(),
-                requestHash.toNixHash(),
-                h.toNixHash(),
+                    trace::tracingZeroHash(), requestHash, h),
+                requestHash,
+                h,
                 std::weak_ptr<const ArgCell>{},
             });
             tracingCacheLog(
@@ -387,9 +387,9 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveIdentity(const std::strin
     }
     tracingCacheLog("resolve %s: cell-chain exhausted, falling through to pool", idStr.substr(0, 12));
 
-    Hash idHash = trace::tracingZeroHash().toNixHash();
+    TracingHash idHash = trace::tracingZeroHash();
     try {
-        idHash = trace::parseTracingHex(idStr).toNixHash();
+        idHash = trace::parseTracingHex(idStr);
     } catch (const std::exception &) { extern thread_local bool rcaBailFlag; if (rcaBailFlag) throw; /* rca-bail-diagnostic */
         return nullptr;
     }
@@ -426,18 +426,18 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveIdentity(const std::strin
         auto resolved = trace::resolveFromJson(reqJson, decisionGraph.selectorPool);
         auto * cba = resolved ? std::get_if<trace::SelectorCallbackApply>(&(*resolved)->node) : nullptr;
         if (!cba) return nullptr;
-        auto obsSet = decisionGraph.getObservationSet(cba->argObsSet);
+        auto obsSet = decisionGraph.getObservationSet(cba->argObsSet.toNixHash());
         if (!obsSet) {
             tracingCacheLog(
                 "resolve %s: callbackApply obsSet=%s not in pool",
                 idStr.substr(0, 12),
-                cba->argObsSet.to_string(HashFormat::Base16, false).substr(0, 12).c_str());
+                cba->argObsSet.toHex().substr(0, 12).c_str());
             return nullptr;
         }
         auto obsSetMap = std::make_shared<std::map<Hash, std::string>>();
         for (const auto & obs : *obsSet)
             obsSetMap->emplace(obs.reqHash, obs.responsePayload);
-        std::string fnHex = cba->parent->cachedHash.to_string(HashFormat::Base16, false);
+        std::string fnHex = cba->parent->cachedHash.toHex();
         auto fnObj = resolveIdentity(fnHex, ctx);
         if (!fnObj) {
             tracingCacheLog(
@@ -558,7 +558,7 @@ std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nl
     auto & qv = (*qSelOpt)->node;
 
     auto resolveParent = [&](ref<const trace::Selector> parentSel) -> std::shared_ptr<Object> {
-        return resolveIdentity(parentSel->cachedHash.to_string(HashFormat::Base16, false), ctx);
+        return resolveIdentity(parentSel->cachedHash.toHex(), ctx);
     };
 
     return std::visit(
@@ -596,12 +596,12 @@ std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nl
                    the referenced ObservationSet, resolve fn live via
                    subject-navigation, invoke fn->queryApply(replayArg),
                    return the applyResult's WHNF. */
-                std::string fnHex = q.parent->cachedHash.to_string(HashFormat::Base16, false);
-                auto obsSet = decisionGraph.getObservationSet(q.argObsSet);
+                std::string fnHex = q.parent->cachedHash.toHex();
+                auto obsSet = decisionGraph.getObservationSet(q.argObsSet.toNixHash());
                 if (!obsSet) {
                     tracingCacheLog(
                         "callbackApply: obsSet=%s not in pool — miss",
-                        q.argObsSet.to_string(HashFormat::Base16, false).substr(0, 12));
+                        q.argObsSet.toHex().substr(0, 12));
                     return std::nullopt;
                 }
                 auto obsSetMap = std::make_shared<std::map<Hash, std::string>>();
@@ -633,7 +633,7 @@ std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nl
                     auto whnf = computeWHNFFromObject(*resultObj);
                     tracingCacheLog(
                         "callbackApply: HIT obsSet=%s whnf=%s",
-                        q.argObsSet.to_string(HashFormat::Base16, false).substr(0, 12), whnf.type.c_str());
+                        q.argObsSet.toHex().substr(0, 12), whnf.type.c_str());
                     return jsonToCborString(nlohmann::json(whnf));
                 } catch (const std::exception & e) { extern thread_local bool rcaBailFlag; if (rcaBailFlag) throw; /* rca-bail-diagnostic */
                     tracingCacheLog("callbackApply: fn->queryApply failed: %s", e.what());
@@ -891,7 +891,7 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
     auto applySel = decisionGraph.selectorPool.intern(trace::SelectorApply{*fnSelOpt});
 
     auto qHash = applySel->cachedHash;
-    auto qHex = qHash.to_string(HashFormat::Base16, false);
+    auto qHex = qHash.toHex();
     tracingCacheLog(
         "walker apply: fn=%s -> qHash=%s",
         fnQHex.substr(0, 12),
@@ -943,7 +943,7 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
        TracingObject wrapping the apply result). */
     TriePosition triePos{
         .resultNodeHash = trace::tracingZeroHash(), // sentinel
-        .queryHashStr = applySelectorHash.to_string(HashFormat::Base16, false),
+        .queryHashStr = applySelectorHash.toHex(),
         .factSetHash = cell->factSetHash(),
     };
     if (applyLookup) {

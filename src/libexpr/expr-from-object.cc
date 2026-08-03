@@ -177,7 +177,7 @@ OuterApplyResult OuterApply::run(
     tracingCacheLog("OuterApply::run: argStateHash=%s",
                     argStateHash.toHex().substr(0, 12));
 
-    auto fnIdStr  = fnId.to_string(HashFormat::Base16, false);
+    auto fnIdStr  = fnId.toHex();
     auto argStateHashStr = argStateHash.toHex();
 
     /* Intern SelectorApply{parent=fnProducer} — the apply's identity. */
@@ -293,13 +293,13 @@ OuterApplyResult OuterApply::run(
                 try {
                     auto fnHash = trace::parseTracingHex(
                         localCell->callbackState->fnStateHashHex);
-                    if (auto found = dg.selectorPool.find(fnHash.toNixHash()))
+                    if (auto found = dg.selectorPool.find(fnHash))
                         fnRef = *found;
                 } catch (...) {}
                 auto qcaSel = dg.selectorPool.intern(trace::SelectorCallbackApply{
-                    obsSetHash, fnRef});
+                    TracingHash::of(obsSetHash), fnRef});
                 nlohmann::json qcaJson = trace::toJson(*qcaSel);
-                dg.insertRequest(TracingHash::of(qcaSel->cachedHash), jsonToCborString(qcaJson));
+                dg.insertRequest(qcaSel->cachedHash, jsonToCborString(qcaJson));
                 return qcaSel;
             }
             return applySel;

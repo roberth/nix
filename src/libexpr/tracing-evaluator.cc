@@ -401,7 +401,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
     }
 
     auto qHash = applySel->cachedHash;
-    auto qHex = qHash.to_string(HashFormat::Base16, false);
+    auto qHex = qHash.toHex();
     tracingCacheLog(
         "writer apply: fn=%s -> qHash=%s",
         fnQHex.substr(0, 12),
@@ -460,7 +460,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
               /* #181: use the SelectorApply Q hash (matches TRE::apply's
                  walker path); getSelectorHashHex() reads this back as fn's
                  identity for downstream applies. */
-              .queryHashStr = qh.raw.to_string(HashFormat::Base16, false),
+              .queryHashStr = qh.raw.toHex(),
           };
     auto obj = TracingObject::create(result, writer, v, triePos);
     obj->withArgCell(std::move(cell));

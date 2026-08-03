@@ -246,7 +246,7 @@ template<typename P> using ParentRef = typename SelectorParent<P>::type;
     payload from the wire. */
 template<typename P> struct HashRef;
 template<> struct HashRef<String>   { using type = std::string; };
-template<> struct HashRef<Resolved> { using type = Hash; };
+template<> struct HashRef<Resolved> { using type = TracingHash; };
 template<typename P> using HashRefT = typename HashRef<P>::type;
 
 /** Evaluate an expression string. Phase-independent (no parent). */
@@ -497,7 +497,7 @@ template<>
 struct SelectorF<Resolved>
 {
     const SelectorNodeF<Resolved> node;
-    const Hash cachedHash;
+    const TracingHash cachedHash;
 
     explicit SelectorF(SelectorNodeF<Resolved> n);
 };
@@ -512,7 +512,7 @@ using Selector = SelectorF<Resolved>;
     call; TracingDecisionGraph's constructor does this automatically. */
 class SelectorPool
 {
-    std::unordered_map<Hash, ref<const Selector>> pool;
+    std::unordered_map<TracingHash, ref<const Selector>> pool;
     ::nix::TracingDecisionGraph * backing = nullptr;
 
 public:
@@ -525,7 +525,7 @@ public:
 
     /** Memory cache first, DB reconstruction on miss. Returns
         nullopt only if the hash is absent from both. */
-    std::optional<ref<const Selector>> find(const Hash & h);
+    std::optional<ref<const Selector>> find(const TracingHash & h);
 
     /** find() with hex-string input: parses to Hash, returns nullopt
         on parse failure. Encapsulates the parseNonSRIUnprefixed +
@@ -539,8 +539,8 @@ std::string describe(const Selector & s);
 std::string describe(const SelectorNode & q);
 nlohmann::json toJson(const Selector & s);
 nlohmann::json toJson(const SelectorNode & q);
-inline const Hash & computeSelectorHash(const Selector & s) { return s.cachedHash; }
-Hash computeSelectorHash(const SelectorNode & q);
+inline const TracingHash & computeSelectorHash(const Selector & s) { return s.cachedHash; }
+TracingHash computeSelectorHash(const SelectorNode & q);
 bool willMoveStateHash(const Selector & s);
 bool willMoveStateHash(const SelectorNode & q);
 
@@ -723,7 +723,7 @@ std::optional<TraceEntry> parseTraceEntry(const nlohmann::json & j);
  * per-Q-type `computeSelectorHash` on decision-graph, so callers
  * holding a `SelectorNode` don't have to std::visit at every site.
  */
-Hash computeSelectorHash(const SelectorNode & query);
+TracingHash computeSelectorHash(const SelectorNode & query);
 
 /**
  * Canonical mint / parse / zero for tracing-domain derived hashes.

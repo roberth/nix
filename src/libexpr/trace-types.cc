@@ -239,7 +239,7 @@ void from_json(const nlohmann::json & j, ResultFunctionInfo & r)
    the on-wire form. Actual persistence goes through unresolve directly. */
 static std::string hexOf(const ref<const Selector> & s)
 {
-    return s->cachedHash.to_string(HashFormat::Base16, false);
+    return s->cachedHash.toHex();
 }
 void to_json(nlohmann::json & j, const SelectorGetAttr & q)
 { to_json(j, StringSelectorGetAttr{q.name, hexOf(q.parent)}); }
@@ -250,7 +250,7 @@ void to_json(nlohmann::json & j, const SelectorGetFunctionInfo & q)
 void to_json(nlohmann::json & j, const SelectorApply & q)
 { to_json(j, StringSelectorApply{hexOf(q.parent)}); }
 void to_json(nlohmann::json & j, const SelectorCallbackApply & q)
-{ to_json(j, StringSelectorCallbackApply{q.argObsSet.to_string(HashFormat::Base16, false), hexOf(q.parent)}); }
+{ to_json(j, StringSelectorCallbackApply{q.argObsSet.toHex(), hexOf(q.parent)}); }
 void to_json(nlohmann::json & j, const OuterValueRequest & r)
 { to_json(j, StringOuterValueRequest{hexOf(r.query)}); }
 
@@ -519,7 +519,7 @@ std::strong_ordering operator<=>(const SelectorCallbackApplyF<String> & a, const
     return a.parent <=> b.parent;
 }
 
-Hash computeSelectorHash(const SelectorNode & query)
+TracingHash computeSelectorHash(const SelectorNode & query)
 {
     /* CBOR encoding rather than j.dump(): the JSON string dump ran
        nlohmann's dump_escaped (per-char escape check) on the whole
@@ -533,7 +533,7 @@ Hash computeSelectorHash(const SelectorNode & query)
     to_json(j, query);
     auto cbor = nlohmann::json::to_cbor(j);
     return tracingHash(
-        std::string_view(reinterpret_cast<const char *>(cbor.data()), cbor.size())).toNixHash();
+        std::string_view(reinterpret_cast<const char *>(cbor.data()), cbor.size()));
 }
 
 static uint8_t hexNibble(char c)
@@ -653,22 +653,22 @@ ref<const Selector> SelectorPool::intern(SelectorNode node)
        recorder that already wrote the same row is a harmless no-op. */
     auto cbor = nlohmann::json::to_cbor(toJson(*s));
     backing->insertSelector(
-        TracingHash::of(h), std::string_view(reinterpret_cast<const char *>(cbor.data()), cbor.size()));
+        h, std::string_view(reinterpret_cast<const char *>(cbor.data()), cbor.size()));
     return s;
 }
 
 std::optional<ref<const Selector>> SelectorPool::findByHex(std::string_view hex)
 {
-    Hash h = tracingZeroHash().toNixHash();
+    TracingHash h = tracingZeroHash();
     try {
-        h = parseTracingHex(hex).toNixHash();
+        h = parseTracingHex(hex);
     } catch (const std::exception &) {
         return std::nullopt;
     }
     return find(h);
 }
 
-std::optional<ref<const Selector>> SelectorPool::find(const Hash & h)
+std::optional<ref<const Selector>> SelectorPool::find(const TracingHash & h)
 {
     if (auto it = pool.find(h); it != pool.end()) return it->second;
     /* Memory miss — try DB. On hit, decode the stored payload and
@@ -677,7 +677,7 @@ std::optional<ref<const Selector>> SelectorPool::find(const Hash & h)
        pool for parent hashes, so a whole chain reconstructs
        depth-first from the leaf up. Chains are shallow (< a dozen
        even under nixpkgs attribute nesting), so recursion is fine. */
-    auto payload = backing->getSelectorPayload(TracingHash::of(h));
+    auto payload = backing->getSelectorPayload(h);
     if (!payload) return std::nullopt;
     auto bytes = reinterpret_cast<const uint8_t *>(payload->data());
     auto j = nlohmann::json::from_cbor(bytes, bytes + payload->size());
@@ -697,6 +697,7 @@ nlohmann::json toJson(const SelectorNode & query)
 nlohmann::json toJson(const Selector & s) { return toJson(s.node); }
 
 static std::string shortH(const Hash & h) { return h.to_string(HashFormat::Base16, false).substr(0, 12); }
+static std::string shortH(const TracingHash & h) { return h.toHex().substr(0, 12); }
 
 std::string describe(const SelectorNode & query)
 {
@@ -792,7 +793,7 @@ std::optional<ref<const Selector>> resolve(const StringSelectorNode & raw, Selec
         [&](const StringSelectorCallbackApply & s) -> std::optional<ref<const Selector>> {
             auto p = pool.findByHex(s.parent);
             if (!p) return std::nullopt;
-            auto obsSetHash = parseTracingHex(s.argObsSet).toNixHash();
+            auto obsSetHash = parseTracingHex(s.argObsSet);
             return pool.intern(SelectorCallbackApply{obsSetHash, *p});
         },
     }, raw);
@@ -835,7 +836,7 @@ StringSelectorNode unresolve(const SelectorNode & node)
             return StringSelectorApply{hexOf(s.parent)};
         },
         [](const SelectorCallbackApply & s) -> StringSelectorNode {
-            return StringSelectorCallbackApply{s.argObsSet.to_string(HashFormat::Base16, false), hexOf(s.parent)};
+            return StringSelectorCallbackApply{s.argObsSet.toHex(), hexOf(s.parent)};
         },
     }, node);
 }

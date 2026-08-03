@@ -246,15 +246,15 @@ void TracingCallbackArg::recordObservation(ref<const trace::Selector> query, con
     tracingCacheLog(
         "TracingCallbackArg::recordObservation: cell=%p appending q=%s",
         (void *) argCell.get(),
-        qh.to_string(HashFormat::Base16, false).substr(0, 12).c_str());
+        qh.toHex().substr(0, 12).c_str());
     nlohmann::json rJson = std::visit(
         [](const auto & r) -> nlohmann::json { return r; },
         result);
     auto rPayload = jsonToCborString(rJson);
     auto & dg = writer.getDecisionGraph();
     nlohmann::json qJson = trace::toJson(*query);
-    dg.insertRequest(TracingHash::of(qh), jsonToCborString(qJson));
-    argCell->callbackState->runningObsSet.push_back({qh, rPayload});
+    dg.insertRequest(qh, jsonToCborString(qJson));
+    argCell->callbackState->runningObsSet.push_back({qh.toNixHash(), rPayload});
 }
 
 std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> argObj)
@@ -280,7 +280,7 @@ std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> a
     auto layer2Cell = ArgCell::make(argCell, nullptr);
     layer2Cell->callbackState = std::make_shared<CallbackState>();
     layer2Cell->callbackState->fnStateHashHex =
-        producer->cachedHash.to_string(HashFormat::Base16, false);
+        producer->cachedHash.toHex();
     layer2Cell->liveObject = argObj;
 
     /* Producer for the wrapped outer-arg — SelectorArg{depth} at the
@@ -304,8 +304,8 @@ std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> a
         nlohmann::json rJson = std::visit(
             [](const auto & r) -> nlohmann::json { return r; }, qr.result);
         auto rPayload = jsonToCborString(rJson);
-        dg.insertRequest(TracingHash::of(q->cachedHash), jsonToCborString(trace::toJson(*q)));
-        layer2Cell->callbackState->runningObsSet.push_back({q->cachedHash, rPayload});
+        dg.insertRequest(q->cachedHash, jsonToCborString(trace::toJson(*q)));
+        layer2Cell->callbackState->runningObsSet.push_back({q->cachedHash.toNixHash(), rPayload});
         return qr;
     };
 
@@ -337,7 +337,7 @@ std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> a
         auto nestedCell = std::const_pointer_cast<ArgCell>(applyCell);
         nestedCell->callbackState = std::make_shared<CallbackState>();
         nestedCell->callbackState->fnStateHashHex =
-            fnProducer->cachedHash.to_string(HashFormat::Base16, false);
+            fnProducer->cachedHash.toHex();
         nestedCell->liveObject = argObj2;
 
         auto nestedArgProducerSel = dg.selectorPool.intern(trace::SelectorArg{nestedCell->depth});
@@ -351,8 +351,8 @@ std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> a
             nlohmann::json rJson = std::visit(
                 [](const auto & r) -> nlohmann::json { return r; }, qr.result);
             auto rPayload = jsonToCborString(rJson);
-            dg.insertRequest(TracingHash::of(q->cachedHash), jsonToCborString(trace::toJson(*q)));
-            nestedCell->callbackState->runningObsSet.push_back({q->cachedHash, rPayload});
+            dg.insertRequest(q->cachedHash, jsonToCborString(trace::toJson(*q)));
+            nestedCell->callbackState->runningObsSet.push_back({q->cachedHash.toNixHash(), rPayload});
             return qr;
         };
 
@@ -379,7 +379,7 @@ std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> a
             auto obsSetHash = dg.insertObservationSet(
                 nestedCell->callbackState->runningObsSet);
             return dg.selectorPool.intern(
-                trace::SelectorCallbackApply{obsSetHash, fnProducer});
+                trace::SelectorCallbackApply{TracingHash::of(obsSetHash), fnProducer});
         };
         return OuterApplyResult{
             .applyResult = std::move(applyResultObj),
@@ -415,7 +415,7 @@ std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> a
         layer2ObsHash.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
         layer2Cell->callbackState->runningObsSet.size());
     auto scaSel = dg.selectorPool.intern(
-        trace::SelectorCallbackApply{layer2ObsHash, producer});
+        trace::SelectorCallbackApply{TracingHash::of(layer2ObsHash), producer});
     recordObservation(scaSel, applyResultWhnf);
 
     /* H2: wrap the applyResult in a TCA with producer=scaSel and

@@ -26,15 +26,15 @@ namespace {
    Returns nullopt when no canonicalisation applies (either the
    incoming isn't the right shape, or no matching existing fact). */
 struct CanonicaliseResult {
-    Hash canonicalReqHash;
-    Hash existingReqHashRemoved;
+    TracingHash canonicalReqHash;
+    TracingHash existingReqHashRemoved;
 };
 
 std::optional<CanonicaliseResult> tryStateCreepCanonicalise(
     TracingDecisionGraph & dg,
     const std::shared_ptr<const ArgCell> & cell,
     ref<const trace::Selector> incomingSelector,
-    const Hash & incomingRespHash)
+    const TracingHash & incomingRespHash)
 {
     if (!cell) return std::nullopt;
     /* Incoming must be getAttr(...) on CallbackApply(...). Everything else
@@ -44,7 +44,7 @@ std::optional<CanonicaliseResult> tryStateCreepCanonicalise(
     auto * incCBA = std::get_if<trace::SelectorCallbackApply>(&incGA->parent->node);
     if (!incCBA) return std::nullopt;
 
-    auto incomingObsSet = dg.getObservationSet(incCBA->argObsSet);
+    auto incomingObsSet = dg.getObservationSet(incCBA->argObsSet.toNixHash());
     if (!incomingObsSet) return std::nullopt;
 
     /* Scan cell's facts for a matching predicate + response. Each
@@ -52,7 +52,7 @@ std::optional<CanonicaliseResult> tryStateCreepCanonicalise(
        pool; the typed getRequest recovers the Selector for field comparison. */
     for (auto & [existingReqHash, existingEntry] : cell->facts) {
         if (existingEntry.response != incomingRespHash) continue;
-        auto existingReq = dg.getRequest(TracingHash::of(existingReqHash));
+        auto existingReq = dg.getRequest(existingReqHash);
         if (!existingReq) continue;
         auto * existingOVR = std::get_if<trace::OuterValueRequest>(&*existingReq);
         if (!existingOVR) continue;
@@ -64,7 +64,7 @@ std::optional<CanonicaliseResult> tryStateCreepCanonicalise(
         if (exCBA->parent->cachedHash != incCBA->parent->cachedHash) continue;
         if (exCBA->argObsSet == incCBA->argObsSet) continue;
 
-        auto existingObsSet = dg.getObservationSet(exCBA->argObsSet);
+        auto existingObsSet = dg.getObservationSet(exCBA->argObsSet.toNixHash());
         if (!existingObsSet) continue;
 
         /* Intersect: keep entries present in both, matched by
@@ -82,8 +82,8 @@ std::optional<CanonicaliseResult> tryStateCreepCanonicalise(
 
         auto canonicalObsSetHash = dg.insertObservationSet(intersected);
         auto canonicalCbaSel = dg.selectorPool.intern(trace::SelectorCallbackApply{
-            canonicalObsSetHash, incCBA->parent});
-        dg.insertRequest(TracingHash::of(canonicalCbaSel->cachedHash),
+            TracingHash::of(canonicalObsSetHash), incCBA->parent});
+        dg.insertRequest(canonicalCbaSel->cachedHash,
                          jsonToCborString(trace::toJson(*canonicalCbaSel)));
         auto canonicalGetterSel = dg.selectorPool.intern(trace::SelectorGetAttr{
             incGA->name, canonicalCbaSel});
@@ -92,16 +92,16 @@ std::optional<CanonicaliseResult> tryStateCreepCanonicalise(
            (see logOuterObservation). */
         trace::OuterValueRequest canonicalOuterReq{canonicalGetterSel};
         auto canonicalReqPayload = jsonToCborString(nlohmann::json(canonicalOuterReq));
-        auto canonicalReqHash = TracingDecisionGraph::computeResponseHash(canonicalReqPayload);
-        dg.insertRequest(TracingHash::of(canonicalReqHash), canonicalReqPayload);
+        auto canonicalReqHash = TracingHash::of(TracingDecisionGraph::computeResponseHash(canonicalReqPayload));
+        dg.insertRequest(canonicalReqHash, canonicalReqPayload);
 
         tracingCacheLog(
             "state-creep collapse: existing=%s incoming=%s -> canonical=%s (obsSet %s + %s -> %s)",
-            existingReqHash.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
-            incomingSelector->cachedHash.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
-            canonicalReqHash.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
-            exCBA->argObsSet.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
-            incCBA->argObsSet.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
+            existingReqHash.toHex().substr(0, 12).c_str(),
+            incomingSelector->cachedHash.toHex().substr(0, 12).c_str(),
+            canonicalReqHash.toHex().substr(0, 12).c_str(),
+            exCBA->argObsSet.toHex().substr(0, 12).c_str(),
+            incCBA->argObsSet.toHex().substr(0, 12).c_str(),
             canonicalObsSetHash.to_string(HashFormat::Base16, false).substr(0, 12).c_str());
 
         auto existingHashCopy = existingReqHash;
@@ -138,22 +138,22 @@ void TracingWriter::logOuterObservation(
     trace::OuterValueRequest outerReq{query};
     nlohmann::json reqJson = outerReq;
     auto reqPayload = jsonToCborString(reqJson);
-    auto reqHash = TracingDecisionGraph::computeResponseHash(reqPayload);
+    auto reqHash = TracingHash::of(TracingDecisionGraph::computeResponseHash(reqPayload));
 
     nlohmann::json resultJson;
     std::visit([&](const auto & r) { resultJson = r; }, result);
     auto responsePayload = jsonToCborString(resultJson);
-    auto responseHash = TracingDecisionGraph::computeResponseHash(responsePayload);
+    auto responseHash = TracingHash::of(TracingDecisionGraph::computeResponseHash(responsePayload));
 
     tracingCacheLog(
         "  reqHash=%s reqJSON=%s",
-        reqHash.to_string(HashFormat::Base16, false).substr(0, 12),
+        reqHash.toHex().substr(0, 12),
         reqJson.dump());
     tracingCacheLog(
         "  respHash=%s respJSON=%s",
-        responseHash.to_string(HashFormat::Base16, false).substr(0, 12),
+        responseHash.toHex().substr(0, 12),
         resultJson.dump());
-    decisionGraph.insertRequest(TracingHash::of(reqHash), reqPayload);
+    decisionGraph.insertRequest(reqHash, reqPayload);
 
     /* #183: fact appends to attributionCell's fact set. Ask rows
        inserted per-Selector-completion.
@@ -189,16 +189,16 @@ void TracingWriter::logOuterObservation(
                canonicalReqHash gets a companion alt with
                existingReqHashRemoved substituted in. */
             canonicalReplacements.emplace(
-                TracingHash::of(canonical->canonicalReqHash),
-                TracingHash::of(canonical->existingReqHashRemoved));
+                canonical->canonicalReqHash,
+                canonical->existingReqHashRemoved);
         }
     } else {
         /* No attribution cell — bump barrier anyway so ordering
            within the writer stays monotonic. */
         bumpBarrier();
     }
-    responseFor.emplace(TracingHash::of(reqHash), TracingHash::of(responseHash));
-    sessionRequestsMutable.insert(reqHash);
+    responseFor.emplace(reqHash, responseHash);
+    sessionRequestsMutable.insert(reqHash.toNixHash());
 }
 
 void TracingWriter::createCallbackCell(const nlohmann::json & applyQueryPayload)
@@ -211,8 +211,8 @@ void TracingWriter::createCallbackCell(const nlohmann::json & applyQueryPayload)
        as computeSelectorHash (trace-types.cc): dump_escaped over the
        full JSON payload was a top perf hotspot in cold-path profiles. */
     auto applyPayloadCbor = jsonToCborString(applyQueryPayload);
-    auto applyReqHash = TracingDecisionGraph::computeResponseHash(applyPayloadCbor);
-    decisionGraph.insertRequest(TracingHash::of(applyReqHash), applyPayloadCbor);
+    auto applyReqHash = TracingHash::of(TracingDecisionGraph::computeResponseHash(applyPayloadCbor));
+    decisionGraph.insertRequest(applyReqHash, applyPayloadCbor);
 }
 
 } // namespace nix

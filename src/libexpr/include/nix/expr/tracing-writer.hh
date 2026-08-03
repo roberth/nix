@@ -262,8 +262,8 @@ private:
            Limited to getter→getter to avoid cross-cell interactions
            at Apply/CallbackApply boundaries. */
         bool structuralInserted = false;
-        if (auto sel = decisionGraph.selectorPool.find(selectorHash.toNixHash())) {
-            std::optional<Hash> parentHash;
+        if (auto sel = decisionGraph.selectorPool.find(selectorHash)) {
+            std::optional<TracingHash> parentHash;
             std::visit(overloaded{
                 [&](const trace::SelectorGetAttr & g) {
                     std::visit(overloaded{
@@ -306,8 +306,8 @@ private:
                         auto lb = std::lower_bound(v.begin(), v.end(), threshold,
                             [](const auto & p, uint64_t t) { return p.second.barrier < t; });
                         for (auto j = lb; j != v.end(); ++j)
-                            deltaFacts.try_emplace(TracingHash::of(j->first),
-                                j->second.barrier, TracingHash::of(j->second.response));
+                            deltaFacts.try_emplace(j->first,
+                                j->second.barrier, j->second.response);
                     }
                     if (!deltaFacts.empty())
                         insertBarrieredChain(selectorHash,
@@ -322,8 +322,8 @@ private:
             std::unordered_map<TracingHash, std::pair<uint64_t, TracingHash>> allFacts;
             for (auto c = cell.get(); c; c = c->parent.get())
                 for (auto & [req, entry] : c->factsInOrder)
-                    allFacts.try_emplace(TracingHash::of(req),
-                        entry.barrier, TracingHash::of(entry.response));
+                    allFacts.try_emplace(req,
+                        entry.barrier, entry.response);
             insertBarrieredChain(selectorHash,
                 TracingDecisionGraph::emptySetHash(), allFacts);
 
@@ -333,8 +333,8 @@ private:
             if (cell->parent && !cell->factsInOrder.empty()) {
                 std::unordered_map<TracingHash, std::pair<uint64_t, TracingHash>> ownFacts;
                 for (auto & [req, entry] : cell->factsInOrder)
-                    ownFacts.try_emplace(TracingHash::of(req),
-                        entry.barrier, TracingHash::of(entry.response));
+                    ownFacts.try_emplace(req,
+                        entry.barrier, entry.response);
                 auto parentCur = cell->parent->factSetHash();
                 insertBarrieredChain(selectorHash, parentCur, ownFacts);
             }
@@ -395,16 +395,16 @@ public:
             ref<const trace::Selector> fnRef = fnParent;
             try {
                 auto fnHash = trace::parseTracingHex(cs.fnStateHashHex);
-                if (auto found = decisionGraph.selectorPool.find(fnHash.toNixHash()))
+                if (auto found = decisionGraph.selectorPool.find(fnHash))
                     fnRef = *found;
             } catch (...) {}
             auto qcaSel = decisionGraph.selectorPool.intern(trace::SelectorCallbackApply{
-                obsSetHash, fnRef});
+                TracingHash::of(obsSetHash), fnRef});
             std::shared_ptr<const ArgCell> attrCell = callbackCell ? callbackCell->parent : nullptr;
             logOuterObservation(
                 qcaSel,
                 trace::ResultVariant{whnf},
-                "fn=" + fnParent->cachedHash.to_string(HashFormat::Base16, false).substr(0, 12),
+                "fn=" + fnParent->cachedHash.toHex().substr(0, 12),
                 attrCell);
             return true;
         };
@@ -417,7 +417,7 @@ public:
             "callbackCell=%p callbackState=%p fnParent=%s",
             (void*) callbackCell.get(),
             callbackCell ? (void*) callbackCell->callbackState.get() : nullptr,
-            fnParent->cachedHash.to_string(HashFormat::Base16, false).substr(0, 12).c_str());
+            fnParent->cachedHash.toHex().substr(0, 12).c_str());
     }
 
     /** Phantom tag used to keep SelectorHandle distinct from any
@@ -455,7 +455,7 @@ public:
             cell->qState = qState;
             qState->cell = cell;
         }
-        return {valueNum, SelectorHandle{selectorHash.toNixHash()}};
+        return {valueNum, SelectorHandle{selectorHash}};
     }
 
     /**
@@ -474,7 +474,7 @@ public:
             "writer logSelectorOnCell: Q=%s queryJSON=%s",
             selectorHash.toHex().substr(0, 12),
             qj.dump());
-        SelectorHandle qh{selectorHash.toNixHash()};
+        SelectorHandle qh{selectorHash};
         auto qState = std::make_shared<QState>();
         qState->currentQ = selectorHash.toNixHash();
         if (cell) {
@@ -506,7 +506,7 @@ public:
             "writer logQuery: Q=%s queryJSON=%s",
             selectorHash.toHex().substr(0, 12),
             qj.dump());
-        return {valueNum, SelectorHandle{selectorHash.toNixHash()}};
+        return {valueNum, SelectorHandle{selectorHash}};
     }
 
     /**
@@ -537,7 +537,7 @@ public:
            edge's requestSet live, folds, reaches next cur; a divergent
            live response at any barrier misses cleanly there. */
         if (cell) {
-            insertBarrieredAskChain(TracingHash::of(qh.raw), cell);
+            insertBarrieredAskChain(qh.raw, cell);
             /* task 1a: record oldest terminalCur per Selector on the
                cell so descendant Qs can anchor structural chains here.
                Bump the barrier and snapshot post-bump so subsequent
@@ -551,10 +551,10 @@ public:
                 ArgCell::FirstTerminalRecord{terminalCur, peekBarrier(),
                     cell->canonicalisationEpochChain()});
         }
-        decisionGraph.insertTerminal(TracingHash::of(qh.raw), terminalCur, resultNodeHash);
+        decisionGraph.insertTerminal(qh.raw, terminalCur, resultNodeHash);
         tracingCacheLog(
             "writer logQueryResult: Q=%s anchor=%s -> result=%s",
-            qh.raw.to_string(HashFormat::Base16, false).substr(0, 12),
+            qh.raw.toHex().substr(0, 12),
             terminalCur.toHex().substr(0, 12),
             resultNodeHash.toHex().substr(0, 12));
         if (cell) {
@@ -565,14 +565,14 @@ public:
                     c->factSetHash().toHex().substr(0, 12).c_str());
                 for (const auto & [req, entry] : c->facts) {
                     tracingCacheLog("      fact req=%s resp=%s",
-                        req.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
-                        entry.response.to_string(HashFormat::Base16, false).substr(0, 12).c_str());
+                        req.toHex().substr(0, 12).c_str(),
+                        entry.response.toHex().substr(0, 12).c_str());
                 }
             }
         }
         return TriePosition{
             .resultNodeHash = resultNodeHash,
-            .queryHashStr = qh.raw.to_string(HashFormat::Base16, false),
+            .queryHashStr = qh.raw.toHex(),
             .factSetHash = terminalCur,
         };
     }
@@ -608,7 +608,7 @@ public:
            filter correctness is maintained by bumping the barrier at
            logQueryResult time, which separates facts folded into
            parent's terminalCur from later ones. */
-        sessionRootCell->addFact(selectorHash.toNixHash(), responseHash.toNixHash(), peekBarrier());
+        sessionRootCell->addFact(selectorHash, responseHash, peekBarrier());
         responseFor.emplace(selectorHash, responseHash);
         sessionRequestsMutable.insert(selectorHash.toNixHash());
     }
@@ -690,31 +690,31 @@ public:
             sessionRequestsCache.persist(frozen, sink);
         }
 
-        Hash finalQ = qh.raw;
+        TracingHash finalQ = qh.raw;
         /* #177 pull model: Terminal keyed at the completing Q's
            cell.factSetHash() — this cell's own facts XORed with
            ancestor factSetHashes on demand. */
         TracingHash terminalCur = cell ? cell->factSetHash() : sessionRootCell->factSetHash();
         tracingCacheLog("logResult: Q=%s factSet=%s -> result",
-                        finalQ.to_string(HashFormat::Base16, false).substr(0, 12),
+                        finalQ.toHex().substr(0, 12),
                         terminalCur.toHex().substr(0, 12));
 
         /* #187 principle 9: barrier-based Ask chain (see comment on
            insertBarrieredAskChain). One Ask edge per barrier group,
            each carrying at most one value probe. */
         if (cell) {
-            insertBarrieredAskChain(TracingHash::of(finalQ), cell);
+            insertBarrieredAskChain(finalQ, cell);
             /* task 1a: record oldest terminalCur per Selector on the
                cell so descendant Qs can anchor structural chains here. */
             cell->firstTerminalCurs.try_emplace(finalQ,
                 ArgCell::FirstTerminalRecord{terminalCur, peekBarrier(),
                     cell->canonicalisationEpochChain()});
         }
-        decisionGraph.insertTerminal(TracingHash::of(finalQ), terminalCur, resultNodeHash);
+        decisionGraph.insertTerminal(finalQ, terminalCur, resultNodeHash);
 
         return TriePosition{
             .resultNodeHash = resultNodeHash,
-            .queryHashStr = finalQ.to_string(HashFormat::Base16, false),
+            .queryHashStr = finalQ.toHex(),
             .factSetHash = terminalCur,
         };
     }

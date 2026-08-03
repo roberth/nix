@@ -116,10 +116,10 @@ std::optional<std::string> TracingObject::getProducerSelectorHex(TracingWriter &
         if (!fnRef)
             panic("TracingObject::getProducerSelectorHex: fnStateHashHex not in selector pool");
         auto qcaSel = dg.selectorPool.intern(trace::SelectorCallbackApply{
-            obsSetHash, *fnRef});
+            TracingHash::of(obsSetHash), *fnRef});
         nlohmann::json qcaJson = trace::toJson(*qcaSel);
-        dg.insertRequest(TracingHash::of(qcaSel->cachedHash), jsonToCborString(qcaJson));
-        return qcaSel->cachedHash.to_string(HashFormat::Base16, false);
+        dg.insertRequest(qcaSel->cachedHash, jsonToCborString(qcaJson));
+        return qcaSel->cachedHash.toHex();
     }
     /* Under the Selector-is-a-sequence model, the wrapper's producer
        (the SelectorApply value that scoped this apply-result) is a
@@ -179,7 +179,7 @@ std::shared_ptr<Object> TracingObject::maybeGetAttr(const std::string & name)
     tracingCacheLog(
         "TO::maybeGetAttr '%s' -> Q=%s (from=%s, cbApplyOrigin=%d)",
         name.c_str(),
-        queryHash.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
+        queryHash.toHex().substr(0, 12).c_str(),
         fromHex.substr(0, 12).c_str(),
         (int) cbApplyOrigin);
     /* Phase D2: getter as Query — logQuery/logQueryResult, no push.
@@ -457,7 +457,7 @@ std::shared_ptr<Object> TracingObject::queryApply(std::shared_ptr<Object> argObj
     writer.createCallbackCell(applyBoundaryJson);
 
     auto qHash = applySel->cachedHash;
-    auto qHex = qHash.to_string(HashFormat::Base16, false);
+    auto qHex = qHash.toHex();
 
     auto & applyQ = std::get<trace::SelectorApply>(applySel->node);
     auto v = writer.getSink().logSelector(applyQ);

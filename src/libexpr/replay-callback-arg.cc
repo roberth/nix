@@ -82,7 +82,7 @@ std::shared_ptr<Object> ReplayCallbackArg::maybeGetAttr(const std::string & name
            inner body with recorded responses. Stamp so a stack
            trace distinguishes an RCA replay from TRO (outer walker
            replay) or OO (recording proxy) dispatches. */
-        auto parentHex = producer->cachedHash.to_string(HashFormat::Base16, false);
+        auto parentHex = producer->cachedHash.toHex();
         e.addTrace(nullptr, HintFmt("while replaying cached attr '%s' via ReplayCallbackArg (callback body, arg Q=%s)",
                                     name, parentHex.substr(0, 12)), TracePrint::Always);
         throw;
@@ -304,18 +304,18 @@ std::shared_ptr<Object> ReplayCallbackArg::queryApply(std::shared_ptr<Object> ar
     }
 
     for (const auto & [scaHash, recordedResp] : *obsSetResponses) {
-        auto scaOpt = decisionGraph.selectorPool.find(scaHash);
+        auto scaOpt = decisionGraph.selectorPool.find(TracingHash::of(scaHash));
         if (!scaOpt) continue;
         auto * sca = std::get_if<trace::SelectorCallbackApply>(&(*scaOpt)->node);
         if (!sca) continue;
         if (sca->parent->cachedHash != producer->cachedHash) continue;
 
-        auto layer2Obs = decisionGraph.getObservationSet(sca->argObsSet);
+        auto layer2Obs = decisionGraph.getObservationSet(sca->argObsSet.toNixHash());
         if (!layer2Obs) continue;
 
         bool allMatch = true;
         for (const auto & recordedProbe : *layer2Obs) {
-            auto probeSelOpt = decisionGraph.selectorPool.find(recordedProbe.reqHash);
+            auto probeSelOpt = decisionGraph.selectorPool.find(TracingHash::of(recordedProbe.reqHash));
             if (!probeSelOpt) { allMatch = false; break; }
             trace::ResultVariant liveResult;
             try {
@@ -329,7 +329,7 @@ std::shared_ptr<Object> ReplayCallbackArg::queryApply(std::shared_ptr<Object> ar
                 if (auto * nestedSca = std::get_if<trace::SelectorCallbackApply>(
                         &(*probeSelOpt)->node)) {
                     auto nestedObsSet = decisionGraph.getObservationSet(
-                        nestedSca->argObsSet);
+                        nestedSca->argObsSet.toNixHash());
                     if (!nestedObsSet) { allMatch = false; break; }
                     auto nestedObsMap = std::make_shared<std::map<Hash, std::string>>();
                     for (const auto & obs : *nestedObsSet)
@@ -371,7 +371,7 @@ std::shared_ptr<Object> ReplayCallbackArg::queryApply(std::shared_ptr<Object> ar
             tracingCacheLog(
                 "RCA::queryApply: HIT via SCA=%s (obsSet=%s, %zu probes)",
                 scaHash.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
-                sca->argObsSet.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
+                sca->argObsSet.toHex().substr(0, 12).c_str(),
                 layer2Obs->size());
             /* H2: return a fresh RCA representing the applyResult. Its
                producer is this SCA; its whnf is the recorded response;

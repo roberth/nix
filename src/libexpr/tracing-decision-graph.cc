@@ -856,14 +856,14 @@ Hash TracingDecisionGraph::insertObservationSet(
        and take max(depth) + 1. If no SCA members, depth = 0. */
     std::uint32_t depth = 0;
     for (const auto & m : sorted) {
-        auto selOpt = selectorPool.find(m.reqHash);
+        auto selOpt = selectorPool.find(TracingHash::of(m.reqHash));
         if (!selOpt) continue;
         auto * sca = std::get_if<trace::SelectorCallbackApply>(&(*selOpt)->node);
         if (!sca) continue;
         std::uint32_t childDepth = 0;
         {
             auto state(_state->lock());
-            auto it = state->obsSetDepthMemo.find(sca->argObsSet);
+            auto it = state->obsSetDepthMemo.find(sca->argObsSet.toNixHash());
             if (it != state->obsSetDepthMemo.end())
                 childDepth = it->second;
         }

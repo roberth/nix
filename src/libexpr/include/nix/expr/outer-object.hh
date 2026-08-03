@@ -175,7 +175,7 @@ public:
         override needed. */
     std::optional<std::string> getSelectorHashHex() const override
     {
-        return producer()->cachedHash.to_string(HashFormat::Base16, false);
+        return producer()->cachedHash.toHex();
     }
 
     std::optional<ref<const trace::Selector>> getSelector() const override

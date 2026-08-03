@@ -45,7 +45,7 @@ class TracingCallbackArg : public Object
     ref<SourceRoot> rootFSRoot;
 
     /** This local's Q hash. */
-    OuterId localId() const { return producer->cachedHash; }
+    OuterId localId() const { return producer->cachedHash.toNixHash(); }
 
     /* The argCell cell this local belongs to. Navigation children
        share the parent's cell. Used for scope-graph topology only;

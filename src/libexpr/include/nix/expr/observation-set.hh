@@ -22,11 +22,11 @@ namespace nix {
     attribution rides on `attributionCell`. */
 struct Observation
 {
-    Hash elementHash;
+    TracingHash elementHash;
     /* #183: separately-carried (reqHash, respHash) so walker-side
        commits can append to cell.facts as (req, resp) pairs. */
-    Hash reqHash = trace::tracingZeroHash().toNixHash();
-    Hash respHash = trace::tracingZeroHash().toNixHash();
+    TracingHash reqHash = trace::tracingZeroHash();
+    TracingHash respHash = trace::tracingZeroHash();
     /* #183 attribution: which cell this fact belongs to. null →
        sessionRootCell (env-fact default). */
     std::weak_ptr<const struct ArgCell> attributionCell;

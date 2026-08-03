@@ -95,7 +95,7 @@ struct ArgCell : std::enable_shared_from_this<ArgCell>
         barrier value at peek time. */
     struct FactEntry
     {
-        Hash response;
+        TracingHash response;
         uint64_t barrier = 0;
     };
 
@@ -109,12 +109,12 @@ struct ArgCell : std::enable_shared_from_this<ArgCell>
         `mutable` because ArgCells are held via
         `shared_ptr<const ArgCell>`; appends happen through the
         const pointer. */
-    mutable std::map<Hash, FactEntry> facts;
+    mutable std::map<TracingHash, FactEntry> facts;
 
     /** Same members as `facts`, kept in insertion order. Callers
         that emit Ask chains iterate this to preserve barrier
         ordering (map iteration is by reqHash, meaningless here). */
-    mutable std::vector<std::pair<Hash, FactEntry>> factsInOrder;
+    mutable std::vector<std::pair<TracingHash, FactEntry>> factsInOrder;
 
     /** XOR-fold of just this cell's own facts, maintained
         incrementally by addFact/removeFact (XOR is self-inverse, so
@@ -149,7 +149,7 @@ struct ArgCell : std::enable_shared_from_this<ArgCell>
         uint64_t barrierAtRecord;
         uint64_t epochAtRecord;
     };
-    mutable std::map<Hash, FirstTerminalRecord> firstTerminalCurs;
+    mutable std::map<TracingHash, FirstTerminalRecord> firstTerminalCurs;
 
     /** Bumped on every removeFact call. FirstTerminalRecord captures
         the aggregate ancestry epoch (see canonicalisationEpochChain)
@@ -182,13 +182,13 @@ struct ArgCell : std::enable_shared_from_this<ArgCell>
         return value to gate barrier bumping and any other side
         effects that should only fire per cell-new fact (the writer's
         logOuterObservation is the canonical caller). */
-    bool addFact(const Hash & reqHash, const Hash & respHash, uint64_t barrier = 0) const
+    bool addFact(const TracingHash & reqHash, const TracingHash & respHash, uint64_t barrier = 0) const
     {
         auto [it, inserted] = facts.try_emplace(reqHash, FactEntry{respHash, barrier});
         if (inserted) {
             factsInOrder.emplace_back(reqHash, it->second);
             cachedOwnFactSetHash = TracingDecisionGraph::xorFactIntoHash(
-                cachedOwnFactSetHash, TracingHash::of(reqHash), TracingHash::of(respHash));
+                cachedOwnFactSetHash, reqHash, respHash);
         }
         return inserted;
     }
@@ -202,13 +202,13 @@ struct ArgCell : std::enable_shared_from_this<ArgCell>
         XOR is self-inverse, so removal is O(1) for the cached hash.
         The insertion-order vector needs a linear scan; canonicalisation
         is rare enough that the O(n) removal cost doesn't dominate. */
-    void removeFact(const Hash & reqHash) const
+    void removeFact(const TracingHash & reqHash) const
     {
         auto it = facts.find(reqHash);
         if (it == facts.end())
             return;
         cachedOwnFactSetHash = TracingDecisionGraph::xorFactIntoHash(
-            cachedOwnFactSetHash, TracingHash::of(reqHash), TracingHash::of(it->second.response));
+            cachedOwnFactSetHash, reqHash, it->second.response);
         factsInOrder.erase(
             std::remove_if(factsInOrder.begin(), factsInOrder.end(),
                 [&](const auto & p) { return p.first == reqHash; }),

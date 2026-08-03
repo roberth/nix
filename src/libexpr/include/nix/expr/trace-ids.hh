@@ -128,7 +128,7 @@ using OuterId = Hash;
     different semantic kinds (e.g., a request hash vs a result hash).
     Reads naturally: HashOf<Request> = "the hash of a Request". */
 template<typename Phantom>
-using HashOf = StrongId<Phantom, Hash>;
+using HashOf = StrongId<Phantom, TracingHash>;
 
 } // namespace nix
 

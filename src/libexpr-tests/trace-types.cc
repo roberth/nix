@@ -51,7 +51,7 @@ TEST_F(TraceTypesTest, ResolveUnresolveRoundTrip)
     auto deep = pool.intern(SelectorGetAttr{"deep", list});
     auto app  = pool.intern(SelectorApply{imp});
     auto cba  = pool.intern(SelectorCallbackApply{
-        trace::parseTracingHex("00000000000000000000000000abc123").toNixHash(), imp});
+        trace::parseTracingHex("00000000000000000000000000abc123"), imp});
 
     for (auto sel : std::vector{leaf, step, deep, app, cba}) {
         auto raw = unresolve(sel->node);
@@ -91,7 +91,7 @@ TEST_F(TraceTypesTest, InternIdempotence)
    the unresolve → CBOR → DB → CBOR → resolve → intern pipeline. */
 TEST_F(TraceTypesTest, DbFacadeCrossPoolFind)
 {
-    Hash h = trace::tracingZeroHash().toNixHash();
+    TracingHash h = trace::tracingZeroHash();
     {
         TracingDecisionGraph g(dbPath);
         auto sel = g.selectorPool.intern(SelectorImport{"/target.nix"});
@@ -116,7 +116,7 @@ TEST_F(TraceTypesTest, FindByHexHitMissAndMalformed)
 
     // Hit: intern something, findByHex with its hex, expect same content back.
     auto sel = pool.intern(SelectorImport{"/y.nix"});
-    auto hex = sel->cachedHash.to_string(HashFormat::Base16, false);
+    auto hex = sel->cachedHash.toHex();
     auto hit = pool.findByHex(hex);
     ASSERT_TRUE(hit.has_value());
     EXPECT_EQ((*hit)->cachedHash, sel->cachedHash);
@@ -136,7 +136,7 @@ TEST_F(TraceTypesTest, FindByHexHitMissAndMalformed)
    and the resolved chain matches the interned shape. */
 TEST_F(TraceTypesTest, DeepChainDbReconstruction)
 {
-    Hash outerHash = trace::tracingZeroHash().toNixHash();
+    TracingHash outerHash = trace::tracingZeroHash();
     {
         TracingDecisionGraph g(dbPath);
         auto & pool = g.selectorPool;

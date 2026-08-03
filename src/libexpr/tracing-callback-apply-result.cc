@@ -15,7 +15,7 @@ TracingCallbackApplyResult::TracingCallbackApplyResult(
     , writer(writer_)
     , producer(std::move(producer_))
 {
-    qHex = producer->cachedHash.to_string(HashFormat::Base16, false);
+    qHex = producer->cachedHash.toHex();
 }
 
 void TracingCallbackApplyResult::recordD2(ref<const trace::Selector> query, const trace::ResultVariant & result)
@@ -33,7 +33,7 @@ void TracingCallbackApplyResult::recordD2(ref<const trace::Selector> query, cons
         [](const auto & r) -> nlohmann::json { return r; },
         result);
     auto rPayload = jsonToCborString(rJson);
-    callbackCell->callbackState->runningObsSet.push_back({qh, rPayload});
+    callbackCell->callbackState->runningObsSet.push_back({qh.toNixHash(), rPayload});
 }
 
 std::shared_ptr<Object> TracingCallbackApplyResult::maybeGetAttr(const std::string & name)

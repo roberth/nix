@@ -119,7 +119,7 @@ TEST_F(OuterObjectTest, ProducerWiring)
     ASSERT_TRUE(sel.has_value());
     EXPECT_EQ(sel->get_ptr().get(), producer.get_ptr().get());
     EXPECT_EQ(*outer.getSelectorHashHex(),
-              producer->cachedHash.to_string(HashFormat::Base16, false));
+              producer->cachedHash.toHex());
 }
 
 /* 2. maybeGetAttr — child's producer is SelectorGetAttr{name, parent=self.producer};
@@ -194,7 +194,7 @@ TEST_F(OuterObjectTest, GetListElemChildProducer)
 TEST_F(OuterObjectTest, GetFunctionInfoQuerySelector)
 {
     auto producer = makeProducer();
-    std::optional<Hash> capturedSelectorHash;
+    std::optional<TracingHash> capturedSelectorHash;
 
     OuterQueryFn queryFn = [&capturedSelectorHash](std::shared_ptr<Object>, ref<const trace::Selector> q,
                                                     ref<const trace::Selector>, std::shared_ptr<const ArgCell>) {
@@ -226,7 +226,7 @@ TEST_F(OuterObjectTest, QueryApplyResultProducer)
     // Result-wrapper producer callable: returns SelectorApply{parent=fnProducer}.
     auto applyResultProducer = g->selectorPool.intern(trace::SelectorApply{fnProducer});
 
-    std::optional<Hash> capturedFnProducerHash;
+    std::optional<TracingHash> capturedFnProducerHash;
     OuterApplyFn applyFn = [applyResultProducer, &capturedFnProducerHash](
         std::shared_ptr<Object>, ref<const trace::Selector> fnProducerArg,
         std::shared_ptr<Object>, std::shared_ptr<const ArgCell>) {
