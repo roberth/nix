@@ -340,6 +340,109 @@ std::optional<std::string> TracingReplayEvaluator::computeLiveResponse(const tra
     return std::nullopt;
 }
 
+namespace {
+
+/**
+ * Look for a callback-firing cell in the current chain whose
+ * `callbackState->initialFnHex` matches `fnHex` and whose
+ * `runningObsSet` is compatible with `incoming` (no reqHash shared
+ * with a conflicting response). Among candidates, prefer the one
+ * with the largest request-hash intersection. Empty intersection is
+ * a valid candidate — a lazier callback firing can subsume a more
+ * observed one; the root of the arg tends to be the shared
+ * observation, so the intersection is rarely truly empty in
+ * practice, and unconditionally-lazy callbacks (widely-usable
+ * thunks) must remain reusable.
+ *
+ * On hit, EXTEND both the cell's runningObsSet and the RCA's
+ * obsSetResponses map with entries from `incoming` the cell didn't
+ * already have. Returns the RCA to reuse; on miss, returns nullptr
+ * and the caller falls back to constructing a fresh RCA.
+ */
+std::shared_ptr<ReplayCallbackArg> tryReuseCallbackFiringRCA(
+    const std::string & fnHex,
+    const std::map<TracingHash, std::string> & incoming,
+    std::shared_ptr<ArgCell> startCell)
+{
+    std::shared_ptr<ArgCell> bestCell;
+    std::shared_ptr<ReplayCallbackArg> bestRCA;
+    size_t bestScore = 0;
+    bool haveBest = false;
+
+    int seen = 0, seenCallback = 0, seenFnMatch = 0, seenRCA = 0, seenCompat = 0;
+    for (auto cell = startCell; cell; cell = cell->parent) {
+        ++seen;
+        auto cs = cell->getCallbackState();
+        if (!cs) continue;
+        ++seenCallback;
+        if (cs->initialFnHex != fnHex) continue;
+        ++seenFnMatch;
+        /* Cell's liveObject must be an RCA for reuse to make sense —
+           on the recording side liveObject is a TracingCallbackArg,
+           whose obsSetResponses model doesn't apply. */
+        auto rca = std::dynamic_pointer_cast<ReplayCallbackArg>(cell->liveObject);
+        if (!rca) continue;
+        ++seenRCA;
+
+        size_t intersection = 0;
+        bool compatible = true;
+        for (auto & fact : cs->runningObsSet) {
+            auto it = incoming.find(fact.reqHash);
+            if (it == incoming.end()) continue;
+            if (it->second != fact.responsePayload) {
+                compatible = false;
+                break;
+            }
+            ++intersection;
+        }
+        if (!compatible) continue;
+        ++seenCompat;
+        if (!haveBest || intersection > bestScore) {
+            bestCell = cell;
+            bestRCA = rca;
+            bestScore = intersection;
+            haveBest = true;
+        }
+    }
+
+    if (!haveBest) {
+        tracingCacheLog(
+            "callbackApply: no reusable cell for fn=%s (chainLen=%d cellsWithCb=%d fnMatch=%d rcaOK=%d compat=%d)",
+            fnHex.substr(0, 12).c_str(), seen, seenCallback, seenFnMatch, seenRCA, seenCompat);
+        return nullptr;
+    }
+
+    /* Extend both stores with entries incoming has that the cell
+       doesn't. runningObsSet is a vector — build a reqHash set for
+       O(N+M) dedup; obsSetResponses is the RCA's map, direct
+       emplace. Both must stay in sync — OuterApply::run's walker-side
+       populate maintains them together at expr-from-object.cc. */
+    std::unordered_set<TracingHash> presentReqs;
+    auto * cbState = bestCell->getCallbackState();
+    for (auto & fact : cbState->runningObsSet)
+        presentReqs.insert(fact.reqHash);
+    auto obsMap = bestRCA->getObsSetResponses();
+    size_t extended = 0;
+    for (auto & [req, resp] : incoming) {
+        if (presentReqs.count(req)) continue;
+        /* getCallbackState() returns const *; the cell owns the
+           state and callers of this reuse helper have write intent.
+           const_cast is honest here — the field is logically mutable
+           for the duration of a firing. */
+        const_cast<CallbackState *>(cbState)->runningObsSet.push_back(
+            TracingDecisionGraph::InlineFact{req, resp});
+        if (obsMap)
+            obsMap->emplace(req, resp);
+        ++extended;
+    }
+    tracingCacheLog(
+        "callbackApply: REUSE cell fn=%s intersection=%zu extended=%zu",
+        fnHex.substr(0, 12).c_str(), bestScore, extended);
+    return bestRCA;
+}
+
+} // namespace
+
 /* Resolve a recorded outer-value id (hex of a Hash) to a live Object.
    First check the per-history memo (ctx.memo) for already-resolved ids.
    Then history the proxy graph (ctx.currentProxy.parent → …) looking
@@ -434,9 +537,9 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveIdentity(const std::strin
                 cba->argObsSet.toHex().substr(0, 12).c_str());
             return nullptr;
         }
-        auto obsSetMap = std::make_shared<std::map<TracingHash, std::string>>();
+        std::map<TracingHash, std::string> incomingObs;
         for (const auto & obs : *obsSet)
-            obsSetMap->emplace(obs.reqHash, obs.responsePayload);
+            incomingObs.emplace(obs.reqHash, obs.responsePayload);
         std::string fnHex = cba->parent->cachedHash.toHex();
         auto fnObj = resolveIdentity(fnHex, ctx);
         if (!fnObj) {
@@ -445,20 +548,37 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveIdentity(const std::strin
                 idStr.substr(0, 12), fnHex.substr(0, 12).c_str());
             return nullptr;
         }
-        /* Match writer's SelectorArg{layer2Cell.depth}. layer2Cell is
-           child of TCA.argCell (= fn's argCell in this SCA), so its
-           depth is fn.argCell.depth + 1. */
-        auto fnCell = fnObj->getProxyArgCell();
-        if (!fnCell)
-            panic("callbackApply producer: resolved fn has no argCell");
-        int argDepth = fnCell->depth + 1;
-        auto argProducerSel = decisionGraph.selectorPool.intern(trace::SelectorArg{argDepth});
-        auto replayArg = std::make_shared<ReplayCallbackArg>(
-            argProducerSel,
-            decisionGraph, inner->getEvalState().rootFSRoot,
-            &inner->getEvalState(),
-            nullptr,
-            obsSetMap);
+        /* Try cell-reuse first: an ancestor callback-firing cell in
+           the current chain with a compatible runningObsSet lets us
+           reuse its RCA. Extending the RCA's obsSet with this
+           dispatch's requests, then invoking queryApply against the
+           same RCA, avoids the recursive re-dispatch that a fresh
+           RCA (missing entries served by the ancestor's obs record)
+           would trigger. */
+        auto startCell = ctx.walkCell
+                           ? ctx.walkCell
+                           : (ctx.currentProxy ? ctx.currentProxy->getProxyArgCell() : nullptr);
+        auto reusedRCA = tryReuseCallbackFiringRCA(fnHex, incomingObs, startCell);
+        std::shared_ptr<Object> replayArg;
+        if (reusedRCA) {
+            replayArg = reusedRCA;
+        } else {
+            /* Match writer's SelectorArg{layer2Cell.depth}. layer2Cell
+               is child of TCA.argCell (= fn's argCell in this SCA),
+               so its depth is fn.argCell.depth + 1. */
+            auto fnCell = fnObj->getProxyArgCell();
+            if (!fnCell)
+                panic("callbackApply producer: resolved fn has no argCell");
+            int argDepth = fnCell->depth + 1;
+            auto argProducerSel = decisionGraph.selectorPool.intern(trace::SelectorArg{argDepth});
+            auto obsSetMap = std::make_shared<std::map<TracingHash, std::string>>(std::move(incomingObs));
+            replayArg = std::make_shared<ReplayCallbackArg>(
+                argProducerSel,
+                decisionGraph, inner->getEvalState().rootFSRoot,
+                &inner->getEvalState(),
+                nullptr,
+                obsSetMap);
+        }
         try {
             auto resultObj = fnObj->queryApply(replayArg);
             if (resultObj)
@@ -605,9 +725,9 @@ std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nl
                         q.argObsSet.toHex().substr(0, 12));
                     return std::nullopt;
                 }
-                auto obsSetMap = std::make_shared<std::map<TracingHash, std::string>>();
+                std::map<TracingHash, std::string> incomingObs;
                 for (const auto & obs : *obsSet)
-                    obsSetMap->emplace(obs.reqHash, obs.responsePayload);
+                    incomingObs.emplace(obs.reqHash, obs.responsePayload);
                 std::shared_ptr<Object> fnObj = resolveIdentity(fnHex, ctx);
                 if (!fnObj) {
                     tracingCacheLog(
@@ -615,19 +735,34 @@ std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nl
                         fnHex.substr(0, 12));
                     return std::nullopt;
                 }
-                /* Contra-arg identity: SelectorArg{depth} matching
-                   writer's firingCell.depth = fn.argCell.depth + 1. */
-                auto fnCell = fnObj->getProxyArgCell();
-                if (!fnCell)
-                    panic("callbackApply dispatch: resolved fn has no argCell");
-                int argDepth = fnCell->depth + 1;
-                auto argProducerSel = decisionGraph.selectorPool.intern(trace::SelectorArg{argDepth});
-                auto replayArg = std::make_shared<ReplayCallbackArg>(
-                    argProducerSel,
-                    decisionGraph, inner->getEvalState().rootFSRoot,
-                    &inner->getEvalState(),
-                    nullptr,
-                    obsSetMap);
+                /* Cell-reuse: if an ancestor callback-firing cell in
+                   the current chain has a compatible runningObsSet
+                   (see tryReuseCallbackFiringRCA), reuse its RCA with
+                   its obsSet extended to include this dispatch's
+                   requests. Otherwise fresh RCA. */
+                auto startCell = ctx.walkCell
+                                   ? ctx.walkCell
+                                   : (ctx.currentProxy ? ctx.currentProxy->getProxyArgCell() : nullptr);
+                auto reusedRCA = tryReuseCallbackFiringRCA(fnHex, incomingObs, startCell);
+                std::shared_ptr<Object> replayArg;
+                if (reusedRCA) {
+                    replayArg = reusedRCA;
+                } else {
+                    /* Contra-arg identity: SelectorArg{depth} matching
+                       writer's firingCell.depth = fn.argCell.depth + 1. */
+                    auto fnCell = fnObj->getProxyArgCell();
+                    if (!fnCell)
+                        panic("callbackApply dispatch: resolved fn has no argCell");
+                    int argDepth = fnCell->depth + 1;
+                    auto argProducerSel = decisionGraph.selectorPool.intern(trace::SelectorArg{argDepth});
+                    auto obsSetMap = std::make_shared<std::map<TracingHash, std::string>>(std::move(incomingObs));
+                    replayArg = std::make_shared<ReplayCallbackArg>(
+                        argProducerSel,
+                        decisionGraph, inner->getEvalState().rootFSRoot,
+                        &inner->getEvalState(),
+                        nullptr,
+                        obsSetMap);
+                }
                 try {
                     auto resultObj = fnObj->queryApply(replayArg);
                     if (!resultObj)
