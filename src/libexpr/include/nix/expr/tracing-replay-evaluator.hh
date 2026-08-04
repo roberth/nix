@@ -119,10 +119,18 @@ class TracingReplayEvaluator : public Evaluator
 
     std::shared_ptr<Object> resolveApplyId(const std::string & idStr, const nlohmann::json & params, ResolutionContext & ctx);
 
-    /* Callback live invocation lives inside dispatchQueryRequest's
-       callbackApply branch — materialise a ReplayCallbackArg from
-       the recorded obsSet, then invoke fn->queryApply live. No
-       separate live-fire method. */
+    /** Dispatch a live callback application to satisfy a recorded SCA.
+        Materialises a ReplayCallbackArg backed by the recorded obsSet,
+        invokes fn->queryApply live, and populates cell state for the
+        subset-based reuse mechanism (tryReuseLiveCallbackApplication).
+        Returns the applyResult Object on success (either freshly
+        computed or reused from a prior live application), nullptr on
+        fn-resolution failure, obsSet miss, or queryApply exception.
+        Shared by resolveIdentity's callbackApply producer branch and
+        dispatchQueryRequest's SelectorCallbackApply visit branch. */
+    std::shared_ptr<Object> dispatchLiveCallbackApplication(
+        const trace::SelectorCallbackApply & sca,
+        ResolutionContext & ctx);
 
     std::shared_ptr<Object> resolveProducerChild(const std::string & idStr, const trace::SelectorNode & qv, const nlohmann::json & params, ResolutionContext & ctx);
 

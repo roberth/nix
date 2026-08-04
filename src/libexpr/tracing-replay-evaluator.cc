@@ -569,103 +569,18 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveIdentity(const std::strin
     }
 
     if (tag == "callbackApply") {
-        /* CBApply as a producer identity — materialise ReplayCallbackArg
-           from the referenced obsSet, resolve fn, invoke live, return
-           the applyResult Object (for the caller to navigate via
-           maybeGetAttr etc.). Mirrors dispatchQueryRequest's CBApply
-           branch but returns the Object instead of the serialised WHNF. */
+        /* CBApply as a producer identity: use the already-resolved
+           typed Selector from the pool (no JSON re-parse). Delegate
+           to the shared helper; memoise the resulting Object under
+           idStr so recursive resolveIdentity calls short-circuit. */
         tracingCacheLog("resolve %s: callbackApply producer", idStr.substr(0, 12));
-        auto resolved = trace::resolveFromJson(reqJson, decisionGraph.selectorPool);
-        auto * cba = resolved ? std::get_if<trace::SelectorCallbackApply>(&(*resolved)->node) : nullptr;
-        if (!cba) return nullptr;
-        auto obsSet = decisionGraph.getObservationSet(cba->argObsSet);
-        if (!obsSet) {
-            tracingCacheLog(
-                "resolve %s: callbackApply obsSet=%s not in pool",
-                idStr.substr(0, 12),
-                cba->argObsSet.toHex().substr(0, 12).c_str());
+        auto * cba = std::get_if<trace::SelectorCallbackApply>(&(*selOpt)->node);
+        if (!cba)
             return nullptr;
-        }
-        std::map<TracingHash, std::string> incomingObs;
-        for (const auto & obs : *obsSet)
-            incomingObs.emplace(obs.reqHash, obs.responsePayload);
-        std::string fnHex = cba->parent->cachedHash.toHex();
-        auto fnObj = resolveIdentity(fnHex, ctx);
-        if (!fnObj) {
-            tracingCacheLog(
-                "resolve %s: callbackApply fn=%s not resolvable",
-                idStr.substr(0, 12), fnHex.substr(0, 12).c_str());
-            return nullptr;
-        }
-        /* Look for a compatible live callback application in the
-           current cell chain. Three cases:
-           - hit + cachedApplyResult alive → return it, skip queryApply.
-           - hit but applyResult expired → run queryApply against the
-             reused RCA (extended obsSet), then re-populate.
-           - miss → construct fresh RCA + cell, run queryApply, populate
-             the fresh cell's cachedApplyResult. */
-        auto startCell = ctx.walkCell
-                           ? ctx.walkCell
-                           : (ctx.currentProxy ? ctx.currentProxy->getProxyArgCell() : nullptr);
-        auto hit = tryReuseLiveCallbackApplication(incomingObs, startCell);
-        if (hit.cachedApplyResult) {
-            ctx.memo[idStr] = hit.cachedApplyResult;
-            return hit.cachedApplyResult;
-        }
-        std::shared_ptr<Object> replayArg;
-        std::shared_ptr<ArgCell> populateCell;  // cell whose cachedApplyResult to set post-queryApply
-        if (hit.reusedRCA) {
-            replayArg = hit.reusedRCA;
-            populateCell = hit.targetCell;
-        } else {
-            /* Match writer's SelectorArg{layer2Cell.depth}. layer2Cell
-               is child of TCA.argCell (= fn's argCell in this SCA),
-               so its depth is fn.argCell.depth + 1. */
-            auto fnCell = fnObj->getProxyArgCell();
-            if (!fnCell)
-                panic("callbackApply producer: resolved fn has no argCell");
-            int argDepth = fnCell->depth + 1;
-            auto argProducerSel = decisionGraph.selectorPool.intern(trace::SelectorArg{argDepth});
-            auto obsSetMap = std::make_shared<std::map<TracingHash, std::string>>(std::move(incomingObs));
-            replayArg = std::make_shared<ReplayCallbackArg>(
-                argProducerSel,
-                decisionGraph, inner->getEvalState().rootFSRoot,
-                &inner->getEvalState(),
-                nullptr,
-                obsSetMap);
-        }
-        try {
-            auto resultObj = fnObj->queryApply(replayArg);
-            if (resultObj) {
-                ctx.memo[idStr] = resultObj;
-                /* Locate the just-created callback application cell for
-                   populating cachedApplyResult. Fresh path: OuterApply::run
-                   registered its localCell as the last entry in
-                   callerScope.liveCallbackChildren, where callerScope =
-                   fnObj.argCell. Reuse-but-expired path: cell known
-                   directly via targetCell. */
-                std::shared_ptr<ArgCell> cell = populateCell;
-                if (!cell) {
-                    if (auto fnArgCell = fnObj->getProxyArgCell()) {
-                        if (!fnArgCell->liveCallbackChildren.empty())
-                            cell = fnArgCell->liveCallbackChildren.back().lock();
-                    }
-                }
-                if (cell) {
-                    if (auto * cs = const_cast<CallbackState *>(cell->getCallbackState()))
-                        cs->cachedApplyResult = resultObj;
-                }
-                /* Anchor lifetime in the recent-callback ring so the weak
-                   cachedApplyResult stays resolvable across walker calls
-                   for the last N firings. */
-                anchorCallbackFiring(resultObj);
-            }
-            return resultObj;
-        } catch (const std::exception & e) { extern thread_local bool rcaBailFlag; if (rcaBailFlag) throw; /* rca-bail-diagnostic */
-            tracingCacheLog("resolve %s: callbackApply queryApply threw: %s",
-                idStr.substr(0, 12), e.what());
-            return nullptr;
-        }
+        auto resultObj = dispatchLiveCallbackApplication(*cba, ctx);
+        if (resultObj)
+            ctx.memo[idStr] = resultObj;
+        return resultObj;
     }
 
     auto qSel = trace::resolveFromJson(reqJson, decisionGraph.selectorPool);
@@ -748,6 +663,95 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveProducerChild(
     return child;
 }
 
+std::shared_ptr<Object> TracingReplayEvaluator::dispatchLiveCallbackApplication(
+    const trace::SelectorCallbackApply & sca,
+    ResolutionContext & ctx)
+{
+    auto obsSet = decisionGraph.getObservationSet(sca.argObsSet);
+    if (!obsSet) {
+        tracingCacheLog(
+            "callbackApply: obsSet=%s not in pool — miss",
+            sca.argObsSet.toHex().substr(0, 12).c_str());
+        return nullptr;
+    }
+    std::map<TracingHash, std::string> incomingObs;
+    for (const auto & obs : *obsSet)
+        incomingObs.emplace(obs.reqHash, obs.responsePayload);
+
+    std::string fnHex = sca.parent->cachedHash.toHex();
+    auto fnObj = resolveIdentity(fnHex, ctx);
+    if (!fnObj) {
+        tracingCacheLog(
+            "callbackApply: fn=%s not resolvable",
+            fnHex.substr(0, 12).c_str());
+        return nullptr;
+    }
+
+    /* Look for a compatible live callback application in the current
+       chain (see tryReuseLiveCallbackApplication). Three outcomes:
+       - hit + cachedApplyResult alive → return it, skip queryApply.
+       - hit but expired → queryApply against reused RCA (extended
+         obsSet), then re-populate on the newly-created cell.
+       - miss → construct fresh RCA + cell, queryApply, populate. */
+    auto startCell = ctx.walkCell
+                       ? ctx.walkCell
+                       : (ctx.currentProxy ? ctx.currentProxy->getProxyArgCell() : nullptr);
+    auto hit = tryReuseLiveCallbackApplication(incomingObs, startCell);
+    if (hit.cachedApplyResult)
+        return hit.cachedApplyResult;
+
+    std::shared_ptr<Object> replayArg;
+    std::shared_ptr<ArgCell> populateCell;
+    if (hit.reusedRCA) {
+        replayArg = hit.reusedRCA;
+        populateCell = hit.targetCell;
+    } else {
+        /* Contra-arg identity: SelectorArg{depth} matching writer's
+           firingCell.depth = fn.argCell.depth + 1. */
+        auto fnCell = fnObj->getProxyArgCell();
+        if (!fnCell)
+            panic("callbackApply: resolved fn has no argCell");
+        int argDepth = fnCell->depth + 1;
+        auto argProducerSel = decisionGraph.selectorPool.intern(trace::SelectorArg{argDepth});
+        auto obsSetMap = std::make_shared<std::map<TracingHash, std::string>>(std::move(incomingObs));
+        replayArg = std::make_shared<ReplayCallbackArg>(
+            argProducerSel,
+            decisionGraph, inner->getEvalState().rootFSRoot,
+            &inner->getEvalState(),
+            nullptr,
+            obsSetMap);
+    }
+    try {
+        auto resultObj = fnObj->queryApply(replayArg);
+        if (!resultObj)
+            return nullptr;
+        /* Populate cachedApplyResult on the just-created callback
+           application cell. Reuse-but-expired path: cell known
+           directly (targetCell). Fresh-miss path: OuterApply::run
+           registered its localCell as the last entry in
+           fnObj.argCell.liveCallbackChildren. */
+        std::shared_ptr<ArgCell> cell = populateCell;
+        if (!cell) {
+            if (auto fnArgCell = fnObj->getProxyArgCell()) {
+                if (!fnArgCell->liveCallbackChildren.empty())
+                    cell = fnArgCell->liveCallbackChildren.back().lock();
+            }
+        }
+        if (cell) {
+            if (auto * cs = const_cast<CallbackState *>(cell->getCallbackState()))
+                cs->cachedApplyResult = resultObj;
+        }
+        /* Anchor lifetime in the recent-callback ring so the weak
+           cachedApplyResult stays resolvable across walker calls for
+           the last N firings. */
+        anchorCallbackFiring(resultObj);
+        return resultObj;
+    } catch (const std::exception & e) { extern thread_local bool rcaBailFlag; if (rcaBailFlag) throw;
+        tracingCacheLog("callbackApply: fn->queryApply threw: %s", e.what());
+        return nullptr;
+    }
+}
+
 std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nlohmann::json & reqJson, ResolutionContext & ctx)
 {
     auto qSelOpt = trace::resolveFromJson(reqJson, decisionGraph.selectorPool);
@@ -790,93 +794,19 @@ std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nl
                     return std::nullopt;
                 }
             } else if constexpr (std::is_same_v<Q, trace::SelectorCallbackApply>) {
-                /* Task #110: materialise a ReplayCallbackArg backed by
-                   the referenced ObservationSet, resolve fn live via
-                   subject-navigation, invoke fn->queryApply(replayArg),
-                   return the applyResult's WHNF. */
-                std::string fnHex = q.parent->cachedHash.toHex();
-                auto obsSet = decisionGraph.getObservationSet(q.argObsSet);
-                if (!obsSet) {
-                    tracingCacheLog(
-                        "callbackApply: obsSet=%s not in pool — miss",
-                        q.argObsSet.toHex().substr(0, 12));
+                /* Task #110: dispatch via the shared helper — reuse-aware
+                   materialisation of a live callback application. On
+                   success, serialise the applyResult's WHNF for the
+                   walker's Fact comparison; on any failure the walker
+                   sees a null response and misses cleanly. */
+                auto resultObj = dispatchLiveCallbackApplication(q, ctx);
+                if (!resultObj)
                     return std::nullopt;
-                }
-                std::map<TracingHash, std::string> incomingObs;
-                for (const auto & obs : *obsSet)
-                    incomingObs.emplace(obs.reqHash, obs.responsePayload);
-                std::shared_ptr<Object> fnObj = resolveIdentity(fnHex, ctx);
-                if (!fnObj) {
-                    tracingCacheLog(
-                        "callbackApply: fn resolution miss (fn=%s)",
-                        fnHex.substr(0, 12));
-                    return std::nullopt;
-                }
-                /* Look for a compatible live callback application in
-                   the current chain (see tryReuseLiveCallbackApplication).
-                   Hit + cachedApplyResult alive → return its WHNF
-                   without queryApply. Hit but expired → fresh queryApply
-                   against reused RCA (extended obsSet). Miss → fresh
-                   RCA + queryApply, populate for future reuse. */
-                auto startCell = ctx.walkCell
-                                   ? ctx.walkCell
-                                   : (ctx.currentProxy ? ctx.currentProxy->getProxyArgCell() : nullptr);
-                auto hit = tryReuseLiveCallbackApplication(incomingObs, startCell);
-                if (hit.cachedApplyResult) {
-                    try {
-                        auto whnf = computeWHNFFromObject(*hit.cachedApplyResult);
-                        return jsonToCborString(nlohmann::json(whnf));
-                    } catch (const std::exception & e) { extern thread_local bool rcaBailFlag; if (rcaBailFlag) throw;
-                        tracingCacheLog("callbackApply: cached applyResult WHNF failed: %s", e.what());
-                        return std::nullopt;
-                    }
-                }
-                std::shared_ptr<Object> replayArg;
-                std::shared_ptr<ArgCell> populateCell;
-                if (hit.reusedRCA) {
-                    replayArg = hit.reusedRCA;
-                    populateCell = hit.targetCell;
-                } else {
-                    /* Contra-arg identity: SelectorArg{depth} matching
-                       writer's firingCell.depth = fn.argCell.depth + 1. */
-                    auto fnCell = fnObj->getProxyArgCell();
-                    if (!fnCell)
-                        panic("callbackApply dispatch: resolved fn has no argCell");
-                    int argDepth = fnCell->depth + 1;
-                    auto argProducerSel = decisionGraph.selectorPool.intern(trace::SelectorArg{argDepth});
-                    auto obsSetMap = std::make_shared<std::map<TracingHash, std::string>>(std::move(incomingObs));
-                    replayArg = std::make_shared<ReplayCallbackArg>(
-                        argProducerSel,
-                        decisionGraph, inner->getEvalState().rootFSRoot,
-                        &inner->getEvalState(),
-                        nullptr,
-                        obsSetMap);
-                }
                 try {
-                    auto resultObj = fnObj->queryApply(replayArg);
-                    if (!resultObj)
-                        return std::nullopt;
-                    /* Populate for future reuse — same rationale as
-                       resolveIdentity's callbackApply branch. */
-                    std::shared_ptr<ArgCell> cell = populateCell;
-                    if (!cell) {
-                        if (auto fnArgCell = fnObj->getProxyArgCell()) {
-                            if (!fnArgCell->liveCallbackChildren.empty())
-                                cell = fnArgCell->liveCallbackChildren.back().lock();
-                        }
-                    }
-                    if (cell) {
-                        if (auto * cs = const_cast<CallbackState *>(cell->getCallbackState()))
-                            cs->cachedApplyResult = resultObj;
-                    }
-                    anchorCallbackFiring(resultObj);
                     auto whnf = computeWHNFFromObject(*resultObj);
-                    tracingCacheLog(
-                        "callbackApply: HIT obsSet=%s whnf=%s",
-                        q.argObsSet.toHex().substr(0, 12), whnf.type.c_str());
                     return jsonToCborString(nlohmann::json(whnf));
-                } catch (const std::exception & e) { extern thread_local bool rcaBailFlag; if (rcaBailFlag) throw; /* rca-bail-diagnostic */
-                    tracingCacheLog("callbackApply: fn->queryApply failed: %s", e.what());
+                } catch (const std::exception & e) { extern thread_local bool rcaBailFlag; if (rcaBailFlag) throw;
+                    tracingCacheLog("callbackApply: applyResult WHNF failed: %s", e.what());
                     return std::nullopt;
                 }
             } else if constexpr (std::is_same_v<Q, trace::SelectorArg>) {
