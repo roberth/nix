@@ -815,24 +815,44 @@ static std::string dg_observationSetPayload(
     return std::string(reinterpret_cast<const char *>(cbor.data()), cbor.size());
 }
 
+/* Per-obsSet-member content hash: BLAKE3(reqHash || responsePayload).
+   The set identity is the XOR-fold of these — order-independent
+   (commutative XOR) so no sort is needed on either the hash side or,
+   given set semantics, the storage side. */
+static TracingHash dg_obsSetMemberHash(const TracingDecisionGraph::InlineFact & m)
+{
+    std::string buf;
+    buf.reserve(TracingHash::size + m.responsePayload.size());
+    buf.append(reinterpret_cast<const char *>(m.reqHash.bytes.data()), TracingHash::size);
+    buf.append(m.responsePayload);
+    return trace::tracingHash(buf);
+}
+
 TracingHash TracingDecisionGraph::insertObservationSet(
     std::vector<TracingDecisionGraph::InlineFact> members)
 {
+    /* Sort+dedup first: XOR-fold cancels duplicates, so we'd key
+       {A, A} and {} identically without dedup — breaking obsSet
+       identity for callers that push the same fact twice per firing.
+       Sort cost is O(N log N) on small N (typically < 50 members),
+       tolerated. */
     auto sorted = dg_sortAndDedup(std::move(members));
-    auto payload = dg_observationSetPayload(sorted);
-    auto th = trace::tracingHash(payload);
 
-    /* Early return if we've inserted this obsSet before in this session.
-       `obsSetDepthMemo` is populated only after a successful insert
-       (line below), so membership implies the SQLite row exists and
-       depth is already computed. Skips sort-dedup-hash+SQL round-trip
-       for repeated obsSets — hot under H2's compositional recording,
-       where the same probe pattern recurs across many callback firings. */
+    /* Cheap identity via XOR-fold of per-member hashes on the deduped
+       list. Under H2 compositional recording the same obsSet recurs
+       across many callback firings; on the repeat path we memo-hit
+       here and skip the CBOR-build + storage-round-trip. */
+    TracingHash th = trace::tracingZeroHash();
+    for (const auto & m : sorted)
+        th.xorInPlace(dg_obsSetMemberHash(m));
+
     {
         auto state(_state->lock());
         if (state->obsSetDepthMemo.contains(th))
             return th;
     }
+
+    auto payload = dg_observationSetPayload(sorted);
 
     /* SCA-nesting depth: derived from the ACTUAL obsSet content, not
        from execution ordering. For each member whose reqHash resolves
