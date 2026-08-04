@@ -26,7 +26,7 @@ TracingCallbackArg::TracingCallbackArg(
     ref<const trace::Selector> producer_,
     TracingWriter & writer,
     ref<SourceRoot> rootFSRoot,
-    ref<CallbackArgCell> argCell)
+    ref<RecordingCallbackArgCell> argCell)
     : inner(std::move(inner))
     , producer(std::move(producer_))
     , writer(writer)
@@ -264,7 +264,7 @@ std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> a
        OuterApply::run uses for its localCell, mirrored for this
        direction (outer applies inner-fn rather than inner→outer).
        initialFnHex captured at construction (#261). */
-    auto layer2Cell = CallbackArgCell::make(
+    auto layer2Cell = RecordingCallbackArgCell::make(
         argCell.get_ptr(), argObj, producer->cachedHash.toHex());
 
     /* Producer for the wrapped outer-arg — SelectorArg{depth} at the
@@ -315,10 +315,10 @@ std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> a
         std::shared_ptr<Object> argObj2,
         std::shared_ptr<ArgCell> callerScope) -> OuterApplyResult {
         /* #261: Cell for THIS nested apply — created directly as
-           CallbackArgCell (was previously a Regular cell created by
+           RecordingCallbackArgCell (was previously a Regular cell created by
            OuterObject::queryApply then mutated in-place with
            callbackState). initialFnHex populated at construction. */
-        auto nestedCell = CallbackArgCell::make(
+        auto nestedCell = RecordingCallbackArgCell::make(
             callerScope, argObj2, fnProducer->cachedHash.toHex());
 
         auto nestedArgProducerSel = dg.selectorPool.intern(trace::SelectorArg{nestedCell->depth});

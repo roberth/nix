@@ -12,7 +12,12 @@ const CallbackState * RegularArgCell::getCallbackState() const
     return nullptr;
 }
 
-const CallbackState * CallbackArgCell::getCallbackState() const
+const CallbackState * RecordingCallbackArgCell::getCallbackState() const
+{
+    return &callbackState;
+}
+
+const CallbackState * ReplayCallbackArgCell::getCallbackState() const
 {
     return &callbackState;
 }

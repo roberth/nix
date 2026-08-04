@@ -120,6 +120,8 @@ public:
         return obsSetResponses;
     }
 
+    const ReplayCallbackArg * asReplayCallbackArg() const override { return this; }
+
     std::shared_ptr<ArgCell> getProxyArgCell() const override { return argCell; }
 
     /** Content-defined identity is the producer Selector's cached hash.

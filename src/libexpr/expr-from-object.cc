@@ -157,24 +157,35 @@ OuterApplyResult OuterApply::run(
     if (!outerState)
         throw Error("outer apply requires outerState");
 
-    /* #261: the apply's own cell is created here (lifted out of
-       OuterObject::queryApply). Callback firing (`innerWriter` set)
-       → CallbackArgCell carrying fn's Q hex; pure outer apply → a
-       Regular cell. The concrete type is picked up front so the
-       producer-callback captures a typed cell — no post-construction
-       mutation of the callback state.
+    /* The apply's own cell. Three shapes:
+       - Pure outer apply (no innerWriter): a RegularArgCell — no
+         callback firing state at all.
+       - Cold callback firing (innerWriter, arg is a live inner Value):
+         a RecordingCallbackArgCell — TracingCallbackArg wraps the arg
+         and appends into its runningObsSet as the outer probes it.
+       - Warm callback firing (innerWriter, arg is a ReplayCallbackArg):
+         a ReplayCallbackArgCell — the RCA's recorded obsSet hydrates
+         the cell up-front, so warm's QCA hash equals cold's without
+         any live accumulation. No TCA wrap in this branch — the RCA
+         already encapsulates the recorded contract.
 
-       For the callback branch the returned cell is used both as
-       localCell inside this function and as the wrapped TCA's
-       argCell (so recordObservation lands in the same runningObsSet
-       the producer callable snapshots). */
+       The `recordingCell` local is set only in the cold-callback
+       branch; TCA-wrap and the recording-side producer capture use it. */
     std::shared_ptr<ArgCell> localCell;
-    std::shared_ptr<CallbackArgCell> callbackCell;
-    if (innerWriter) {
-        callbackCell = CallbackArgCell::make(callerScope, argObj, fnIdStr);
-        localCell = callbackCell;
-    } else {
+    std::shared_ptr<RecordingCallbackArgCell> recordingCell;
+    if (!innerWriter) {
         localCell = RegularArgCell::make(callerScope, argObj);
+    } else if (auto * rca = argObj->asReplayCallbackArg()) {
+        std::vector<TracingDecisionGraph::InlineFact> recordedObs;
+        if (auto obsMap = rca->getObsSetResponses()) {
+            recordedObs.reserve(obsMap->size());
+            for (const auto & [selectorHash, responsePayload] : *obsMap)
+                recordedObs.push_back({selectorHash, responsePayload});
+        }
+        localCell = ReplayCallbackArgCell::make(callerScope, argObj, fnIdStr, std::move(recordedObs));
+    } else {
+        recordingCell = RecordingCallbackArgCell::make(callerScope, argObj, fnIdStr);
+        localCell = recordingCell;
     }
     /* Each new value that crosses INTO a cb-apply is
        treated uniformly as a value — no inherited Subject is
@@ -206,56 +217,23 @@ OuterApplyResult OuterApply::run(
         tracingCacheLog("createCallbackCell callsite=OuterApply::run fn=%s arg=%s",
                         fnIdStr.substr(0, 12), argStateHashStr.substr(0, 12));
         innerWriter->createCallbackCell(applyQ);
-        /* Walker-side pre-population: when the arg is a ReplayCallbackArg
-           (walker-materialised callback firing), pre-populate the
-           runningObsSet with the ReplayCallbackArg's obsSetResponses.
-           Otherwise the fresh callback cell would snapshot obs=empty at
-           every probe, producing facts that don't match cold's
-           recording (where cold's runningObsSet grew via
-           TracingCallbackArg::recordObservation as the fn body probed
-           the contra-arg). Match cold's snapshot moment by starting
-           with the recorded obs. */
-        if (auto * rca = dynamic_cast<ReplayCallbackArg *>(argObj.get())) {
-            if (auto obsMap = rca->getObsSetResponses()) {
-                for (const auto & [selectorHash, responsePayload] : *obsMap) {
-                    callbackCell->callbackState.runningObsSet.push_back(
-                        {selectorHash, responsePayload});
-                }
-                tracingCacheLog(
-                    "OuterApply::run: pre-populated runningObsSet with %zu entries from ReplayCallbackArg",
-                    obsMap->size());
-            }
-        }
     }
 
-    /* Wrap the argObj in TracingCallbackArg so the outer's
-       accesses on it during the apply land in the inner trace
-       with `from=hex(argSubject)`.
-
-       Skip the TracingCallbackArg wrap when argObj is a ReplayCallbackArg.
-       At warm replay the ReplayCallbackArg reaching `runOn` already
-       encapsulates the recorded contract for the cb-arg crossing — its
-       primop and its synthetic apply-result serve probes from the
-       recorded obsSet directly. Wrapping the ReplayCallbackArg in
-       TracingCallbackArg would (1) add a redundant recording layer with
-       no new information to capture (the writer isn't recording here at
-       warm) and (2) convert the ReplayCallbackArg's primop into the
-       `<cached-fn>(TracingCallbackArg)` cascade that bypasses the
-       callback-arg-lambda-primop-fires discipline (see
-       tracing-eval-cache-primop.md's "The callback-arg-lambda primop
-       must fire when the outer applies it"). At
-       cold, argObj is an `InterpreterObject` of a real inner Value and
-       the cast returns null, leaving the TracingCallbackArg wrap path
-       unchanged. */
+    /* TCA wrap is the recording side of contra-arg observation:
+       outer's accesses on the wrapped arg during the callback body
+       land in `recordingCell->callbackState.runningObsSet` via
+       `TracingCallbackArg::recordObservation`. Only fires when we're
+       in a cold callback firing (recordingCell set); the warm
+       (Replay) branch's cell is already hydrated and the RCA arg
+       encapsulates its own contract. */
     auto argProducerSel = innerWriter
         ? innerWriter->getDecisionGraph().selectorPool.intern(argProducer)
         : ref<const trace::Selector>(std::make_shared<const trace::Selector>(trace::SelectorNode{argProducer}));
-    auto wrappedArg = (innerWriter && outerRootFSRoot
-                       && !dynamic_cast<ReplayCallbackArg *>(argObj.get()))
+    auto wrappedArg = (recordingCell && outerRootFSRoot)
         ? std::shared_ptr<Object>(std::make_shared<TracingCallbackArg>(
               argObj, argProducerSel, *innerWriter,
               ref<SourceRoot>(outerRootFSRoot),
-              ref<CallbackArgCell>(callbackCell)))
+              ref<RecordingCallbackArgCell>(recordingCell)))
         : argObj;
 
     /* Bridge local arg via ExprFromObject. The cache memoises by
@@ -282,25 +260,24 @@ OuterApplyResult OuterApply::run(
 
     /* Build the producer callable for the wrapping OuterObject.
        For a callback firing (innerWriter present), the callable
-       synthesises `SelectorCallbackApply{fn=<fn hex>, argObsSet=<snapshot hash>}`
-       from callbackCell->callbackState.runningObsSet on demand —
-       probes at different moments produce distinct compositional
-       Selectors per §7 of the callback model. For non-callback
-       applies (no innerWriter), falls back to a stable SelectorApply.
-
-       The obsSet snapshot is inserted into the ObservationSet CAS
-       (via decisionGraph) so walker's `resolveIdentity` can decode
-       references to this producer at replay. */
+       synthesises `SelectorCallbackApply{fn, argObsSet=<snapshot hash>}`
+       from the callback cell's runningObsSet on demand — cold's cell
+       is still accumulating so the snapshot reflects the current
+       state; warm's cell is frozen at construction so the snapshot
+       reflects the recorded state (matching cold's hash). Read via
+       `getCallbackState()` so the same producer works for both
+       cold Recording and warm Replay cells. For non-callback applies
+       (no innerWriter), falls back to a stable SelectorApply. */
     std::function<ref<const trace::Selector>()> producerFn;
     if (innerWriter) {
         auto & dg = innerWriter->getDecisionGraph();
-        producerFn = [callbackCell, fnProducer, &dg]() -> ref<const trace::Selector> {
-            auto & cs = callbackCell->callbackState;
-            auto obsSetHash = dg.insertObservationSet(cs.runningObsSet);
-            /* Look up cs.initialFnHex in pool; fallback to fnProducer. */
+        producerFn = [localCell, fnProducer, &dg]() -> ref<const trace::Selector> {
+            auto * cs = localCell->getCallbackState();
+            auto obsSetHash = dg.insertObservationSet(cs->runningObsSet);
+            /* Look up cs->initialFnHex in pool; fallback to fnProducer. */
             ref<const trace::Selector> fnRef = fnProducer;
             try {
-                auto fnHash = trace::parseTracingHex(cs.initialFnHex);
+                auto fnHash = trace::parseTracingHex(cs->initialFnHex);
                 if (auto found = dg.selectorPool.find(fnHash))
                     fnRef = *found;
             } catch (...) {}
@@ -365,14 +342,14 @@ PrimOp * makeCachedFnPrimOp(
                            cell — inner->apply(fnObj, outerArgProxy)
                            reaches TracingEvaluator::apply's non-fnIsTlo
                            branch which requires arg's cell to be a
-                           CallbackArgCell. `initialFnHex` comes from
+                           RecordingCallbackArgCell. `initialFnHex` comes from
                            fnObj's Selector, which must exist here (the
                            primop is only synthesised when
                            `obj->getSelector().has_value()`; see
                            `ExprFromObject::eval` dispatch). */
                         auto parentCell = effectiveArgCell(*fnObj);
                         auto fnSelHex = fnObj->getSelectorHashHex().value();
-                        auto seedCell = CallbackArgCell::make(
+                        auto seedCell = RecordingCallbackArgCell::make(
                             parentCell, /*liveObject set below*/ nullptr, fnSelHex);
                         /* Selector-is-a-sequence: the arg is identified
                            by the apply that scoped it — SelectorApply

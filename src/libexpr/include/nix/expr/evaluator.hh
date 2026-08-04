@@ -241,6 +241,18 @@ public:
         std::shared_ptr<class Evaluator> innerEvaluator);
 
     /**
+     * Typed downcast to `ReplayCallbackArg` when this Object is
+     * one — otherwise `nullptr`. Used by `OuterApply::run` to
+     * distinguish walker-replay-reconstructed args (RCA, whose
+     * recorded contract shouldn't be re-wrapped by TCA) from
+     * real inner Values (typically `InterpreterObject`).
+     */
+    virtual const class ReplayCallbackArg * asReplayCallbackArg() const
+    {
+        return nullptr;
+    }
+
+    /**
      * Get information about a function's formal arguments.
      * Returns nullopt if:
      * - This is not a lambda (use getType() to check)

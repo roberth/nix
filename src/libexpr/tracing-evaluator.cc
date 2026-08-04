@@ -371,12 +371,12 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
     tracingCacheLog("createCallbackCell callsite=TracingEvaluator::apply fn=%s arg=%s",
                     fnStateHashStr.substr(0, 12), argStateHashStr.substr(0, 12));
     writer.createCallbackCell(applyQ);
-    /* #261: arg's cell must be a CallbackArgCell — the primop impl
+    /* #261: arg's cell must be a RecordingCallbackArgCell — the primop impl
        (makeCachedFnPrimOp) is the only path that reaches here, and
-       it creates seedCell as CallbackArgCell with initialFnHex
+       it creates seedCell as RecordingCallbackArgCell with initialFnHex
        populated at construction. */
     if (!cell->getCallbackState())
-        panic("TracingEvaluator::apply: arg cell is not a CallbackArgCell");
+        panic("TracingEvaluator::apply: arg cell is not a RecordingCallbackArgCell");
 
     auto qHash = applySel->cachedHash;
     auto qHex = qHash.toHex();

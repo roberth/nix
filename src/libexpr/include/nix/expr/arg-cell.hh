@@ -14,7 +14,7 @@
  *     evalExpr / apply roots, nested apply on TracingObject, boundary
  *     topology (sessionRootCell). Never carries callback-firing state.
  *
- *   - **CallbackArgCell** — a callback firing's arg cell (including
+ *   - **RecordingCallbackArgCell** — a callback firing's arg cell (including
  *     higher-order and nested). Carries `callbackState` = `{initialFnHex,
  *     runningObsSet}`; the contra-arg observations accumulate here and are
  *     snapshotted into an ObservationSet CAS when a producer Selector is
@@ -22,14 +22,14 @@
  *
  * Consumers that only need the topology / fact interface work with
  * `ArgCell` (base); consumers that specifically drive callback recording
- * (TracingCallbackArg, OuterApply::run) refer to `CallbackArgCell`
+ * (TracingCallbackArg, OuterApply::run) refer to `RecordingCallbackArgCell`
  * directly so the type carries the invariant.
  *
  * The one mixed site — `TracingObject::getProducerSelectorHex` and
  * `TracingWriter::emitCallbackApplyForApplyResult`, both branching on
  * "is this a callback cell?" through a base pointer — go through the
  * virtual `getCallbackState()` accessor that returns `nullptr` on
- * `RegularArgCell` and `&callbackState` on `CallbackArgCell`.
+ * `RegularArgCell` and `&callbackState` on `RecordingCallbackArgCell`.
  */
 
 #include "nix/expr/evaluator.hh"
@@ -45,7 +45,7 @@ namespace nix {
 struct QState; // defined in q-state.hh; forward-declared here so
                // topology-only cells don't pull the heavy dependencies.
 
-/** Per-callback-firing accumulator, carried inline on CallbackArgCell.
+/** Per-callback-firing accumulator, carried inline on RecordingCallbackArgCell.
     Contra-arg observations append directly via the callback-arg proxy's
     own cell chain; QCA emission at applyResult WHNF force finds the cell
     via the applyResult's argCell chain.
@@ -178,13 +178,13 @@ struct ArgCell : std::enable_shared_from_this<ArgCell>
     virtual ~ArgCell();
 
     /** Return the callback-firing state for cells that carry one.
-        `RegularArgCell` returns `nullptr`; `CallbackArgCell` returns
+        `RegularArgCell` returns `nullptr`; `RecordingCallbackArgCell` returns
         a pointer to its inline `callbackState`. The two mixed
         consumers — `TracingObject::getProducerSelectorHex` and
         `TracingWriter::emitCallbackApplyForApplyResult` — use this
         to branch on cell kind through a base pointer without
         `dynamic_cast`. Read-only; mutation goes through a typed
-        `ref<CallbackArgCell>` handle. */
+        `ref<RecordingCallbackArgCell>` handle. */
     virtual const CallbackState * getCallbackState() const = 0;
 
     /** Sum of canonicalisationEpoch over this cell + all ancestors.
@@ -292,16 +292,17 @@ struct RegularArgCell : ArgCell
     }
 };
 
-/** Cell for a callback firing (regular, higher-order, or nested).
-    Always carries `callbackState` — `getCallbackState()` returns
-    `&callbackState`. `initialFnHex` is captured at construction;
-    `runningObsSet` accumulates through the firing's lifetime. */
-struct CallbackArgCell : ArgCell
+/** Cold-path callback firing arg cell. `runningObsSet` is a mutable
+    accumulator populated by `TracingCallbackArg::recordObservation`
+    as the outer probes the arg during the firing; at QCA emission
+    the accumulated set is snapshotted into the ObservationSet CAS
+    and its hash goes into the SelectorCallbackApply. */
+struct RecordingCallbackArgCell : ArgCell
 {
-    /** Inline callback-firing state. */
+    /** Inline callback-firing state — accumulated live. */
     CallbackState callbackState;
 
-    CallbackArgCell(std::shared_ptr<ArgCell> parent_,
+    RecordingCallbackArgCell(std::shared_ptr<ArgCell> parent_,
                     std::shared_ptr<Object> liveObject_,
                     std::string initialFnHex)
         : ArgCell(std::move(parent_), std::move(liveObject_))
@@ -313,17 +314,55 @@ struct CallbackArgCell : ArgCell
        TU (satisfies -Werror=weak-vtables). */
     const CallbackState * getCallbackState() const override;
 
-    /** Construct a Callback cell. `initialFnHex` is the fn's Q hex
-        at firing time (populated into callbackState.initialFnHex at
-        construction; used by producer Selector construction). */
-    static std::shared_ptr<CallbackArgCell> make(
+    /** Construct a recording cell. `initialFnHex` is the fn's Q hex
+        at firing time. */
+    static std::shared_ptr<RecordingCallbackArgCell> make(
         std::shared_ptr<ArgCell> parent_,
         std::shared_ptr<Object> liveObject_,
         std::string initialFnHex)
     {
-        return std::make_shared<CallbackArgCell>(
+        return std::make_shared<RecordingCallbackArgCell>(
             std::move(parent_), std::move(liveObject_),
             std::move(initialFnHex));
+    }
+};
+
+/** Warm-path callback firing arg cell. `runningObsSet` is populated
+    once at construction from the ReplayCallbackArg's recorded
+    observations and not modified thereafter — the RCA serves probes
+    from its recorded responses, nothing accumulates. The pre-populated
+    obsSet is what makes warm's QCA hash equal cold's (which recorded
+    the same obs live). */
+struct ReplayCallbackArgCell : ArgCell
+{
+    /** Inline callback-firing state — pre-populated at construction. */
+    CallbackState callbackState;
+
+    ReplayCallbackArgCell(std::shared_ptr<ArgCell> parent_,
+                    std::shared_ptr<Object> liveObject_,
+                    std::string initialFnHex,
+                    std::vector<TracingDecisionGraph::InlineFact> recordedObsSet)
+        : ArgCell(std::move(parent_), std::move(liveObject_))
+        , callbackState{std::move(initialFnHex), std::move(recordedObsSet)}
+    {
+    }
+
+    /* Defined out-of-line in arg-cell.cc so the vtable lands in one
+       TU (satisfies -Werror=weak-vtables). */
+    const CallbackState * getCallbackState() const override;
+
+    /** Construct a replay cell. `initialFnHex` is the fn's Q hex at
+        firing time; `recordedObsSet` is the frozen observation
+        sequence lifted from the RCA that hydrated this cell. */
+    static std::shared_ptr<ReplayCallbackArgCell> make(
+        std::shared_ptr<ArgCell> parent_,
+        std::shared_ptr<Object> liveObject_,
+        std::string initialFnHex,
+        std::vector<TracingDecisionGraph::InlineFact> recordedObsSet)
+    {
+        return std::make_shared<ReplayCallbackArgCell>(
+            std::move(parent_), std::move(liveObject_),
+            std::move(initialFnHex), std::move(recordedObsSet));
     }
 };
 

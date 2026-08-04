@@ -298,7 +298,7 @@ std::shared_ptr<Object> OuterObject::queryApply(std::shared_ptr<Object> argObj)
     auto callerScope = effectiveArgCell(*this);
     /* #261: apply cell creation is lifted into `applyFn` — that's the
        site that knows whether the apply is a callback firing (needs a
-       CallbackArgCell) or a plain outer apply (RegularArgCell). We
+       RecordingCallbackArgCell) or a plain outer apply (RegularArgCell). We
        just hand it the caller's scope as the parent. */
     auto ar = applyFn(outerObj, producer(), std::move(argObj), callerScope);
     /* The wrapping OuterObject uses:
