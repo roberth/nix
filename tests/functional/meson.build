@@ -172,6 +172,7 @@ suites = [
       'tracing-eval-cache.sh',
       'builtins-cache.sh',
       'cb-385.sh',
+      'cb-reuse-trace-once.sh',
       'cb-deep-indep-orders.sh',
       'cb-deep-indep-singles.sh',
       'cb-apply-cli.sh',

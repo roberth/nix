@@ -67,6 +67,14 @@ struct CallbackState
         the callback body's evaluation. Snapshotted into the
         ObservationSet CAS at QCA emission. */
     std::vector<TracingDecisionGraph::InlineFact> runningObsSet;
+
+    /** The live callback application's applyResult Object, populated
+        by the SCA handler after `fn.queryApply(RCA)` returns. Weak
+        because the lifetime anchor lives on TracingReplayEvaluator's
+        bounded recent-callback ring; when the ring evicts the entry
+        (or Nix's GC eventually collects), this expires and the next
+        reuse check falls through to a fresh callback application. */
+    std::weak_ptr<Object> cachedApplyResult;
 };
 
 struct ArgCell : std::enable_shared_from_this<ArgCell>
@@ -186,6 +194,15 @@ struct ArgCell : std::enable_shared_from_this<ArgCell>
         `dynamic_cast`. Read-only; mutation goes through a typed
         `ref<RecordingCallbackArgCell>` handle. */
     virtual const CallbackState * getCallbackState() const = 0;
+
+    /** Callback application cells whose parent is this cell — kept
+        as weak refs so lifetime stays anchored elsewhere (typically
+        TracingReplayEvaluator's bounded recentCallbackFirings ring).
+        tryReuseLiveCallbackApplication walks each ancestor's list to
+        discover reuse candidates without requiring the callback cell
+        to be in the parent chain. Expired entries are lazily skipped
+        (no aggressive compaction). */
+    mutable std::vector<std::weak_ptr<ArgCell>> liveCallbackChildren;
 
     /** Sum of canonicalisationEpoch over this cell + all ancestors.
         Cheap: O(depth) walk. Since delta chains fold facts from cell

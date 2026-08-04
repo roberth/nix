@@ -62,6 +62,14 @@ struct OuterApplyResult
 {
     std::shared_ptr<Object> applyResult;
     std::function<ref<const trace::Selector>()> producerFn;
+    /** The live callback application's cell (from OuterApply::run's
+        `localCell`) — a RecordingCallbackArgCell (cold) or
+        ReplayCallbackArgCell (warm). The caller can plumb this
+        through to the wrapping OuterObject's `argCell` so the
+        applyResult carries the callback application's cell into
+        the outer's Object graph, enabling reuse discovery by
+        subsequent probes. */
+    std::shared_ptr<ArgCell> applyCell;
 };
 
 /**

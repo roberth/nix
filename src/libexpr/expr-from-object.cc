@@ -183,9 +183,18 @@ OuterApplyResult OuterApply::run(
                 recordedObs.push_back({selectorHash, responsePayload});
         }
         localCell = ReplayCallbackArgCell::make(callerScope, argObj, fnIdStr, std::move(recordedObs));
+        /* Register weak with callerScope so
+           tryReuseLiveCallbackApplication can discover this callback
+           application cell via chain traversal from later walks.
+           Lifetime is anchored on TracingReplayEvaluator's recent-
+           callback ring (SCA handler pushes the resultObj there). */
+        if (callerScope)
+            callerScope->liveCallbackChildren.push_back(localCell);
     } else {
         recordingCell = RecordingCallbackArgCell::make(callerScope, argObj, fnIdStr);
         localCell = recordingCell;
+        if (callerScope)
+            callerScope->liveCallbackChildren.push_back(localCell);
     }
     /* Each new value that crosses INTO a cb-apply is
        treated uniformly as a value — no inherited Subject is
@@ -294,6 +303,7 @@ OuterApplyResult OuterApply::run(
     return OuterApplyResult{
         .applyResult = resultObj,
         .producerFn = std::move(producerFn),
+        .applyCell = localCell,
     };
 }
 

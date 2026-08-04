@@ -343,24 +343,56 @@ std::optional<std::string> TracingReplayEvaluator::computeLiveResponse(const tra
 namespace {
 
 /**
- * Look for a callback-firing cell in the current chain whose
- * `callbackState->initialFnHex` matches `fnHex` and whose
- * `runningObsSet` is compatible with `incoming` (no reqHash shared
- * with a conflicting response). Among candidates, prefer the one
- * with the largest request-hash intersection. Empty intersection is
- * a valid candidate — a lazier callback firing can subsume a more
- * observed one; the root of the arg tends to be the shared
- * observation, so the intersection is rarely truly empty in
- * practice, and unconditionally-lazy callbacks (widely-usable
- * thunks) must remain reusable.
+ * The reuse of a live callback application to satisfy a recorded
+ * callback application (SCA dispatch). Two mutually exclusive cases,
+ * decided in tryReuseLiveCallbackApplication:
+ *
+ *  - `cachedApplyResult` set: a prior live callback application has
+ *    already produced its applyResult; skip the fresh `queryApply`
+ *    and return this applyResult directly.
+ *  - `reusedRCA` set (and `cachedApplyResult` empty): a compat cell
+ *    exists but hasn't populated its applyResult yet (in-progress
+ *    or lifetime-expired); the caller should invoke `queryApply`
+ *    against the RCA to produce a fresh applyResult, which will
+ *    populate the cell for subsequent reuses.
+ *  - Both empty: no compat cell found; caller constructs a fresh RCA
+ *    and invokes `queryApply` from scratch.
+ */
+struct ReuseHit
+{
+    std::shared_ptr<Object> cachedApplyResult;
+    std::shared_ptr<ReplayCallbackArg> reusedRCA;
+    std::shared_ptr<ArgCell> targetCell;  ///< The chosen live application's cell (for populate-on-fresh)
+};
+
+/**
+ * Look for a live callback application cell in the current chain
+ * whose `runningObsSet` is a subset of `incoming` (every fact in
+ * the cell agrees with `incoming` on both reqHash and response).
+ * Among subset candidates, prefer the largest — the cell whose
+ * observations are the most specific match short of exceeding
+ * `incoming`.
+ *
+ * Subset (not intersection-compat) is what isolates siblings: two
+ * callbacks with different fn bodies observe their contra-arg
+ * differently, so neither's obs is a subset of the other's — no
+ * false reuse across sibling firings.
+ *
+ * Fn identity via `SelectorArg{depth}` is positional and coarser
+ * than actual fn identity (two different lambdas at the same
+ * syntactic slot hash the same), so filtering by `initialFnHex`
+ * is unsafe. Under subset, coincidentally-hex-colliding fns with
+ * genuinely different observations correctly fail the subset
+ * check.
  *
  * On hit, EXTEND both the cell's runningObsSet and the RCA's
- * obsSetResponses map with entries from `incoming` the cell didn't
- * already have. Returns the RCA to reuse; on miss, returns nullptr
- * and the caller falls back to constructing a fresh RCA.
+ * obsSetResponses with entries from `incoming` the cell didn't
+ * already have. If the cell's `cachedApplyResult` is still alive
+ * (weak_ptr resolves), return it — the caller skips `queryApply`.
+ * Otherwise return the reused RCA so the caller re-runs `queryApply`
+ * against it. On no compat cell, returns an empty ReuseHit.
  */
-std::shared_ptr<ReplayCallbackArg> tryReuseCallbackFiringRCA(
-    const std::string & fnHex,
+ReuseHit tryReuseLiveCallbackApplication(
     const std::map<TracingHash, std::string> & incoming,
     std::shared_ptr<ArgCell> startCell)
 {
@@ -369,54 +401,63 @@ std::shared_ptr<ReplayCallbackArg> tryReuseCallbackFiringRCA(
     size_t bestScore = 0;
     bool haveBest = false;
 
-    int seen = 0, seenCallback = 0, seenFnMatch = 0, seenRCA = 0, seenCompat = 0;
-    for (auto cell = startCell; cell; cell = cell->parent) {
-        ++seen;
-        auto cs = cell->getCallbackState();
-        if (!cs) continue;
-        ++seenCallback;
-        if (cs->initialFnHex != fnHex) continue;
-        ++seenFnMatch;
-        /* Cell's liveObject must be an RCA for reuse to make sense —
-           on the recording side liveObject is a TracingCallbackArg,
-           whose obsSetResponses model doesn't apply. */
-        auto rca = std::dynamic_pointer_cast<ReplayCallbackArg>(cell->liveObject);
-        if (!rca) continue;
-        ++seenRCA;
+    int seen = 0, seenCallback = 0, seenRCA = 0, seenSubset = 0;
 
-        size_t intersection = 0;
-        bool compatible = true;
+    /* Candidate cells: (1) the walk's own chain — startCell → parent →
+       ... — for cells that themselves have callback state (rare,
+       usually chains are regular scopes); (2) each chain cell's
+       `liveCallbackChildren` — callback application cells created by
+       prior SCA dispatches whose callerScope was on this chain. This
+       is the main channel: chain cells are long-lived (anchored in
+       outer's Object graph), and their children lists give reuse a
+       stable index of past applications lifetime-bounded by the
+       TracingReplayEvaluator's ring. */
+    auto checkCandidate = [&](std::shared_ptr<ArgCell> cell) {
+        auto cs = cell->getCallbackState();
+        if (!cs) return;
+        ++seenCallback;
+        auto rca = std::dynamic_pointer_cast<ReplayCallbackArg>(cell->liveObject);
+        if (!rca) return;
+        ++seenRCA;
+        bool subset = true;
+        size_t score = 0;
         for (auto & fact : cs->runningObsSet) {
             auto it = incoming.find(fact.reqHash);
-            if (it == incoming.end()) continue;
-            if (it->second != fact.responsePayload) {
-                compatible = false;
+            if (it == incoming.end() || it->second != fact.responsePayload) {
+                subset = false;
                 break;
             }
-            ++intersection;
+            ++score;
         }
-        if (!compatible) continue;
-        ++seenCompat;
-        if (!haveBest || intersection > bestScore) {
+        if (!subset) return;
+        ++seenSubset;
+        if (!haveBest || score > bestScore) {
             bestCell = cell;
             bestRCA = rca;
-            bestScore = intersection;
+            bestScore = score;
             haveBest = true;
+        }
+    };
+    for (auto cell = startCell; cell; cell = cell->parent) {
+        ++seen;
+        checkCandidate(cell);
+        for (auto & weakChild : cell->liveCallbackChildren) {
+            if (auto child = weakChild.lock())
+                checkCandidate(child);
         }
     }
 
     if (!haveBest) {
         tracingCacheLog(
-            "callbackApply: no reusable cell for fn=%s (chainLen=%d cellsWithCb=%d fnMatch=%d rcaOK=%d compat=%d)",
-            fnHex.substr(0, 12).c_str(), seen, seenCallback, seenFnMatch, seenRCA, seenCompat);
-        return nullptr;
+            "callbackApply: no reusable cell (chainLen=%d cellsWithCb=%d rcaOK=%d subset=%d)",
+            seen, seenCallback, seenRCA, seenSubset);
+        return {};
     }
 
-    /* Extend both stores with entries incoming has that the cell
-       doesn't. runningObsSet is a vector — build a reqHash set for
-       O(N+M) dedup; obsSetResponses is the RCA's map, direct
-       emplace. Both must stay in sync — OuterApply::run's walker-side
-       populate maintains them together at expr-from-object.cc. */
+    /* Extend cell's runningObsSet + RCA's obsSetResponses with entries
+       `incoming` has that the cell doesn't. runningObsSet is a vector —
+       build a reqHash set for O(N+M) dedup. Both must stay in sync
+       (OuterApply::run maintains them together). */
     std::unordered_set<TracingHash> presentReqs;
     auto * cbState = bestCell->getCallbackState();
     for (auto & fact : cbState->runningObsSet)
@@ -425,20 +466,28 @@ std::shared_ptr<ReplayCallbackArg> tryReuseCallbackFiringRCA(
     size_t extended = 0;
     for (auto & [req, resp] : incoming) {
         if (presentReqs.count(req)) continue;
-        /* getCallbackState() returns const *; the cell owns the
-           state and callers of this reuse helper have write intent.
-           const_cast is honest here — the field is logically mutable
-           for the duration of a firing. */
+        /* getCallbackState() returns const *; the cell owns the state
+           and reuse callers have write intent. const_cast is honest
+           here — the field is logically mutable during the live
+           callback application. */
         const_cast<CallbackState *>(cbState)->runningObsSet.push_back(
             TracingDecisionGraph::InlineFact{req, resp});
         if (obsMap)
             obsMap->emplace(req, resp);
         ++extended;
     }
+    /* If the live application's applyResult is still alive, return it
+       and skip queryApply. Otherwise return just the RCA + cell so
+       the caller re-invokes queryApply and repopulates. */
+    auto locked = cbState->cachedApplyResult.lock();
     tracingCacheLog(
-        "callbackApply: REUSE cell fn=%s intersection=%zu extended=%zu",
-        fnHex.substr(0, 12).c_str(), bestScore, extended);
-    return bestRCA;
+        "callbackApply: REUSE cell subset=%zu extended=%zu cachedApplyResult=%s",
+        bestScore, extended, locked ? "hit" : "expired-or-empty");
+    return ReuseHit{
+        .cachedApplyResult = locked,
+        .reusedRCA = bestRCA,
+        .targetCell = bestCell,
+    };
 }
 
 } // namespace
@@ -548,20 +597,26 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveIdentity(const std::strin
                 idStr.substr(0, 12), fnHex.substr(0, 12).c_str());
             return nullptr;
         }
-        /* Try cell-reuse first: an ancestor callback-firing cell in
-           the current chain with a compatible runningObsSet lets us
-           reuse its RCA. Extending the RCA's obsSet with this
-           dispatch's requests, then invoking queryApply against the
-           same RCA, avoids the recursive re-dispatch that a fresh
-           RCA (missing entries served by the ancestor's obs record)
-           would trigger. */
+        /* Look for a compatible live callback application in the
+           current cell chain. Three cases:
+           - hit + cachedApplyResult alive → return it, skip queryApply.
+           - hit but applyResult expired → run queryApply against the
+             reused RCA (extended obsSet), then re-populate.
+           - miss → construct fresh RCA + cell, run queryApply, populate
+             the fresh cell's cachedApplyResult. */
         auto startCell = ctx.walkCell
                            ? ctx.walkCell
                            : (ctx.currentProxy ? ctx.currentProxy->getProxyArgCell() : nullptr);
-        auto reusedRCA = tryReuseCallbackFiringRCA(fnHex, incomingObs, startCell);
+        auto hit = tryReuseLiveCallbackApplication(incomingObs, startCell);
+        if (hit.cachedApplyResult) {
+            ctx.memo[idStr] = hit.cachedApplyResult;
+            return hit.cachedApplyResult;
+        }
         std::shared_ptr<Object> replayArg;
-        if (reusedRCA) {
-            replayArg = reusedRCA;
+        std::shared_ptr<ArgCell> populateCell;  // cell whose cachedApplyResult to set post-queryApply
+        if (hit.reusedRCA) {
+            replayArg = hit.reusedRCA;
+            populateCell = hit.targetCell;
         } else {
             /* Match writer's SelectorArg{layer2Cell.depth}. layer2Cell
                is child of TCA.argCell (= fn's argCell in this SCA),
@@ -581,8 +636,30 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveIdentity(const std::strin
         }
         try {
             auto resultObj = fnObj->queryApply(replayArg);
-            if (resultObj)
+            if (resultObj) {
                 ctx.memo[idStr] = resultObj;
+                /* Locate the just-created callback application cell for
+                   populating cachedApplyResult. Fresh path: OuterApply::run
+                   registered its localCell as the last entry in
+                   callerScope.liveCallbackChildren, where callerScope =
+                   fnObj.argCell. Reuse-but-expired path: cell known
+                   directly via targetCell. */
+                std::shared_ptr<ArgCell> cell = populateCell;
+                if (!cell) {
+                    if (auto fnArgCell = fnObj->getProxyArgCell()) {
+                        if (!fnArgCell->liveCallbackChildren.empty())
+                            cell = fnArgCell->liveCallbackChildren.back().lock();
+                    }
+                }
+                if (cell) {
+                    if (auto * cs = const_cast<CallbackState *>(cell->getCallbackState()))
+                        cs->cachedApplyResult = resultObj;
+                }
+                /* Anchor lifetime in the recent-callback ring so the weak
+                   cachedApplyResult stays resolvable across walker calls
+                   for the last N firings. */
+                anchorCallbackFiring(resultObj);
+            }
             return resultObj;
         } catch (const std::exception & e) { extern thread_local bool rcaBailFlag; if (rcaBailFlag) throw; /* rca-bail-diagnostic */
             tracingCacheLog("resolve %s: callbackApply queryApply threw: %s",
@@ -735,18 +812,30 @@ std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nl
                         fnHex.substr(0, 12));
                     return std::nullopt;
                 }
-                /* Cell-reuse: if an ancestor callback-firing cell in
-                   the current chain has a compatible runningObsSet
-                   (see tryReuseCallbackFiringRCA), reuse its RCA with
-                   its obsSet extended to include this dispatch's
-                   requests. Otherwise fresh RCA. */
+                /* Look for a compatible live callback application in
+                   the current chain (see tryReuseLiveCallbackApplication).
+                   Hit + cachedApplyResult alive → return its WHNF
+                   without queryApply. Hit but expired → fresh queryApply
+                   against reused RCA (extended obsSet). Miss → fresh
+                   RCA + queryApply, populate for future reuse. */
                 auto startCell = ctx.walkCell
                                    ? ctx.walkCell
                                    : (ctx.currentProxy ? ctx.currentProxy->getProxyArgCell() : nullptr);
-                auto reusedRCA = tryReuseCallbackFiringRCA(fnHex, incomingObs, startCell);
+                auto hit = tryReuseLiveCallbackApplication(incomingObs, startCell);
+                if (hit.cachedApplyResult) {
+                    try {
+                        auto whnf = computeWHNFFromObject(*hit.cachedApplyResult);
+                        return jsonToCborString(nlohmann::json(whnf));
+                    } catch (const std::exception & e) { extern thread_local bool rcaBailFlag; if (rcaBailFlag) throw;
+                        tracingCacheLog("callbackApply: cached applyResult WHNF failed: %s", e.what());
+                        return std::nullopt;
+                    }
+                }
                 std::shared_ptr<Object> replayArg;
-                if (reusedRCA) {
-                    replayArg = reusedRCA;
+                std::shared_ptr<ArgCell> populateCell;
+                if (hit.reusedRCA) {
+                    replayArg = hit.reusedRCA;
+                    populateCell = hit.targetCell;
                 } else {
                     /* Contra-arg identity: SelectorArg{depth} matching
                        writer's firingCell.depth = fn.argCell.depth + 1. */
@@ -767,6 +856,20 @@ std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nl
                     auto resultObj = fnObj->queryApply(replayArg);
                     if (!resultObj)
                         return std::nullopt;
+                    /* Populate for future reuse — same rationale as
+                       resolveIdentity's callbackApply branch. */
+                    std::shared_ptr<ArgCell> cell = populateCell;
+                    if (!cell) {
+                        if (auto fnArgCell = fnObj->getProxyArgCell()) {
+                            if (!fnArgCell->liveCallbackChildren.empty())
+                                cell = fnArgCell->liveCallbackChildren.back().lock();
+                        }
+                    }
+                    if (cell) {
+                        if (auto * cs = const_cast<CallbackState *>(cell->getCallbackState()))
+                            cs->cachedApplyResult = resultObj;
+                    }
+                    anchorCallbackFiring(resultObj);
                     auto whnf = computeWHNFFromObject(*resultObj);
                     tracingCacheLog(
                         "callbackApply: HIT obsSet=%s whnf=%s",

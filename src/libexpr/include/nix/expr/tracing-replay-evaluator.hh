@@ -6,6 +6,7 @@
 #include "nix/expr/tracing-writer.hh"
 #include "nix/util/ref.hh"
 
+#include <deque>
 #include <map>
 #include <unordered_map>
 #include <vector>
@@ -44,6 +45,27 @@ class TracingReplayEvaluator : public Evaluator
         request — memo lookup on a string is cheaper than
         SHA256-hashing the request payload just to key the memo. */
     std::unordered_map<std::string, std::string> envResponseMemo;
+
+    /** Bounded ring of recent live callback application results,
+        strong-holding the wrapping OuterObject (which transitively
+        holds the callback application cell via producerFn). Reuse
+        discovery walks liveCallbackChildren (weak) on cell chains;
+        an unexpired weak resolves iff the corresponding entry hasn't
+        been evicted from this ring. Lower-bounds availability at
+        `kRecentCallbackFiringsMax` — smaller values reduce reuse
+        hit rate; larger values retain more state per session. */
+    static constexpr size_t kRecentCallbackFiringsMax = 100;
+    std::deque<std::shared_ptr<Object>> recentCallbackFirings;
+
+    /** Push a live callback application result into the ring, evicting
+        the oldest if at capacity. Called by SCA handlers on the fresh
+        (non-reuse) path. */
+    void anchorCallbackFiring(std::shared_ptr<Object> resultObj)
+    {
+        recentCallbackFirings.push_back(std::move(resultObj));
+        if (recentCallbackFirings.size() > kRecentCallbackFiringsMax)
+            recentCallbackFirings.pop_front();
+    }
 
     /**
      * Per-history resolution context.
