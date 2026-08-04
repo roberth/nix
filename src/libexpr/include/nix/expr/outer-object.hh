@@ -138,15 +138,7 @@ class OuterObject : public Object
     trace::ResultWHNF & whnf();
 
 public:
-    OuterObject(std::function<ref<const trace::Selector>()> producer, std::shared_ptr<Object> outerObj, OuterQueryFn queryFn, ref<SourceRoot> outerRootFSRoot, trace::SelectorPool & selectorPool, OuterApplyFn applyFn = {});
-
-    /** Set the proxy's argCell. Call right after construction at
-        boundary sites. Returns *this for chaining. */
-    OuterObject & withArgCell(std::shared_ptr<ArgCell> argScope_)
-    {
-        argCell = std::move(argScope_);
-        return *this;
-    }
+    OuterObject(std::function<ref<const trace::Selector>()> producer, std::shared_ptr<Object> outerObj, OuterQueryFn queryFn, ref<SourceRoot> outerRootFSRoot, trace::SelectorPool & selectorPool, std::shared_ptr<ArgCell> argCell, OuterApplyFn applyFn = {});
 
     std::shared_ptr<ArgCell> getProxyArgCell() const override { return argCell; }
 

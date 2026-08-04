@@ -52,21 +52,15 @@ class TracingObject : public Object
     std::optional<trace::ResultWHNF> cachedWHNF;
     trace::ResultWHNF & whnf();
 
-    TracingObject(ref<Object> inner, TracingWriter & writer, ValueHandle valueNum, std::optional<TriePosition> triePos);
+    TracingObject(ref<Object> inner, TracingWriter & writer, ValueHandle valueNum, std::optional<TriePosition> triePos, std::shared_ptr<ArgCell> argCell);
 
 public:
     static ref<TracingObject> create(
         ref<Object> inner,
         TracingWriter & writer,
         ValueHandle valueNum,
-        std::optional<TriePosition> triePos = std::nullopt);
-
-    /** Set the proxy's argCell. Returns *this for chaining. */
-    TracingObject & withArgCell(std::shared_ptr<ArgCell> argScope_)
-    {
-        argCell = std::move(argScope_);
-        return *this;
-    }
+        std::optional<TriePosition> triePos,
+        std::shared_ptr<ArgCell> argCell);
 
     /** Attach the apply-result producer Selector — for apply-result
         wrappers, so subsequent child queries hang off this producer.

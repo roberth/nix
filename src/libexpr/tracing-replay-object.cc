@@ -20,10 +20,11 @@
 namespace nix {
 
 TracingReplayObject::TracingReplayObject(
-    TracingReplayEvaluator & evaluator, TriePosition triePos, std::function<ref<Object>()> getInner)
+    TracingReplayEvaluator & evaluator, TriePosition triePos, std::function<ref<Object>()> getInner, std::shared_ptr<ArgCell> argCell_)
     : evaluator(evaluator)
     , triePos(triePos)
     , getInner(std::move(getInner))
+    , argCell(std::move(argCell_))
 {
 }
 
@@ -153,9 +154,8 @@ std::shared_ptr<Object> TracingReplayObject::maybeGetAttr(const std::string & na
     tracingCacheLog("replay hit: getAttr '%s' -> found", name);
     auto self = std::static_pointer_cast<TracingReplayObject>(shared_from_this());
     auto child = std::make_shared<TracingReplayObject>(
-        evaluator, result->second, [self, name]() { return ref<Object>(self->ensureInner()->maybeGetAttr(name)); });
+        evaluator, result->second, [self, name]() { return ref<Object>(self->ensureInner()->maybeGetAttr(name)); }, argCell);
     child->cachedWHNF = std::move(result->first);
-    child->withArgCell(argCell);
     /* The nav child's identity IS SelectorGetAttr{name, parent=self.producer}
        — set it unconditionally so downstream code (ExprFromObject::eval's
        fn dispatch, makeCachedFnPrimOp's argProducerFn) has a real Selector
@@ -356,9 +356,8 @@ std::shared_ptr<Object> TracingReplayObject::getListElem(size_t idx)
         tracingCacheLog("replay hit: getListElem %d", idx);
         auto self = std::static_pointer_cast<TracingReplayObject>(shared_from_this());
         auto child = std::make_shared<TracingReplayObject>(
-            evaluator, result->second, [self, idx]() { return ref<Object>(self->ensureInner()->getListElem(idx)); });
+            evaluator, result->second, [self, idx]() { return ref<Object>(self->ensureInner()->getListElem(idx)); }, argCell);
         child->cachedWHNF = std::move(result->first);
-        child->withArgCell(argCell);
         /* Mirror maybeGetAttr and TracingObject::getListElem: the nav
            child's identity IS SelectorGetListElem{index, parent=self}.
            Set unconditionally so downstream code (ExprFromObject fn

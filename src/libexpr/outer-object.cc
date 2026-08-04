@@ -9,12 +9,13 @@
 namespace nix {
 
 OuterObject::OuterObject(
-    std::function<ref<const trace::Selector>()> producer_, std::shared_ptr<Object> outerObj_, OuterQueryFn queryFn, ref<SourceRoot> outerRootFSRoot, trace::SelectorPool & selectorPool_, OuterApplyFn applyFn)
+    std::function<ref<const trace::Selector>()> producer_, std::shared_ptr<Object> outerObj_, OuterQueryFn queryFn, ref<SourceRoot> outerRootFSRoot, trace::SelectorPool & selectorPool_, std::shared_ptr<ArgCell> argCell_, OuterApplyFn applyFn)
     : producer(std::move(producer_))
     , outerObj(std::move(outerObj_))
     , queryFn(std::move(queryFn))
     , applyFn(std::move(applyFn))
     , outerRootFSRoot(std::move(outerRootFSRoot))
+    , argCell(std::move(argCell_))
     , selectorPool(selectorPool_)
 {
 }
@@ -74,8 +75,7 @@ std::shared_ptr<Object> OuterObject::maybeGetAttr(const std::string & name)
     };
     auto child = std::make_shared<OuterObject>(
         std::move(childProducer),
-        qr.child, queryFn, outerRootFSRoot, selectorPool, applyFn);
-    child->withArgCell(argCell);
+        qr.child, queryFn, outerRootFSRoot, selectorPool, argCell, applyFn);
     child->cachedWHNF = *r;
     return child;
     } catch (Error & e) {
@@ -227,8 +227,7 @@ std::shared_ptr<Object> OuterObject::getListElem(size_t index)
     };
     auto child = std::make_shared<OuterObject>(
         std::move(childProducer),
-        qr.child, queryFn, outerRootFSRoot, selectorPool, applyFn);
-    child->withArgCell(argCell);
+        qr.child, queryFn, outerRootFSRoot, selectorPool, argCell, applyFn);
     child->cachedWHNF = *r;
     return child;
 }
@@ -314,8 +313,7 @@ std::shared_ptr<Object> OuterObject::queryApply(std::shared_ptr<Object> argObj)
          state — the producerFn captures it directly. */
     auto result = std::make_shared<OuterObject>(
         std::move(ar.producerFn),
-        std::move(ar.applyResult), queryFn, outerRootFSRoot, selectorPool, applyFn);
-    result->withArgCell(callerScope);
+        std::move(ar.applyResult), queryFn, outerRootFSRoot, selectorPool, callerScope, applyFn);
     return result;
 }
 

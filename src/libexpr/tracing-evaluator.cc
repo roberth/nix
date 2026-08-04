@@ -164,9 +164,8 @@ ref<Object> TracingEvaluator::evalFile(const RootedPath & path, const std::strin
     auto result = inner->evalFile(path, displayPath);
     auto whnf = computeWHNFFromObject(*result);
     auto triePos = writer.logResult(v, whnf, qh, rootCell);
-    auto obj = TracingObject::create(result, writer, v, triePos);
+    auto obj = TracingObject::create(result, writer, v, triePos, rootCell);
     rootCell->liveObject = obj.get_ptr();
-    obj->withArgCell(std::move(rootCell));
     /* Bootstrap the SelectorPool: intern this evalFile's root Selector
        so descendants that build SelectorApplyStep{parent=this} etc.
        can resolve their parent via fromVariant. */
@@ -187,9 +186,8 @@ ref<Object> TracingEvaluator::evalExpr(const std::string & expr, const RootedPat
     auto result = inner->evalExpr(expr, basePath);
     auto whnf = computeWHNFFromObject(*result);
     auto triePos = writer.logResult(v, whnf, qh, rootCell);
-    auto obj = TracingObject::create(result, writer, v, triePos);
+    auto obj = TracingObject::create(result, writer, v, triePos, rootCell);
     rootCell->liveObject = obj.get_ptr();
-    obj->withArgCell(std::move(rootCell));
     /* Bootstrap the SelectorPool with this evalExpr's root Selector. */
     obj->withProducer(writer.getDecisionGraph().selectorPool.intern(rootSel));
     obj->withCachedWHNF(std::move(whnf));
@@ -204,9 +202,8 @@ ref<Object> TracingEvaluator::evalExprLazy(const std::string & expr, const Roote
     auto [v, qh] = writer.logRootSelectorOnCell(rootCell, trace::SelectorExpr{expr, basePath.path.abs()});
     auto result = inner->evalExprLazy(expr, basePath);
     // Lazy: don't force type yet, just wrap
-    auto obj = TracingObject::create(result, writer, v);
+    auto obj = TracingObject::create(result, writer, v, std::nullopt, rootCell);
     rootCell->liveObject = obj.get_ptr();
-    obj->withArgCell(std::move(rootCell));
     return obj;
 }
 
@@ -346,8 +343,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
                  identity for downstream applies. */
               .queryHashStr = qh.raw.toHex(),
           };
-    auto obj = TracingObject::create(result, writer, v, triePos);
-    obj->withArgCell(std::move(cell));
+    auto obj = TracingObject::create(result, writer, v, triePos, std::move(cell));
     obj->withProducer(applySel);
     obj->withCachedWHNF(std::move(whnfResult));
     return obj;

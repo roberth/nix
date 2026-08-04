@@ -403,13 +403,12 @@ PrimOp * makeCachedFnPrimOp(
                                                     std::move(argObj), std::move(callerScope));
                         };
                         auto outerArgProxy =
-                            make_ref<OuterObject>(argProducerFn, outerArgObj, std::move(queryFn), state.rootFSRoot, pool, std::move(applyFn));
+                            make_ref<OuterObject>(argProducerFn, outerArgObj, std::move(queryFn), state.rootFSRoot, pool, seedCell, std::move(applyFn));
                         /* Wire seedCell.liveObject to outerArgProxy now
                            that it exists. This is the deliberate
                            shared_ptr cycle documented on
                            ArgCell::liveObject. */
                         seedCell->liveObject = outerArgProxy.get_ptr();
-                        outerArgProxy->withArgCell(seedCell);
                         tracingCacheLog("makeCachedFnPrimOp.impl: outerArgProxy=%p seedCell=%p outerArg=%p",
                                         (void*)outerArgProxy.get_ptr().get(), (void*)seedCell.get(),
                                         (void*)outerArgObj.get());

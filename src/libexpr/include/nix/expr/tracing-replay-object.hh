@@ -73,14 +73,7 @@ class TracingReplayObject : public Object
 
 public:
     TracingReplayObject(
-        TracingReplayEvaluator & evaluator, TriePosition triePos, std::function<ref<Object>()> getInner);
-
-    /** Set the proxy's argCell. Returns *this for chaining. */
-    TracingReplayObject & withArgCell(std::shared_ptr<ArgCell> argScope_)
-    {
-        argCell = std::move(argScope_);
-        return *this;
-    }
+        TracingReplayEvaluator & evaluator, TriePosition triePos, std::function<ref<Object>()> getInner, std::shared_ptr<ArgCell> argCell);
 
     /** Attach the apply-result producer Selector. Mirrors the
         writer-side `TracingObject::withProducer`. */

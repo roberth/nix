@@ -113,7 +113,8 @@ TEST_F(OuterObjectTest, ProducerWiring)
            std::shared_ptr<ArgCell>) -> OuterQueryResult
         { throw std::runtime_error("queryFn should not fire"); },
         srcRoot,
-        g->selectorPool);
+        g->selectorPool,
+        nullptr);
 
     auto sel = outer.getSelector();
     ASSERT_TRUE(sel.has_value());
@@ -137,8 +138,7 @@ TEST_F(OuterObjectTest, MaybeGetAttrChildProducer)
 
     auto outer = std::make_shared<OuterObject>(
         [producer]() { return producer; },
-        std::make_shared<StubObject>(), queryFn, srcRoot, g->selectorPool);
-    outer->withArgCell(callerCell);
+        std::make_shared<StubObject>(), queryFn, srcRoot, g->selectorPool, callerCell);
 
     auto child = outer->maybeGetAttr("x");
     ASSERT_NE(child, nullptr);
@@ -170,8 +170,7 @@ TEST_F(OuterObjectTest, GetListElemChildProducer)
 
     auto outer = std::make_shared<OuterObject>(
         [producer]() { return producer; },
-        std::make_shared<StubObject>(), queryFn, srcRoot, g->selectorPool);
-    outer->withArgCell(callerCell);
+        std::make_shared<StubObject>(), queryFn, srcRoot, g->selectorPool, callerCell);
 
     auto child = outer->getListElem(1);
     ASSERT_NE(child, nullptr);
@@ -204,7 +203,7 @@ TEST_F(OuterObjectTest, GetFunctionInfoQuerySelector)
 
     auto outer = OuterObject(
         [producer]() { return producer; },
-        std::make_shared<StubObject>(), queryFn, srcRoot, g->selectorPool);
+        std::make_shared<StubObject>(), queryFn, srcRoot, g->selectorPool, nullptr);
 
     auto info = outer.getFunctionInfo();
     ASSERT_TRUE(info.has_value());
@@ -242,7 +241,7 @@ TEST_F(OuterObjectTest, QueryApplyResultProducer)
 
     auto outer = std::make_shared<OuterObject>(
         [fnProducer]() { return fnProducer; },
-        std::make_shared<StubObject>(), queryFn, srcRoot, g->selectorPool, applyFn);
+        std::make_shared<StubObject>(), queryFn, srcRoot, g->selectorPool, nullptr, applyFn);
 
     auto result = outer->queryApply(argStub);
     ASSERT_NE(result, nullptr);
@@ -286,8 +285,7 @@ TEST_F(OuterObjectTest, ArgCellPropagation)
 
     auto outer = std::make_shared<OuterObject>(
         [producer]() { return producer; },
-        std::make_shared<StubObject>(), queryFn, srcRoot, g->selectorPool, applyFn);
-    outer->withArgCell(callerCell);
+        std::make_shared<StubObject>(), queryFn, srcRoot, g->selectorPool, callerCell, applyFn);
 
     auto result = outer->queryApply(argStub);
     // applyFn receives callerCell directly — cell creation is its own job.

@@ -89,18 +89,12 @@ public:
         ref<const trace::Selector> producer_,
         TracingDecisionGraph & dg,
         ref<SourceRoot> rootFSRoot,
-        EvalState * state = nullptr)
+        EvalState * state,
+        std::shared_ptr<ArgCell> argCell)
         : producer(producer_)
-        , decisionGraph(dg), rootFSRoot(std::move(rootFSRoot)), state(state) {}
+        , decisionGraph(dg), rootFSRoot(std::move(rootFSRoot)), state(state), argCell(std::move(argCell)) {}
 
     std::optional<ref<const trace::Selector>> getSelector() const override { return producer; }
-
-    /** Set the proxy's argCell. Returns *this for chaining. */
-    ReplayCallbackArg & withArgCell(std::shared_ptr<ArgCell> argScope_)
-    {
-        argCell = std::move(argScope_);
-        return *this;
-    }
 
     /** Attach an obsSet response source. Each probe on this
         ReplayCallbackArg (or its derived children, if the

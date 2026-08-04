@@ -68,14 +68,12 @@ std::shared_ptr<Object> ReplayCallbackArg::maybeGetAttr(const std::string & name
     auto & query = std::get<trace::SelectorGetAttr>(childSel->node);
     auto rJson = readResponse(query, obsSetResponses);
     auto child = std::make_shared<ReplayCallbackArg>(
-        childSel, decisionGraph, rootFSRoot, state);
+        childSel, decisionGraph, rootFSRoot, state, argCell);
     child->cachedWHNF = rJson.get<trace::ResultWHNF>();
     /* Derived children probe within the same callback firing, so
        the same obsSet serves their responses too. */
     if (obsSetResponses)
         child->withObsSetResponses(obsSetResponses);
-    /* Navigation child inherits parent's argCell cell directly. */
-    child->withArgCell(argCell);
     return child;
     } catch (Error & e) {
         /* RCA sits on the walker side, feeding a callback firing's
@@ -197,9 +195,8 @@ std::shared_ptr<Object> ReplayCallbackArg::getListElem(size_t index)
     auto & query = std::get<trace::SelectorGetListElem>(childSel->node);
     auto rJson = readResponse(query, obsSetResponses);
     auto child = std::make_shared<ReplayCallbackArg>(
-        childSel, decisionGraph, rootFSRoot, state);
+        childSel, decisionGraph, rootFSRoot, state, argCell);
     child->cachedWHNF = rJson.get<trace::ResultWHNF>();
-    child->withArgCell(argCell);
     return child;
 }
 
@@ -348,7 +345,7 @@ std::shared_ptr<Object> ReplayCallbackArg::queryApply(std::shared_ptr<Object> ar
                     auto argSel = decisionGraph.selectorPool.intern(
                         trace::SelectorArg{fnArg->depth + 1});
                     auto nestedRca = std::make_shared<ReplayCallbackArg>(
-                        argSel, decisionGraph, rootFSRoot, state);
+                        argSel, decisionGraph, rootFSRoot, state, nullptr);
                     nestedRca->withObsSetResponses(nestedObsMap);
                     auto nestedResultObj = argObj->queryApply(nestedRca);
                     if (!nestedResultObj) { allMatch = false; break; }
@@ -384,7 +381,7 @@ std::shared_ptr<Object> ReplayCallbackArg::queryApply(std::shared_ptr<Object> ar
                each level's queryApply picks the entry whose parent
                matches its own producer. */
             auto childRca = std::make_shared<ReplayCallbackArg>(
-                *scaOpt, decisionGraph, rootFSRoot, state);
+                *scaOpt, decisionGraph, rootFSRoot, state, nullptr);
             childRca->cachedWHNF = matchedWhnf;
             childRca->withObsSetResponses(obsSetResponses);
             return childRca;

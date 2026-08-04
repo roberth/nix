@@ -69,18 +69,19 @@ trace::ResultWHNF computeWHNFFromObject(Object & obj)
 }
 
 TracingObject::TracingObject(
-    ref<Object> inner, TracingWriter & writer, ValueHandle valueNum, std::optional<TriePosition> triePos)
+    ref<Object> inner, TracingWriter & writer, ValueHandle valueNum, std::optional<TriePosition> triePos, std::shared_ptr<ArgCell> argCell_)
     : inner(inner)
     , writer(writer)
     , valueNum(valueNum)
     , triePos(triePos)
+    , argCell(std::move(argCell_))
 {
 }
 
 ref<TracingObject> TracingObject::create(
-    ref<Object> inner, TracingWriter & writer, ValueHandle valueNum, std::optional<TriePosition> triePos)
+    ref<Object> inner, TracingWriter & writer, ValueHandle valueNum, std::optional<TriePosition> triePos, std::shared_ptr<ArgCell> argCell)
 {
-    return ref<TracingObject>(std::shared_ptr<TracingObject>(new TracingObject(inner, writer, valueNum, triePos)));
+    return ref<TracingObject>(std::shared_ptr<TracingObject>(new TracingObject(inner, writer, valueNum, triePos, std::move(argCell))));
 }
 
 /* Parent identity for building child Selectors: `triePos->queryHashStr`
@@ -192,9 +193,8 @@ std::shared_ptr<Object> TracingObject::maybeGetAttr(const std::string & name)
     auto [valueId, qh] = writer.logQuery(query);
     auto anchorCur = triePos ? triePos->factSetHash : TracingDecisionGraph::emptySetHash();
     auto childTriePos = writer.logQueryResult(valueId, childWHNF, qh, anchorCur, argCell);
-    auto child = std::shared_ptr<TracingObject>(new TracingObject(ref<Object>(innerChild), writer, valueId, childTriePos));
+    auto child = std::shared_ptr<TracingObject>(new TracingObject(ref<Object>(innerChild), writer, valueId, childTriePos, argCell));
     child->cachedWHNF = std::move(childWHNF);
-    child->withArgCell(argCell);
     /* The nav child's producer identity IS SelectorGetAttr{name, parent=self}
        — symmetric to TracingReplayObject::maybeGetAttr's warm-side propagation.
        Set unconditionally so downstream code (ExprFromObject fn dispatch,
@@ -343,9 +343,8 @@ std::shared_ptr<Object> TracingObject::getListElem(size_t index)
     trace::ResultWHNF childWHNF = computeWHNFFromObject(*result);
     auto anchorCur = triePos ? triePos->factSetHash : TracingDecisionGraph::emptySetHash();
     auto childTriePos = writer.logQueryResult(valueId, childWHNF, qh, anchorCur, argCell);
-    auto child = std::shared_ptr<TracingObject>(new TracingObject(ref<Object>(result), writer, valueId, childTriePos));
+    auto child = std::shared_ptr<TracingObject>(new TracingObject(ref<Object>(result), writer, valueId, childTriePos, argCell));
     child->cachedWHNF = std::move(childWHNF);
-    child->withArgCell(argCell);
     /* Mirror maybeGetAttr: the nav child's producer identity IS
        SelectorGetListElem{index, parent=self}. Set unconditionally
        so downstream code (ExprFromObject fn dispatch, TE::apply's

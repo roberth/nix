@@ -343,8 +343,8 @@ std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> a
             nestedQueryFn,
             rootFSRootCopy,
             dg.selectorPool,
+            nestedCell,
             *applyFn);
-        nestedWrappedArg->withArgCell(nestedCell);
 
         auto applyResultObj = fnObj->queryApply(nestedWrappedArg.get_ptr());
         if (!applyResultObj)
@@ -374,8 +374,8 @@ std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> a
         queryFn,
         rootFSRoot,
         dg.selectorPool,
+        layer2Cell,
         *applyFn);
-    wrappedArg->withArgCell(layer2Cell);
 
     /* Invoke inner-lambda live via inner->queryApply. Inner's probes
        on wrappedArg flow through queryFn → layer2Cell's runningObsSet.
