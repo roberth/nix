@@ -147,8 +147,8 @@ ref<OuterObject> wrapArgAsCallbackScope(
     EvalState & state,
     std::shared_ptr<Object> fnObj,
     std::shared_ptr<Object> rawArg,
-    std::shared_ptr<Evaluator> innerEval,
-    std::shared_ptr<OuterResolver> resolver);
+    ref<Evaluator> innerEval,
+    ref<OuterResolver> resolver);
 
 /** PrimOp wrapping a cache-boundary function so apply routes through
     `innerEval->apply` after opening a cached-fn cell chain. Used by

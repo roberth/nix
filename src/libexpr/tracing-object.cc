@@ -76,7 +76,9 @@ TracingObject::TracingObject(
     std::shared_ptr<ArgCell> argCell_,
     std::optional<ref<const trace::Selector>> producer_,
     std::optional<trace::ResultWHNF> cachedWHNF_,
-    bool cbApplyOrigin_)
+    bool cbApplyOrigin_,
+    ref<Evaluator> innerEvaluator_,
+    ref<OuterResolver> outerResolver_)
     : inner(inner)
     , writer(writer)
     , valueNum(valueNum)
@@ -85,6 +87,8 @@ TracingObject::TracingObject(
     , producer(std::move(producer_))
     , cbApplyOrigin(cbApplyOrigin_)
     , cachedWHNF(std::move(cachedWHNF_))
+    , innerEvaluator(std::move(innerEvaluator_))
+    , outerResolver(std::move(outerResolver_))
 {
 }
 
@@ -94,13 +98,16 @@ ref<TracingObject> TracingObject::create(
     ValueHandle valueNum,
     std::optional<TriePosition> triePos,
     std::shared_ptr<ArgCell> argCell,
+    ref<Evaluator> innerEvaluator,
+    ref<OuterResolver> outerResolver,
     std::optional<ref<const trace::Selector>> producer,
     std::optional<trace::ResultWHNF> cachedWHNF,
     bool cbApplyOrigin)
 {
     return ref<TracingObject>(std::shared_ptr<TracingObject>(new TracingObject(
         inner, writer, valueNum, triePos, std::move(argCell),
-        std::move(producer), std::move(cachedWHNF), cbApplyOrigin)));
+        std::move(producer), std::move(cachedWHNF), cbApplyOrigin,
+        std::move(innerEvaluator), std::move(outerResolver))));
 }
 
 /* Parent identity for building child Selectors: `triePos->queryHashStr`
@@ -208,6 +215,7 @@ std::shared_ptr<Object> TracingObject::maybeGetAttr(const std::string & name)
        Set unconditionally so downstream code (ExprFromObject fn dispatch,
        makeCachedFnPrimOp's argProducerFn) has a real Selector to compose. */
     return TracingObject::create(ref<Object>(innerChild), writer, valueId, childTriePos, argCell,
+        this->innerEvaluator, this->outerResolver,
         querySel, std::move(childWHNF), cbApplyOrigin).get_ptr();
 }
 
@@ -358,6 +366,7 @@ std::shared_ptr<Object> TracingObject::getListElem(size_t index)
        makeOuterFnPrimOp's fallback and hit TO::queryApply's identity
        check. */
     return TracingObject::create(ref<Object>(result), writer, valueId, childTriePos, argCell,
+        this->innerEvaluator, this->outerResolver,
         querySel, std::move(childWHNF), cbApplyOrigin).get_ptr();
 }
 
@@ -435,6 +444,76 @@ PosIdx TracingObject::getPos()
 std::optional<std::vector<std::string>> TracingObject::getAttrPath()
 {
     return inner->getAttrPath();
+}
+
+std::shared_ptr<Object> TracingObject::queryApply(std::shared_ptr<Object> argObj)
+{
+    /* Wrap the arg unconditionally — arg-wrapping is an integral part
+       of this fn's apply behavior. If the arg already carries a
+       cache-boundary identity, it belongs to a different scope
+       (some prior apply's producer) and using it as the arg of *this*
+       apply is a wiring bug. */
+    if (argObj->getSelectorHashHex())
+        panic("TracingObject::queryApply: arg is already wrapped — that identity belongs to a prior scope, not this apply");
+    argObj = wrapArgAsCallbackScope(
+        innerEvaluator->getEvalState(),
+        std::static_pointer_cast<Object>(shared_from_this()),
+        argObj,
+        innerEvaluator,
+        outerResolver).get_ptr();
+
+    auto fnStateHashStr = getSelectorHashHex().value();
+    auto argStateHashStr = *argObj->getSelectorHashHex();
+
+    tracingCacheLog("tracing: apply fnStateHash=%s argStateHash=%s",
+                    fnStateHashStr, argStateHashStr);
+
+    auto fnSelOpt = getSelector();
+    if (!fnSelOpt)
+        unreachable();
+    auto fnSel = *fnSelOpt;
+    auto applySel = writer.getDecisionGraph().selectorPool.intern(trace::SelectorApply{fnSel});
+    nlohmann::json applyQ = trace::toJson(*applySel);
+
+    auto fnQHex = getSelectorHashHex().value_or(fnStateHashStr);
+
+    /* One cell per call, tracking the arg. Reuse the arg's cell (seeded
+       by TE::apply's wrap or by the callback-firing path). */
+    auto cell = effectiveArgCell(*argObj);
+    if (!cell)
+        panic("TracingObject::queryApply: arg had no argCell");
+
+    tracingCacheLog("createCallbackCell callsite=TracingObject::queryApply fn=%s arg=%s",
+                    fnStateHashStr.substr(0, 12), argStateHashStr.substr(0, 12));
+    writer.createCallbackCell(applyQ);
+    if (!cell->getCallbackState())
+        panic("TracingObject::queryApply: arg cell is not a RecordingCallbackArgCell");
+
+    auto qHash = applySel->cachedHash;
+    tracingCacheLog("writer apply: fn=%s -> qHash=%s",
+                    fnQHex.substr(0, 12), qHash.toHex().substr(0, 16));
+
+    auto & applySelector = std::get<trace::SelectorApply>(applySel->node);
+    auto [v, qh] = writer.logSelectorOnCell(cell, applySelector);
+
+    /* Delegate the actual apply to the wrapped Object (typically an
+       InterpreterObject whose queryApply constructs a lazy thunk). */
+    auto result = inner->queryApply(argObj);
+
+    auto whnfResult = computeWHNFFromObject(*result);
+    writer.emitCallbackApplyForApplyResult(cell, applySel, whnfResult);
+    auto tp = writer.logResult(v, whnfResult, qh, cell);
+
+    TriePosition triePos = tp
+        ? *tp
+        : TriePosition{
+              .resultNodeHash = trace::tracingZeroHash(),
+              .queryHashStr = qh.raw.toHex(),
+          };
+    auto obj = TracingObject::create(ref<Object>(result), writer, v, triePos, std::move(cell),
+        this->innerEvaluator, this->outerResolver,
+        applySel, std::move(whnfResult));
+    return obj.get_ptr();
 }
 
 } // namespace nix

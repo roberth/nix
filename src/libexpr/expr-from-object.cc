@@ -329,8 +329,8 @@ ref<OuterObject> wrapArgAsCallbackScope(
     EvalState & state,
     std::shared_ptr<Object> fnObj,
     std::shared_ptr<Object> rawArg,
-    std::shared_ptr<Evaluator> innerEval,
-    std::shared_ptr<OuterResolver> resolver)
+    ref<Evaluator> innerEval,
+    ref<OuterResolver> resolver)
 {
     /* Scope-graph cell for this arg. Parent = the fn proxy's cell
        (so curried applies chain through depth 0, 1, ... naturally).
@@ -411,13 +411,13 @@ PrimOp * makeCachedFnPrimOp(
                     [fnObj, innerEval, resolver](EvalState & state, const PosIdx /* pos */, Value ** args, Value & v) {
                         // Do NOT force args[0] — it may be self-referential.
                         auto outerArgObj = std::make_shared<InterpreterObject>(state, allocRootValue(args[0]));
-                        auto outerArgProxy = wrapArgAsCallbackScope(
-                            state, fnObj, outerArgObj, innerEval, resolver);
-                        tracingCacheLog("makeCachedFnPrimOp.impl: outerArgProxy=%p outerArg=%p",
-                                        (void*)outerArgProxy.get_ptr().get(),
-                                        (void*)outerArgObj.get());
+                        tracingCacheLog("makeCachedFnPrimOp.impl: outerArg=%p", (void*)outerArgObj.get());
                         try {
-                            auto result = innerEval->apply(ref<Object>(fnObj), outerArgProxy);
+                            /* Arg-wrapping lives in TracingObject::queryApply
+                               (invoked via innerEval->apply → TE::apply →
+                               fnObj->queryApply). The primop is just the
+                               Value-level bridge; no wrap ceremony here. */
+                            auto result = innerEval->apply(ref<Object>(fnObj), ref<Object>(outerArgObj));
                             tracingCacheLog("makeCachedFnPrimOp.impl: apply result=%p", (void*)result.get_ptr().get());
                             ExprFromObject(result, innerEval, resolver).eval(state, state.baseEnv, v);
                         } catch (Error & e) {

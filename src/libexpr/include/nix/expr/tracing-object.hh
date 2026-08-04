@@ -54,6 +54,13 @@ class TracingObject : public Object
     std::optional<trace::ResultWHNF> cachedWHNF;
     trace::ResultWHNF & whnf();
 
+    /* Evaluator + resolver context for queryApply's arg-wrapping.
+       Same context the CLI's `EvalCommand::getEvalState` wires up
+       when tracing-eval-cache is on. Propagated to child TObjects
+       so navigation descendants can apply. */
+    ref<Evaluator> innerEvaluator;
+    ref<OuterResolver> outerResolver;
+
     TracingObject(
         ref<Object> inner,
         TracingWriter & writer,
@@ -62,7 +69,9 @@ class TracingObject : public Object
         std::shared_ptr<ArgCell> argCell,
         std::optional<ref<const trace::Selector>> producer,
         std::optional<trace::ResultWHNF> cachedWHNF,
-        bool cbApplyOrigin);
+        bool cbApplyOrigin,
+        ref<Evaluator> innerEvaluator,
+        ref<OuterResolver> outerResolver);
 
 public:
     static ref<TracingObject> create(
@@ -71,6 +80,8 @@ public:
         ValueHandle valueNum,
         std::optional<TriePosition> triePos,
         std::shared_ptr<ArgCell> argCell,
+        ref<Evaluator> innerEvaluator,
+        ref<OuterResolver> outerResolver,
         std::optional<ref<const trace::Selector>> producer = std::nullopt,
         std::optional<trace::ResultWHNF> cachedWHNF = std::nullopt,
         bool cbApplyOrigin = false);
@@ -107,10 +118,14 @@ public:
     std::optional<FunctionInfo> getFunctionInfo() override;
     PosIdx getPos() override;
     std::optional<std::vector<std::string>> getAttrPath() override;
-    /* No `queryApply` override: cache-boundary apply on a TObject
-       lands in `TracingEvaluator::apply`, which does the full
-       recording. Base `Object::queryApply` throws — reaching it
-       means a call site skipped the evaluator method. */
+
+    /** Value-level apply: this Object is a fn (or thunk reducing
+        to one); apply it to argObj's value, recording the
+        SelectorApply Terminal keyed on the arg's cell factset.
+        argObj is expected to already carry a cache-boundary
+        identity — TracingEvaluator::apply's preamble wraps raw
+        args in an OuterObject before dispatching here. */
+    std::shared_ptr<Object> queryApply(std::shared_ptr<Object> argObj) override;
 };
 
 } // namespace nix

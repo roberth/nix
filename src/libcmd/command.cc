@@ -17,6 +17,7 @@
 #include "nix/expr/tracing-evaluator.hh"
 #include "nix/expr/tracing-replay-evaluator.hh"
 #include "nix/expr/interpreter.hh"
+#include "nix/expr/expr-from-object.hh"
 #include "nix/store/profiles.hh"
 #include "nix/cmd/repl.hh"
 #include "nix/util/strings.hh"
@@ -190,7 +191,15 @@ ref<EvalState> EvalCommand::getEvalState()
             // Build the evaluator stack and pre-populate evaluatorCompat
             // so toEvaluatorCompat() finds it ready. The single TracingWriter
             // is shared with TracingEnvironment for coherent temporal ordering.
-            ref<Evaluator> eval = make_ref<Interpreter>(ref<EvalState>(evalState));
+            auto interpreter = make_ref<Interpreter>(ref<EvalState>(evalState));
+            /* An OuterResolver is required for TracingObject::queryApply to
+               wrap raw args; create one on the outer stack too (previously
+               only builtins.cache set one, leaving the CLI outer stack with
+               a null resolver — which prevented TE::apply from routing
+               through TO::queryApply cleanly). */
+            interpreter->outerResolver =
+                makeOuterResolver(evalState.get(), interpreter.get_ptr(), tracingWriter.get());
+            ref<Evaluator> eval = interpreter;
             eval = make_ref<TracingEvaluator>(*tracingWriter, eval);
             eval = make_ref<TracingReplayEvaluator>(
                 eval, *sysEnv, *tracingWriter, *tracingDecisionGraph);

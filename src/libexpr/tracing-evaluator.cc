@@ -168,6 +168,7 @@ ref<Object> TracingEvaluator::evalFile(const RootedPath & path, const std::strin
        so descendants that build SelectorApplyStep{parent=this} etc.
        can resolve their parent via fromVariant. */
     auto obj = TracingObject::create(result, writer, v, triePos, rootCell,
+        inner, ref<OuterResolver>(inner->getOuterResolver()),
         writer.getDecisionGraph().selectorPool.intern(rootSel),
         std::move(whnf));
     rootCell->liveObject = obj.get_ptr();
@@ -188,6 +189,7 @@ ref<Object> TracingEvaluator::evalExpr(const std::string & expr, const RootedPat
     auto triePos = writer.logResult(v, whnf, qh, rootCell);
     /* Bootstrap the SelectorPool with this evalExpr's root Selector. */
     auto obj = TracingObject::create(result, writer, v, triePos, rootCell,
+        inner, ref<OuterResolver>(inner->getOuterResolver()),
         writer.getDecisionGraph().selectorPool.intern(rootSel),
         std::move(whnf));
     rootCell->liveObject = obj.get_ptr();
@@ -202,7 +204,8 @@ ref<Object> TracingEvaluator::evalExprLazy(const std::string & expr, const Roote
     auto [v, qh] = writer.logRootSelectorOnCell(rootCell, trace::SelectorExpr{expr, basePath.path.abs()});
     auto result = inner->evalExprLazy(expr, basePath);
     // Lazy: don't force type yet, just wrap
-    auto obj = TracingObject::create(result, writer, v, std::nullopt, rootCell);
+    auto obj = TracingObject::create(result, writer, v, std::nullopt, rootCell,
+        inner, ref<OuterResolver>(inner->getOuterResolver()));
     rootCell->liveObject = obj.get_ptr();
     return obj;
 }
@@ -221,143 +224,15 @@ ref<Object> TracingEvaluator::mkAttrs(const std::map<std::string, ref<Object>> &
 
 ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
 {
-    /* Fn must have identity — if it doesn't, some caller handed us a
-       raw Object as fn, which shouldn't happen. */
-    if (!fn->getSelectorHashHex())
-        panic("TracingEvaluator::apply: fn lacks a content-defined identity");
-
-    /* If arg lacks identity, it's a raw Object (typically from
-       mkString/mkAttrs/getInternalPrimOp — the callFlakeViaEvaluator
-       curried apply chain is the observed source). Wrap it via the
-       same ceremony makeCachedFnPrimOp does: producer =
-       SelectorApply{fn's selector}, seedCell parented under fn's
-       cell, queryFn/applyFn routing through the outer resolver +
-       inner env. Gives the arg the identity apply needs to record.
-
-       Known limitation: `mkPath` values inside a wrapped attrset
-       don't currently round-trip to usable path strings through the
-       OuterObject, so callFlakeViaEvaluator's flake-eval path still
-       breaks here. That's a SourceRoot-support followup — the wrap
-       is applied unconditionally, and the failure at the flake
-       boundary is a legitimate signal that the followup is needed. */
-    if (!arg->getSelectorHashHex()) {
-        auto & state = inner->getEvalState();
-        arg = wrapArgAsCallbackScope(
-            state, fn.get_ptr(), arg.get_ptr(),
-            /*innerEval=*/ inner.get_ptr(),
-            inner->getOuterResolver());
-    }
-
-    auto fnStateHashStr = *fn->getSelectorHashHex();
-    auto argStateHashStr = *arg->getSelectorHashHex();
-
-    tracingCacheLog("tracing: apply fnStateHash=%s argStateHash=%s", fnStateHashStr, argStateHashStr);
-
-    /* cb-apply: record an explicit ε edge for this apply.
-       createCallbackCell closes the preceding observations as one
-       Asks edge (β1) and then records a synthetic single-observation
-       Asks edge (ε) carrying just the apply Request — both sides
-       advance their cumulative subject-id history by one for ε, so the
-       apply-result's state hash is computed at a history step the walker
-       can reach via the recorded chain. */
-    /* Intern SelectorApply for fn. Symmetric to TRE::apply — under the
-       producer-propagation fixes (`44e212e07`) fn always has a producer
-       Selector by construction; the audit committed as `fa2197831`
-       confirmed the fallback paths were dead. */
-    auto fnSelOpt = fn->getSelector();
-    if (!fnSelOpt)
-        unreachable();
-    auto fnSel = *fnSelOpt;
-    auto applySel = writer.getDecisionGraph().selectorPool.intern(trace::SelectorApply{fnSel});
-    nlohmann::json applyQ = trace::toJson(*applySel);
-
-    /* Build the apply-result producer Selector.
-
-       fn's identity hex comes directly from `getSelectorHashHex()`:
-        - OuterObject / TracingObject apply-result / TracingCallbackArg /
-          TCallbackApplyResult all return the content hash of their stored
-          producer Selector.
-        - TracingObject non-apply-result (fresh from evalFile, nav child)
-          returns triePos.queryHashStr — the parent Selector's Q hash.
-
-       Nullopt (raw Object without state) falls back to the incoming
-       fnStateHashStr the caller already computed for logging.
-
-       arg identity is dropped from the payload per #181; discrimination
-       flows through the arg's own cell/facts. */
-    auto fnQHex = fn->getSelectorHashHex().value_or(fnStateHashStr);
-
-    /* #183: one cell per call, tracking the arg. Reuse the arg's
-       existing cell (created at the first opportunity, e.g., seedCell
-       in makeCachedFnPrimOp.impl) if available; otherwise create.
-       Resolved early so createCallbackCell can populate its
-       callbackState in the same step. */
-    /* Under #188's consolidation the arg always has a cell by this
-       point (seedCell on the primop path, applyCell propagation on
-       nested callback paths). Panic on any fallback so a future
-       regression surfaces immediately instead of silently allocating
-       a redundant cell. */
-    auto cell = effectiveArgCell(*arg);
-    if (!cell)
-        /* Under #188's consolidation the arg always has a cell by this
-           point (seedCell on the primop path, applyCell propagation on
-           nested callback paths). Panic per the comment above — this
-           was previously a `throw Error` that got surfaced as an inline
-           `«error: ...»` at nix eval time, hiding the real bug. */
-        panic("TracingEvaluator::apply: arg had no argCell");
-
-    tracingCacheLog("createCallbackCell callsite=TracingEvaluator::apply fn=%s arg=%s",
-                    fnStateHashStr.substr(0, 12), argStateHashStr.substr(0, 12));
-    writer.createCallbackCell(applyQ);
-    /* #261: arg's cell must be a RecordingCallbackArgCell — the primop impl
-       (makeCachedFnPrimOp) is the only path that reaches here, and
-       it creates seedCell as RecordingCallbackArgCell with initialFnHex
-       populated at construction. */
-    if (!cell->getCallbackState())
-        panic("TracingEvaluator::apply: arg cell is not a RecordingCallbackArgCell");
-
-    auto qHash = applySel->cachedHash;
-    auto qHex = qHash.toHex();
-    tracingCacheLog(
-        "writer apply: fn=%s -> qHash=%s",
-        fnQHex.substr(0, 12),
-        qHex.substr(0, 16));
-
-    /* Cell-migration Phase B: apply records SelectorApply as a proper
-       Selector with its own Terminal, keyed on `cell` (resolved above).
-       Observations during inner->apply attribute to this cell via
-       queryFn's attributionCell; cell.factSetHash() reflects them for
-       the SelectorApply Terminal cur — distinct calls have distinct
-       cells → distinct Terminals. */
-    auto & applySelector = std::get<trace::SelectorApply>(applySel->node);
-    auto [v, qh] = writer.logSelectorOnCell(cell, applySelector);
-
-    /* #178: siblingScope XOR retires. Sibling cached calls
-       discriminate structurally via per-cell factset isolation. */
-    auto result = inner->apply(fn, arg);
-
-    /* Compute WHNF from the (already-forced-by-inner) result, emit
-       QCA against the applyResult (moved here from
-       TracingObject::whnf so it still fires when the wrapper's
-       cachedWHNF is pre-populated below), logResult inserts
-       SelectorApply's Terminal, wrapper is constructed with
-       cachedWHNF ready. */
-    auto whnfResult = computeWHNFFromObject(*result);
-    writer.emitCallbackApplyForApplyResult(cell, applySel, whnfResult);
-    auto tp = writer.logResult(v, whnfResult, qh, cell);
-
-    TriePosition triePos = tp
-        ? *tp
-        : TriePosition{
-              .resultNodeHash = trace::tracingZeroHash(),
-              /* #181: use the SelectorApply Q hash (matches TRE::apply's
-                 walker path); getSelectorHashHex() reads this back as fn's
-                 identity for downstream applies. */
-              .queryHashStr = qh.raw.toHex(),
-          };
-    auto obj = TracingObject::create(result, writer, v, triePos, std::move(cell),
-        applySel, std::move(whnfResult));
-    return obj;
+    /* TE::apply is a thin frontend for the fn's own queryApply.
+       Tracing behaviour (arg-wrapping, SelectorApply recording,
+       result wrapping) lives in TracingObject::queryApply where it
+       belongs — untraced fn types (InterpreterObject, etc.) route
+       through their own queryApply and don't record. */
+    auto result = fn->queryApply(arg.get_ptr());
+    if (!result)
+        panic("TracingEvaluator::apply: fn->queryApply returned null");
+    return ref<Object>(result);
 }
 
 } // namespace nix
