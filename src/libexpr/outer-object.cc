@@ -255,7 +255,7 @@ RootValue OuterObject::toValueOrProxy(EvalState & state, std::shared_ptr<OuterRe
        `Interpreter::apply` used to do in its `defeatCache` try/catch
        fallback, just relocated to where the dispatch belongs. */
     auto * thunk = state.allocValue();
-    auto * expr = new ExprFromObject(shared_from_this(), nullptr, std::move(resolver));
+    auto * expr = new ExprFromObject(ref<Object>(shared_from_this()), nullptr, std::move(resolver));
     state.mkThunk_(*thunk, expr);
     return allocRootValue(thunk);
 }

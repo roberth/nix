@@ -241,7 +241,7 @@ OuterApplyResult OuterApply::run(
        arg (see BridgedThunkCache for why pointer-identity, not argSubject). */
     auto * argThunk = bridgedLocals.getOrCreate(argObj.get(), [&]() {
         auto * v = outerState->allocValue();
-        auto * expr = new ExprFromObject(wrappedArg, innerEvaluator, resolverHandle);
+        auto * expr = new ExprFromObject(ref<Object>(wrappedArg), innerEvaluator, resolverHandle);
         outerState->mkThunk_(*v, expr);
         return v;
     });
@@ -416,7 +416,7 @@ PrimOp * makeCachedFnPrimOp(
                         try {
                             auto result = innerEval->apply(ref<Object>(fnObj), outerArgProxy);
                             tracingCacheLog("makeCachedFnPrimOp.impl: apply result=%p", (void*)result.get_ptr().get());
-                            ExprFromObject(result.get_ptr(), innerEval, resolver).eval(state, state.baseEnv, v);
+                            ExprFromObject(result, innerEval, resolver).eval(state, state.baseEnv, v);
                         } catch (Error & e) {
                             /* Stamp the trace when a cached-function
                                application fails so the reader knows
@@ -451,7 +451,7 @@ PrimOp * makeOuterFnPrimOp(std::shared_ptr<Object> fnObj, std::shared_ptr<OuterR
                     [fnObj, resolver](EvalState & state, const PosIdx /* pos */, Value ** args, Value & v) {
                         auto argObj = std::make_shared<InterpreterObject>(state, allocRootValue(args[0]));
                         auto result = fnObj->queryApply(std::move(argObj));
-                        ExprFromObject(result, nullptr, resolver).eval(state, state.baseEnv, v);
+                        ExprFromObject(ref<Object>(result), nullptr, resolver).eval(state, state.baseEnv, v);
                     },
                 .getFunctionInfo = [fnObj]() -> std::optional<FunctionInfo> { return fnObj->getFunctionInfo(); },
             };
@@ -481,7 +481,7 @@ void ExprFromObject::eval(EvalState & state, Env & env, Value & v)
         auto builder = state.buildList(size);
         for (size_t i = 0; i < size; i++) {
             auto childObj = obj->getListElem(i);
-            auto childExpr = new ExprFromObject(std::move(childObj), innerEvaluator, outerResolver);
+            auto childExpr = new ExprFromObject(ref<Object>(std::move(childObj)), innerEvaluator, outerResolver);
             builder.elems[i] = childExpr->maybeThunk(state, env);
         }
         v.mkList(builder);
@@ -541,7 +541,7 @@ void ExprFromObjectAttr::eval(EvalState & state, Env & env, Value & v)
         auto childObj = parentObj->maybeGetAttr(name);
         if (!childObj)
             state.error<TypeError>("ExprFromObjectAttr: attribute '%s' missing", name).debugThrow();
-        ExprFromObject(std::move(childObj), innerEvaluator, outerResolver).eval(state, env, v);
+        ExprFromObject(ref<Object>(std::move(childObj)), innerEvaluator, outerResolver).eval(state, env, v);
     } catch (Error & e) {
         /* Every navigation across a `builtins.cache` boundary lands
            here; on error, stamp the attr name so the reader knows

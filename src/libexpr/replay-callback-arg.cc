@@ -240,7 +240,7 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
     auto type = getType();
     if (type != nFunction) {
         auto * thunk = evalState.allocValue();
-        auto * expr = new ExprFromObject(shared_from_this(), nullptr, std::move(resolver));
+        auto * expr = new ExprFromObject(ref<Object>(shared_from_this()), nullptr, std::move(resolver));
         evalState.mkThunk_(*thunk, expr);
         return allocRootValue(thunk);
     }
@@ -261,7 +261,7 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                 auto argObj = std::make_shared<InterpreterObject>(
                     state, allocRootValue(args[0]));
                 auto resultObj = self->queryApply(argObj);
-                ExprFromObject(resultObj, nullptr, resolver).eval(state, state.baseEnv, v);
+                ExprFromObject(ref<Object>(resultObj), nullptr, resolver).eval(state, state.baseEnv, v);
             },
         };
     auto * val = evalState.allocValue();

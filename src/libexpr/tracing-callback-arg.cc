@@ -449,7 +449,7 @@ RootValue TracingCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_
             .impl = [self, resolver](EvalState & state, const PosIdx, Value ** args, Value & v) {
                 auto argObj = std::make_shared<InterpreterObject>(state, allocRootValue(args[0]));
                 auto resultObj = self->queryApply(argObj);
-                ExprFromObject(resultObj, nullptr, resolver).eval(state, state.baseEnv, v);
+                ExprFromObject(ref<Object>(resultObj), nullptr, resolver).eval(state, state.baseEnv, v);
             },
             /* Parallel to makeCachedFnPrimOp / makeOuterFnPrimOp: expose the
                inner value's formal-args so `builtins.functionArgs` reports the

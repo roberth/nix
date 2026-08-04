@@ -48,7 +48,7 @@ struct ExprProxy : Expr, gc
  */
 struct ExprFromObject : ExprProxy
 {
-    std::shared_ptr<Object> obj;
+    ref<Object> obj;
 
     /**
      * Inner evaluator for function call routing.
@@ -73,7 +73,7 @@ struct ExprFromObject : ExprProxy
     std::shared_ptr<struct OuterResolver> outerResolver;
 
     explicit ExprFromObject(
-        std::shared_ptr<Object> obj,
+        ref<Object> obj,
         std::shared_ptr<Evaluator> innerEvaluator = nullptr,
         std::shared_ptr<OuterResolver> outerResolver = nullptr)
         : obj(std::move(obj))
@@ -90,13 +90,13 @@ struct ExprFromObject : ExprProxy
  */
 struct ExprFromObjectAttr : ExprProxy
 {
-    std::shared_ptr<Object> parentObj;
+    ref<Object> parentObj;
     std::string name;
     std::shared_ptr<Evaluator> innerEvaluator;
     std::shared_ptr<struct OuterResolver> outerResolver;
 
     ExprFromObjectAttr(
-        std::shared_ptr<Object> parentObj,
+        ref<Object> parentObj,
         std::string name,
         std::shared_ptr<Evaluator> innerEvaluator,
         std::shared_ptr<OuterResolver> outerResolver = nullptr)

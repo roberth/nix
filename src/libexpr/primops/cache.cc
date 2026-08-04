@@ -178,7 +178,7 @@ static void prim_cache(EvalState & state, const PosIdx pos, Value ** args, Value
         // ExprFromObject. Eager top-level eval (primops must produce a
         // concrete Value); attrset/list children become lazy
         // ExprFromObjectAttr / ExprFromObject thunks.
-        ExprFromObject(result.get_ptr(), replayEval.get_ptr(), resolver).eval(state, state.baseEnv, v);
+        ExprFromObject(result, replayEval.get_ptr(), resolver).eval(state, state.baseEnv, v);
     } catch (Error & e) {
         /* Root context for anything that surfaces out of the cache
            boundary — the eager evalFile/evalExpr, downstream lazy

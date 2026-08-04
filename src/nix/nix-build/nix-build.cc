@@ -482,11 +482,11 @@ static void main_nix_build(int argc, char ** argv)
                 [&](Expr * e) { state->eval(e, vRoot); },
                 [&](const EvalFile & f) {
                     auto obj = evaluator->evalFile(f.path, f.path.path.abs());
-                    ExprFromObject(obj.get_ptr(), evaluator, resolver).eval(*state, state->baseEnv, vRoot);
+                    ExprFromObject(obj, evaluator, resolver).eval(*state, state->baseEnv, vRoot);
                 },
                 [&](const EvalExprStr & e) {
                     auto obj = evaluator->evalExpr(e.expr, e.basePath);
-                    ExprFromObject(obj.get_ptr(), evaluator, resolver).eval(*state, state->baseEnv, vRoot);
+                    ExprFromObject(obj, evaluator, resolver).eval(*state, state->baseEnv, vRoot);
                 },
             },
             src);

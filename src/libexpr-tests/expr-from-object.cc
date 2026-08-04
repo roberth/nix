@@ -47,7 +47,7 @@ protected:
     /** Wrap an Object in ExprFromObject and evaluate it to get a Value. */
     Value * evalFromObject(std::shared_ptr<Object> obj)
     {
-        auto expr = new ExprFromObject(std::move(obj));
+        auto expr = new ExprFromObject(ref<Object>(std::move(obj)));
         auto v = state->allocValue();
         expr->eval(*state, state->baseEnv, *v);
         return v;
@@ -216,7 +216,7 @@ TEST_F(ExprFromObjectTest, AttrsetLaziness)
 TEST_F(ExprFromObjectTest, Show)
 {
     auto obj = evalToObject("42");
-    auto expr = ExprFromObject(obj);
+    auto expr = ExprFromObject(ref<Object>(obj));
     std::ostringstream oss;
     expr.show(state->symbols, oss);
     EXPECT_EQ(oss.str(), "<proxy>");
