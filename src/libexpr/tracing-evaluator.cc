@@ -221,13 +221,33 @@ ref<Object> TracingEvaluator::mkAttrs(const std::map<std::string, ref<Object>> &
 
 ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
 {
-    /* Peer to TracingReplayEvaluator::apply — see that comment for
-       why "no identity → fall through to inner" rather than panic.
-       Recording layer: nothing gets written for this apply, matching
-       the replay layer's behaviour so cold and warm see the same
-       (empty) recording for callFlakeViaEvaluator-style entries. */
-    if (!fn->getSelectorHashHex() || !arg->getSelectorHashHex())
-        return inner->apply(fn, arg);
+    /* Fn must have identity — if it doesn't, some caller handed us a
+       raw Object as fn, which shouldn't happen. */
+    if (!fn->getSelectorHashHex())
+        panic("TracingEvaluator::apply: fn lacks a content-defined identity");
+
+    /* If arg lacks identity, it's a raw Object (typically from
+       mkString/mkAttrs/getInternalPrimOp — the callFlakeViaEvaluator
+       curried apply chain is the observed source). Wrap it via the
+       same ceremony makeCachedFnPrimOp does: producer =
+       SelectorApply{fn's selector}, seedCell parented under fn's
+       cell, queryFn/applyFn routing through the outer resolver +
+       inner env. Gives the arg the identity apply needs to record.
+
+       Known limitation: `mkPath` values inside a wrapped attrset
+       don't currently round-trip to usable path strings through the
+       OuterObject, so callFlakeViaEvaluator's flake-eval path still
+       breaks here. That's a SourceRoot-support followup — the wrap
+       is applied unconditionally, and the failure at the flake
+       boundary is a legitimate signal that the followup is needed. */
+    if (!arg->getSelectorHashHex()) {
+        auto & state = inner->getEvalState();
+        arg = wrapArgAsCallbackScope(
+            state, fn.get_ptr(), arg.get_ptr(),
+            /*innerEval=*/ inner.get_ptr(),
+            inner->getOuterResolver());
+    }
+
     auto fnStateHashStr = *fn->getSelectorHashHex();
     auto argStateHashStr = *arg->getSelectorHashHex();
 
