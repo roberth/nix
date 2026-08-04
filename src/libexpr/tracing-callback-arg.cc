@@ -22,7 +22,7 @@ static std::string tracingLocalFromOf(OuterId id)
 }
 
 TracingCallbackArg::TracingCallbackArg(
-    std::shared_ptr<Object> inner,
+    ref<Object> inner,
     ref<const trace::Selector> producer_,
     TracingWriter & writer,
     ref<SourceRoot> rootFSRoot,
@@ -57,7 +57,7 @@ std::shared_ptr<Object> TracingCallbackArg::maybeGetAttr(const std::string & nam
     auto querySel = dg.selectorPool.intern(trace::SelectorGetAttr{name, producer});
     recordObservation(querySel, computeWHNFFromObject(*child));
     return std::make_shared<TracingCallbackArg>(
-        std::move(child), querySel, writer, rootFSRoot, argCell);
+        ref<Object>(std::move(child)), querySel, writer, rootFSRoot, argCell);
 }
 
 trace::ResultWHNF & TracingCallbackArg::whnf()
@@ -171,7 +171,7 @@ std::shared_ptr<Object> TracingCallbackArg::getListElem(size_t index)
     auto querySel = dg.selectorPool.intern(trace::SelectorGetListElem{index, producer});
     recordObservation(querySel, computeWHNFFromObject(*child));
     return std::make_shared<TracingCallbackArg>(
-        std::move(child), querySel, writer, rootFSRoot, argCell);
+        ref<Object>(std::move(child)), querySel, writer, rootFSRoot, argCell);
 }
 
 ObjectType TracingCallbackArg::getTypeLazy()
@@ -415,7 +415,7 @@ std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> a
        has no compositional SCA to look up. Doc §6a's "deferred cases"
        note. */
     auto wrapper = std::make_shared<TracingCallbackArg>(
-        std::move(resultObj), scaSel, writer, rootFSRoot, argCell);
+        ref<Object>(std::move(resultObj)), scaSel, writer, rootFSRoot, argCell);
     /* Pre-populate cachedWHNF so wrapper->whnf() returns the value we
        already computed. Otherwise the first probe (typically getType()
        via toValueOrProxy) fires whnf() → recordObservation(scaSel,

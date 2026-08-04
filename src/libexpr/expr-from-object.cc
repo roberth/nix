@@ -231,7 +231,7 @@ OuterApplyResult OuterApply::run(
         : ref<const trace::Selector>(std::make_shared<const trace::Selector>(trace::SelectorNode{argProducer}));
     auto wrappedArg = (recordingCell && outerRootFSRoot)
         ? std::shared_ptr<Object>(std::make_shared<TracingCallbackArg>(
-              argObj, argProducerSel, *innerWriter,
+              ref<Object>(argObj), argProducerSel, *innerWriter,
               ref<SourceRoot>(outerRootFSRoot),
               ref<RecordingCallbackArgCell>(recordingCell)))
         : argObj;

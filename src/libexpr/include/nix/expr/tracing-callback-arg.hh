@@ -39,7 +39,7 @@ class TracingWriter;
  */
 class TracingCallbackArg : public Object
 {
-    std::shared_ptr<Object> inner;
+    ref<Object> inner;
     ref<const trace::Selector> producer;  ///< Static structural identifier as a Selector
     TracingWriter & writer;
     ref<SourceRoot> rootFSRoot;
@@ -62,7 +62,7 @@ class TracingCallbackArg : public Object
 
 public:
     TracingCallbackArg(
-        std::shared_ptr<Object> inner,
+        ref<Object> inner,
         ref<const trace::Selector> producer,
         TracingWriter & writer,
         ref<SourceRoot> rootFSRoot,
