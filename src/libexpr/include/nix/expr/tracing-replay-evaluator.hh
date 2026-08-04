@@ -170,6 +170,11 @@ public:
         TracingWriter & writer,
         TracingDecisionGraph & decisionGraph);
 
+    /** Public accessor for TracingReplayObject::queryApply, which
+        needs the innerEvaluator to reach its EvalState (for the
+        arg-wrapping ceremony) and to fall through on cache miss. */
+    ref<Evaluator> getInner() const { return inner; }
+
     /** Phase D2: getters do direct Terminal lookups (no walk), so
         TRO needs access to the decision graph. */
     TracingDecisionGraph & getDecisionGraph() const

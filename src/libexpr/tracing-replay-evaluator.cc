@@ -1001,151 +1001,13 @@ ref<Object> TracingReplayEvaluator::getInternalPrimOp(const std::string & name)
 
 ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
 {
-    /* fn and arg must be cache-boundary proxies whose identity is
-       content-defined: OuterObject (outer values reached by the
-       inner), TracingObject / TracingReplayObject (cached values
-       reached by the outer). Under normal caller paths — the
-       `<cached-fn>` primop, callback dispatch, apply-result chaining
-       — both sides arrive wrapped and identifiable.
-
-       Some callers construct plain-Interpreter results (mkString,
-       mkAttrs, getInternalPrimOp) and hand them straight to
-       `Evaluator::apply`. `callFlakeViaEvaluator` is the observed
-       instance: its curried apply chain over vLocks/vOverrides/
-       vFetchFinalTree passes InterpreterObjects with no producer
-       Selector. Under "correct or miss" (base priority 1) the only
-       safe response is to fall through to the inner evaluator —
-       recording nothing for this apply, no cache hit possible on
-       subsequent runs either, but no wrong hit through fabricated
-       identity. */
-    if (!fn->getSelectorHashHex() || !arg->getSelectorHashHex())
-        return inner->apply(fn, arg);
-    auto fnStateHashStr = *fn->getSelectorHashHex();
-    auto argStateHashStr = *arg->getSelectorHashHex();
-
-    /* Outer-direction applies (= fn is an OuterObject) must NEVER
-       be replayed from cache — the outer value's behaviour is the
-       *only* thing that can change between cold and warm, so its
-       apply-result must always go through live dispatch. The
-       registry intercepts and the TracingReplayObject wrapper's
-       lookupResult both serve recorded responses; both are wrong
-       for outer-direction. Skip both: invoke fn->queryApply(arg)
-       directly, return whatever the OuterObject yields.
-       OuterObject's own queryFn/applyFn closures handle live
-       dispatch + the outer-side validation chain. */
-    if (dynamic_cast<OuterObject *>(fn.get_ptr().get())) {
-        tracingCacheLog(
-            "walker apply: outer-direction (fn is OuterObject) — live dispatch, no registry");
-        auto result = fn->queryApply(arg.get_ptr());
-        if (!result)
-            /* Object::queryApply contract: non-null return or throw.
-               Null violates the contract — panic. */
-            panic("TracingReplayEvaluator::apply: outer-direction queryApply returned null");
-        return ref<Object>(result);
-    }
-
-    /* Inner-direction applies: fn is a recorded/cached entity
-       (TracingReplayObject from evalFile, TracingCallbackArg's
-       counterparts, or an opaque state hash). Each call constructs a
-       fresh wrapper. Sibling cb apply invocations share the same
-       (fnId, argSubject) at the boundary by construction (= the arg's
-       state hash is the same positional arg across siblings), so a
-       cross-invocation registry keyed by the apply Request hash
-       would last-write-wins and conflate sibling invocations'
-       per-call observation state — exactly the anti-pattern the
-       via-Asks doc's boundary-trace-only discipline calls out. */
-
-    /* Build the apply-result producer — mirror of TE::apply.
-       fn's identity hex comes directly from getSelectorHashHex();
-       nullopt falls back to fnStateHashStr. arg dropped per #181. */
-    auto fnQHex = fn->getSelectorHashHex().value_or(fnStateHashStr);
-    /* Under `44e212e07`, TracingReplayObject / TracingObject producers
-       are set unconditionally on every nav/root proxy; ExprFromObject::eval
-       routes to makeCachedFnPrimOp only when obj has a Selector;
-       OuterObjects short-circuit at line 1000. So fn always has a
-       producer here. */
-    auto fnSelOpt = fn->getSelector();
-    if (!fnSelOpt)
-        unreachable();
-    auto applySel = decisionGraph.selectorPool.intern(trace::SelectorApply{*fnSelOpt});
-
-    auto qHash = applySel->cachedHash;
-    auto qHex = qHash.toHex();
-    tracingCacheLog(
-        "walker apply: fn=%s -> qHash=%s",
-        fnQHex.substr(0, 12),
-        qHex.substr(0, 16));
-
-    /* Cell-migration Phase B: pre-invoke SelectorApply's lookup so the
-       applyResult wrapper can be constructed with its cached WHNF
-       already populated from cold's Terminal — mirrors the writer
-       side's eager WHNF computation. On hit, downstream `.foo` probes
-       on the wrapper use cachedWHNF for membership without a
-       separate walk. On miss, we fall back to the
-       lazy-inner-apply TRO (with no cachedWHNF), which will trigger
-       inner->apply when forced.
-
-       Pass `fn` as currentProxy so the walker's `resolveIdentity`
-       has a cell chain to walk when the SelectorApply dispatch
-       resolves fn/arg identities — fn's own cell chain roots the
-       resolution up to the outer cache-boundary arg. Without a
-       currentProxy the cell chain is empty and resolveIdentity
-       falls through to the pool lookup, which under DISALLOW_PARSE
-       cascades into inner parsing.
-
-       The apply-result opens a fresh cell parented on fn's cell. */
-    /* #183: mirror TE::apply — reuse arg's existing cell (one cell
-       per call). Under #188's consolidation the arg always has a
-       cell by this point (seedCell on the primop path, applyCell
-       propagation on nested callback paths); panic on any fallback
-       so a future regression surfaces immediately instead of
-       silently allocating a redundant cell. */
-    auto cell = effectiveArgCell(*arg);
-    if (!cell)
-        /* Panic per the comment above — mirrors TE::apply's cell
-           invariant post-#188 consolidation. */
-        panic("TracingReplayEvaluator::apply: arg had no argCell");
-    auto & applySelector = std::get<trace::SelectorApply>(applySel->node);
-    auto applySelectorHash = applySel->cachedHash;
-    /* Phase F: pass the applyResult cell so walker's per-walk state
-       lives on cell.qState — cell chain reachable from parent (fn's
-       cell), qState reset for this walk's dispatches. */
-    auto applyLookup = lookup(applySelector, fn.get_ptr(), cell);
-    std::optional<trace::ResultWHNF> cachedWHNF;
-    /* #181: query-space identity — use SelectorApply's Q hash so
-       downstream applies see fn->getSelectorHashHex() = this Q hash
-       (matches cold's TE::apply where triePos.queryHashStr =
-       qh.selectorHash from writer.logResult).
-       factSetHash = cell.factSetHash() so downstream getter
-       direct-lookups anchor at the caller's cell (matches cold's
-       logQueryResult anchor = triePos.factSetHash of the parent
-       TracingObject wrapping the apply result). */
-    TriePosition triePos{
-        .resultNodeHash = trace::tracingZeroHash(), // sentinel
-        .queryHashStr = applySelectorHash.toHex(),
-        .factSetHash = cell->factSetHash(),
-    };
-    if (applyLookup) {
-        try {
-            auto whnfJson = cborStringToJson(applyLookup->first);
-            trace::ResultWHNF parsed;
-            from_json(whnfJson, parsed);
-            cachedWHNF = std::move(parsed);
-            triePos = applyLookup->second;
-        } catch (const std::exception &) { extern thread_local bool rcaBailFlag; if (rcaBailFlag) throw; /* rca-bail-diagnostic */
-            /* Parse failure — fall through to lazy path. */
-        }
-    }
-    /* When cachedWHNF is nullopt the walker missed on this SelectorApply.
-       Nav methods on this wrapper skip their own walker calls (which would
-       nearly-always miss too — descendants of unrecorded applies aren't
-       recorded either). Trades the rare "descendant recorded via other
-       path" hit for skipping the walker's ~5% inclusive dispatch overhead
-       on the mostly-missing path. */
-    bool walkerMissed = !cachedWHNF.has_value();
-    return make_ref<TracingReplayObject>(
-        *this, triePos, [this, fn, arg]() { return inner->apply(fn, arg); }, std::move(cell),
-        applySel, std::move(cachedWHNF), /*cbApplyOrigin=*/false, walkerMissed);
+    /* Frontend for fn's own queryApply. Tracing behaviour (arg
+       wrapping, walker lookup, TRO wrapping) lives in
+       TracingReplayObject::queryApply where it belongs. */
+    auto result = fn->queryApply(arg.get_ptr());
+    if (!result)
+        panic("TracingReplayEvaluator::apply: fn->queryApply returned null");
+    return ref<Object>(result);
 }
 
 /* Explicit instantiations for public consumers of lookup() (e.g.
@@ -1159,6 +1021,11 @@ TracingReplayEvaluator::lookup<trace::SelectorGetAttr>(
 template std::optional<std::pair<std::string, TriePosition>>
 TracingReplayEvaluator::lookup<trace::SelectorGetListElem>(
     const trace::SelectorGetListElem &,
+    std::shared_ptr<Object>,
+    std::shared_ptr<ArgCell>);
+template std::optional<std::pair<std::string, TriePosition>>
+TracingReplayEvaluator::lookup<trace::SelectorApply>(
+    const trace::SelectorApply &,
     std::shared_ptr<Object>,
     std::shared_ptr<ArgCell>);
 

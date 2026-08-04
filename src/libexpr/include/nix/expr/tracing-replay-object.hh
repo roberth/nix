@@ -113,10 +113,13 @@ public:
         std::shared_ptr<struct OuterResolver> resolver,
         std::shared_ptr<Evaluator> innerEvaluator) override;
     std::optional<FunctionInfo> getFunctionInfo() override;
-    /* No `queryApply` override: cache-boundary apply on a TRO lands
-       in `TracingReplayEvaluator::apply`, which owns walker lookup
-       and lazy inner activation. Base `Object::queryApply` throws —
-       reaching it means a call site skipped the evaluator method. */
+
+    /** Value-level apply: wrap the raw arg (if not already wrapped),
+        run the SelectorApply walker lookup, and return a TRO wrapping
+        the applyResult with lazy inner-fallback on cache miss. Moved
+        from `TRE::apply` so tracing behaviour lives with the tracing
+        fn Object where it belongs. */
+    std::shared_ptr<Object> queryApply(std::shared_ptr<Object> argObj) override;
 };
 
 } // namespace nix

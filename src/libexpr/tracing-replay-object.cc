@@ -431,4 +431,62 @@ std::optional<FunctionInfo> TracingReplayObject::getFunctionInfo()
     return ensureInner()->getFunctionInfo();
 }
 
+std::shared_ptr<Object> TracingReplayObject::queryApply(std::shared_ptr<Object> argObj)
+{
+    /* Wrap raw args at the boundary — same rule as TracingObject::queryApply. */
+    if (!argObj->getSelectorHashHex()) {
+        auto innerEval = evaluator.getInner();
+        argObj = wrapArgAsCallbackScope(
+            innerEval->getEvalState(),
+            std::static_pointer_cast<Object>(shared_from_this()),
+            argObj,
+            innerEval,
+            ref<OuterResolver>(innerEval->getOuterResolver())).get_ptr();
+    }
+
+    auto fnStateHashStr = getSelectorHashHex().value();
+    auto fnQHex = fnStateHashStr;
+
+    auto fnSelOpt = getSelector();
+    if (!fnSelOpt)
+        unreachable();
+    auto applySel = evaluator.getDecisionGraph().selectorPool.intern(trace::SelectorApply{*fnSelOpt});
+
+    auto qHash = applySel->cachedHash;
+    tracingCacheLog("walker apply: fn=%s -> qHash=%s",
+                    fnQHex.substr(0, 12), qHash.toHex().substr(0, 16));
+
+    auto cell = effectiveArgCell(*argObj);
+    if (!cell)
+        panic("TracingReplayObject::queryApply: arg had no argCell");
+
+    auto & applySelector = std::get<trace::SelectorApply>(applySel->node);
+    auto applySelectorHash = applySel->cachedHash;
+    auto self = shared_from_this();
+    auto applyLookup = evaluator.lookup(applySelector, self, cell);
+    std::optional<trace::ResultWHNF> cachedWHNF;
+    TriePosition applyTriePos{
+        .resultNodeHash = trace::tracingZeroHash(),
+        .queryHashStr = applySelectorHash.toHex(),
+        .factSetHash = cell->factSetHash(),
+    };
+    if (applyLookup) {
+        try {
+            auto whnfJson = cborStringToJson(applyLookup->first);
+            trace::ResultWHNF parsed;
+            from_json(whnfJson, parsed);
+            cachedWHNF = std::move(parsed);
+            applyTriePos = applyLookup->second;
+        } catch (const std::exception &) { extern thread_local bool rcaBailFlag; if (rcaBailFlag) throw; }
+    }
+    bool walkerMissedApply = !cachedWHNF.has_value();
+    auto innerEval = evaluator.getInner();
+    auto selfRef = ref<Object>(self);
+    return std::make_shared<TracingReplayObject>(
+        evaluator, applyTriePos,
+        [innerEval, selfRef, argObj]() { return innerEval->apply(selfRef, ref<Object>(argObj)); },
+        std::move(cell),
+        applySel, std::move(cachedWHNF), /*cbApplyOrigin=*/false, walkerMissedApply);
+}
+
 } // namespace nix

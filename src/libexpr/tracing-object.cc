@@ -448,19 +448,20 @@ std::optional<std::vector<std::string>> TracingObject::getAttrPath()
 
 std::shared_ptr<Object> TracingObject::queryApply(std::shared_ptr<Object> argObj)
 {
-    /* Wrap the arg unconditionally — arg-wrapping is an integral part
-       of this fn's apply behavior. If the arg already carries a
-       cache-boundary identity, it belongs to a different scope
-       (some prior apply's producer) and using it as the arg of *this*
-       apply is a wiring bug. */
-    if (argObj->getSelectorHashHex())
-        panic("TracingObject::queryApply: arg is already wrapped — that identity belongs to a prior scope, not this apply");
-    argObj = wrapArgAsCallbackScope(
-        innerEvaluator->getEvalState(),
-        std::static_pointer_cast<Object>(shared_from_this()),
-        argObj,
-        innerEvaluator,
-        outerResolver).get_ptr();
+    /* Arg-wrapping is an integral part of this fn's apply behavior.
+       Wrap raw args here so downstream (SelectorApply recording,
+       cell attribution) has an identifiable arg. If the arg is
+       already wrapped (has a producer Selector), leave it: another
+       scope already gave it identity, and the miss-cascade path
+       through TRE→TRO→inner→TE→TO would otherwise double-wrap. */
+    if (!argObj->getSelectorHashHex()) {
+        argObj = wrapArgAsCallbackScope(
+            innerEvaluator->getEvalState(),
+            std::static_pointer_cast<Object>(shared_from_this()),
+            argObj,
+            innerEvaluator,
+            outerResolver).get_ptr();
+    }
 
     auto fnStateHashStr = getSelectorHashHex().value();
     auto argStateHashStr = *argObj->getSelectorHashHex();
