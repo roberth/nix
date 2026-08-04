@@ -480,11 +480,20 @@ std::shared_ptr<Object> TracingReplayObject::queryApply(std::shared_ptr<Object> 
         } catch (const std::exception &) { extern thread_local bool rcaBailFlag; if (rcaBailFlag) throw; }
     }
     bool walkerMissedApply = !cachedWHNF.has_value();
-    auto innerEval = evaluator.getInner();
-    auto selfRef = ref<Object>(self);
+    /* Miss fallback: invoke the underlying Object's own apply directly.
+       Cannot go through TRE::apply here — that would delegate right
+       back to this TRO's queryApply and spin forever. ensureInner()
+       yields the wrapped inner Object (typically the interpreter's
+       apply-result); its queryApply does the value-level mkApp. */
     return std::make_shared<TracingReplayObject>(
         evaluator, applyTriePos,
-        [innerEval, selfRef, argObj]() { return innerEval->apply(selfRef, ref<Object>(argObj)); },
+        [self, argObj]() {
+            auto & tro = *std::static_pointer_cast<TracingReplayObject>(self);
+            auto result = tro.ensureInner()->queryApply(argObj);
+            if (!result)
+                panic("TRO::queryApply fallback: inner queryApply returned null");
+            return ref<Object>(result);
+        },
         std::move(cell),
         applySel, std::move(cachedWHNF), /*cbApplyOrigin=*/false, walkerMissedApply);
 }
