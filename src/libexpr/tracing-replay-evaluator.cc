@@ -963,6 +963,14 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
     obj->withProducer(applySel);
     if (cachedWHNF)
         obj->withCachedWHNF(std::move(*cachedWHNF));
+    else
+        /* Walker missed on this SelectorApply. Nav methods on this
+           wrapper skip their own walker calls (which would nearly-
+           always miss too — descendants of unrecorded applies aren't
+           recorded either). Trades the rare "descendant recorded via
+           other path" hit for skipping the walker's ~5% inclusive
+           dispatch overhead on the mostly-missing path. */
+        obj->withWalkerMissed();
     return obj;
 }
 

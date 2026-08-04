@@ -40,6 +40,13 @@ class TracingReplayObject : public Object
        TracingObject::cbApplyOrigin. Propagated by navigation. */
     bool cbApplyOrigin = false;
 
+    /* Set by TRE::apply when the SelectorApply lookup missed. Nav
+       methods (maybeGetAttr / getListElem / getFunctionInfo) then
+       skip their own walker call and go straight to the inner
+       evaluator. See withWalkerMissed() rationale. Propagated to
+       children constructed on this TRO. */
+    bool walkerMissed = false;
+
     ref<Object> ensureInner() const;
 
     /**
@@ -104,6 +111,21 @@ public:
     TracingReplayObject & withCachedWHNF(trace::ResultWHNF whnf_)
     {
         cachedWHNF = std::move(whnf_);
+        return *this;
+    }
+
+    /** Mark this TRO as walker-missed at construction: TRE::apply's
+        cell-anchor SelectorApply lookup returned nullopt, so we're
+        wrapping an unrecorded value. maybeGetAttr/getListElem check
+        this and skip their own walker call — descendants of a
+        never-recorded parent are (in practice) also never recorded,
+        so the walker attempt is nearly-guaranteed miss with a heavy
+        cost. Trades the rare case of "descendant was recorded via
+        some other path" for avoiding the walker overhead on the
+        common case. */
+    TracingReplayObject & withWalkerMissed()
+    {
+        walkerMissed = true;
         return *this;
     }
 

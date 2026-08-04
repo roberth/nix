@@ -103,6 +103,14 @@ std::optional<std::pair<R, TriePosition>> TracingReplayObject::lookupStructuralC
 
 std::shared_ptr<Object> TracingReplayObject::maybeGetAttr(const std::string & name)
 {
+    if (walkerMissed) {
+        /* Parent apply never had a recorded Terminal — descendants
+           won't either (in practice). Skip the walker's whnf/lookup
+           work and hand the caller the inner evaluator's result
+           directly. Loses the rare cross-path hit; wins the walker
+           overhead per probe. */
+        return ensureInner()->maybeGetAttr(name);
+    }
     try {
     /* Symmetric with TracingObject::maybeGetAttr: existence is
        projected from parent's WHNFAttrs.names (via the walker's
@@ -317,6 +325,8 @@ size_t TracingReplayObject::getListSize()
 
 std::shared_ptr<Object> TracingReplayObject::getListElem(size_t idx)
 {
+    if (walkerMissed)
+        return ensureInner()->getListElem(idx);
     /* Symmetric with TracingObject::getListElem: bounds are projected
        from parent's WHNFList.size; retrieval is a distinct
        SelectorGetListElem observation returning the child's WHNF. */
@@ -387,6 +397,8 @@ RootValue TracingReplayObject::defeatCache()
 
 std::optional<FunctionInfo> TracingReplayObject::getFunctionInfo()
 {
+    if (walkerMissed)
+        return ensureInner()->getFunctionInfo();
     auto parentSel = evaluator.getDecisionGraph().selectorPool.findByHex(triePos.queryHashStr);
     if (!parentSel)
         return ensureInner()->getFunctionInfo();
