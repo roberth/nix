@@ -51,12 +51,14 @@ class TracingCallbackArg : public Object
        children share the parent's cell. */
     ref<RecordingCallbackArgCell> argCell;
 
-    /* Memoized WHNF observation. First call to any of getType / getInt /
-       getString / etc. fires `whnf()`, which records ONE observation
-       keyed on this value's producer Selector. Subsequent calls decode
-       the cached result. */
-    std::optional<trace::ResultWHNF> cachedWHNF;
-    trace::ResultWHNF & whnf();
+    /* Guard for the self-WHNF observation. First getter to enter
+       `whnf()` records `(producer, computeWHNFFromObject(*inner))` on
+       the enclosing cell and flips this true; subsequent getters
+       recompute the payload but skip the record. Set true at
+       construction when the caller already recorded the fact upstream
+       (H2 wrapper in `TCA::queryApply`). */
+    bool whnfRecorded;
+    trace::ResultWHNF whnf();
 
     void recordObservation(ref<const trace::Selector> query, const trace::ResultVariant & result);
 
@@ -67,7 +69,7 @@ public:
         TracingWriter & writer,
         ref<SourceRoot> rootFSRoot,
         ref<RecordingCallbackArgCell> argCell,
-        std::optional<trace::ResultWHNF> cachedWHNF = std::nullopt);
+        bool whnfAlreadyRecorded = false);
 
     /** Typed accessor for the callback firing's cell — lets consumers
         that hold a TCA propagate a `RecordingCallbackArgCell` handle without

@@ -27,13 +27,13 @@ TracingCallbackArg::TracingCallbackArg(
     TracingWriter & writer,
     ref<SourceRoot> rootFSRoot,
     ref<RecordingCallbackArgCell> argCell,
-    std::optional<trace::ResultWHNF> cachedWHNF_)
+    bool whnfAlreadyRecorded)
     : inner(std::move(inner))
     , producer(std::move(producer_))
     , writer(writer)
     , rootFSRoot(std::move(rootFSRoot))
     , argCell(std::move(argCell))
-    , cachedWHNF(std::move(cachedWHNF_))
+    , whnfRecorded(whnfAlreadyRecorded)
 {
 }
 
@@ -41,7 +41,7 @@ std::shared_ptr<Object> TracingCallbackArg::maybeGetAttr(const std::string & nam
 {
     /* Existence projects from parent WHNFAttrs.names; only when
        present do we record SelectorGetAttr (retrieval) with child WHNF. */
-    auto & w = whnf();
+    auto w = whnf();
     auto * ap = std::get_if<trace::WHNFAttrs>(&w.payload);
     if (!ap)
         /* Not an attrs — delegate so inner throws its
@@ -62,23 +62,23 @@ std::shared_ptr<Object> TracingCallbackArg::maybeGetAttr(const std::string & nam
         ref<Object>(std::move(child)), querySel, writer, rootFSRoot, argCell);
 }
 
-trace::ResultWHNF & TracingCallbackArg::whnf()
+trace::ResultWHNF TracingCallbackArg::whnf()
 {
-    if (cachedWHNF)
-        return *cachedWHNF;
     auto whnfResult = computeWHNFFromObject(*inner);
-    /* #186: obsSet entry uses the value's own Selector — SelectorArg
-       for a positional callback arg, SelectorGetAttr for a nav
-       descendant, etc. The observation IS "this value observed to
-       have WHNF X", whose natural Selector is the value's producer. */
-    recordObservation(producer, whnfResult);
-    cachedWHNF = std::move(whnfResult);
-    return *cachedWHNF;
+    if (!whnfRecorded) {
+        /* #186: obsSet entry uses the value's own Selector — SelectorArg
+           for a positional callback arg, SelectorGetAttr for a nav
+           descendant, etc. The observation IS "this value observed to
+           have WHNF X", whose natural Selector is the value's producer. */
+        recordObservation(producer, whnfResult);
+        whnfRecorded = true;
+    }
+    return whnfResult;
 }
 
 std::vector<std::string> TracingCallbackArg::getAttrNames()
 {
-    auto & w = whnf();
+    auto w = whnf();
     auto * p = std::get_if<trace::WHNFAttrs>(&w.payload);
     if (!p)
         throw Error("tlo getAttrNames: WHNF payload not attrs (type %s)", w.type);
@@ -87,7 +87,7 @@ std::vector<std::string> TracingCallbackArg::getAttrNames()
 
 std::string TracingCallbackArg::getStringIgnoreContext()
 {
-    auto & w = whnf();
+    auto w = whnf();
     auto * p = std::get_if<trace::WHNFString>(&w.payload);
     if (!p)
         throw Error("tlo getStringIgnoreContext: WHNF payload not string (type %s)", w.type);
@@ -101,7 +101,7 @@ std::string TracingCallbackArg::getStringWithoutContext()
 
 std::pair<std::string, NixStringContext> TracingCallbackArg::getStringWithContext()
 {
-    auto & w = whnf();
+    auto w = whnf();
     auto * p = std::get_if<trace::WHNFString>(&w.payload);
     if (!p)
         throw Error("tlo getStringWithContext: WHNF payload not string (type %s)", w.type);
@@ -113,7 +113,7 @@ std::pair<std::string, NixStringContext> TracingCallbackArg::getStringWithContex
 
 RootedPath TracingCallbackArg::getPath()
 {
-    auto & w = whnf();
+    auto w = whnf();
     auto * p = std::get_if<trace::WHNFPath>(&w.payload);
     if (!p)
         throw Error("tlo getPath: WHNF payload not path (type %s)", w.type);
@@ -124,7 +124,7 @@ RootedPath TracingCallbackArg::getPath()
 
 bool TracingCallbackArg::getBool(std::string_view)
 {
-    auto & w = whnf();
+    auto w = whnf();
     auto * p = std::get_if<trace::WHNFBool>(&w.payload);
     if (!p)
         throw Error("tlo getBool: WHNF payload not bool (type %s)", w.type);
@@ -133,7 +133,7 @@ bool TracingCallbackArg::getBool(std::string_view)
 
 NixInt TracingCallbackArg::getInt(std::string_view)
 {
-    auto & w = whnf();
+    auto w = whnf();
     auto * p = std::get_if<trace::WHNFInt>(&w.payload);
     if (!p)
         throw Error("tlo getInt: WHNF payload not int (type %s)", w.type);
@@ -142,7 +142,7 @@ NixInt TracingCallbackArg::getInt(std::string_view)
 
 NixFloat TracingCallbackArg::getFloat(std::string_view)
 {
-    auto & w = whnf();
+    auto w = whnf();
     auto * p = std::get_if<trace::WHNFFloat>(&w.payload);
     if (!p)
         throw Error("tlo getFloat: WHNF payload not float (type %s)", w.type);
@@ -151,7 +151,7 @@ NixFloat TracingCallbackArg::getFloat(std::string_view)
 
 size_t TracingCallbackArg::getListSize()
 {
-    auto & w = whnf();
+    auto w = whnf();
     auto * p = std::get_if<trace::WHNFList>(&w.payload);
     if (!p)
         throw Error("tlo getListSize: WHNF payload not list (type %s)", w.type);
@@ -162,7 +162,7 @@ std::shared_ptr<Object> TracingCallbackArg::getListElem(size_t index)
 {
     /* Bounds project from parent WHNFList.size; retrieval records
        SelectorGetListElem with child WHNF. */
-    auto & w = whnf();
+    auto w = whnf();
     auto * lp = std::get_if<trace::WHNFList>(&w.payload);
     if (!lp || index >= lp->size)
         /* Not a list, or index out of bounds — delegate so inner
@@ -416,13 +416,13 @@ std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> a
        routes the subsequent apply as plain SelectorApply. Warm then
        has no compositional SCA to look up. Doc §6a's "deferred cases"
        note. */
-    /* Pre-populate cachedWHNF so wrapper->whnf() returns the value we
-       already computed. Otherwise the first probe (typically getType()
-       via toValueOrProxy) fires whnf() → recordObservation(scaSel,
-       applyResultWhnf) — a second copy of the same Fact we recorded on
-       the enclosing cell four lines up. */
+    /* Suppress the wrapper's self-record — we already emitted the
+       (scaSel, applyResultWhnf) fact onto the enclosing cell four
+       lines up. Without this flag the wrapper's first probe
+       (typically getType() via toValueOrProxy) would re-fire the
+       same fact as a duplicate. */
     return std::make_shared<TracingCallbackArg>(
-        ref<Object>(std::move(resultObj)), scaSel, writer, rootFSRoot, argCell, applyResultWhnf);
+        ref<Object>(std::move(resultObj)), scaSel, writer, rootFSRoot, argCell, /*whnfAlreadyRecorded=*/true);
 }
 
 RootValue TracingCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_ptr<struct OuterResolver> resolver)
