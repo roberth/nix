@@ -72,10 +72,9 @@ struct CallbackState
 struct ArgCell : std::enable_shared_from_this<ArgCell>
 {
     /** Reverse-De-Bruijn depth: 0 at the cache call's argument,
-        N+1 in a cell whose parent is at depth N. Set at
-        construction, immutable. Used as the positional handle
-        for `SelectorArg{depth}` producers. */
-    int depth = 0;
+        N+1 in a cell whose parent is at depth N. Used as the
+        positional handle for `SelectorArg{depth}` producers. */
+    const int depth;
 
     /** Next-outer cell. Null at the root (the cache call's
         argument). */
