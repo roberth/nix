@@ -498,6 +498,11 @@ struct SelectorF<Resolved>
 {
     const SelectorNodeF<Resolved> node;
     const TracingHash cachedHash;
+    /** Precomputed hex of cachedHash. Selectors are pool-interned
+        (few thousand per session), so 32 bytes/entry is cheap
+        vs recomputing hex on every JSON serialisation or trace-log
+        prefix. */
+    const std::string cachedHashHex;
 
     explicit SelectorF(SelectorNodeF<Resolved> n);
 };

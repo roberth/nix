@@ -239,9 +239,9 @@ void from_json(const nlohmann::json & j, ResultFunctionInfo & r)
 /* Resolved-phase step to_json: hex-render parents via unresolve. Used
    by log paths (tracingCacheLog, describe) so the textual shape matches
    the on-wire form. Actual persistence goes through unresolve directly. */
-static std::string hexOf(const ref<const Selector> & s)
+static const std::string & hexOf(const ref<const Selector> & s)
 {
-    return s->cachedHash.toHex();
+    return s->cachedHashHex;
 }
 void to_json(nlohmann::json & j, const SelectorGetAttr & q)
 { to_json(j, StringSelectorGetAttr{q.name, hexOf(q.parent)}); }
@@ -622,6 +622,7 @@ namespace nix::trace {
 SelectorF<Resolved>::SelectorF(SelectorNodeF<Resolved> n)
     : node(std::move(n))
     , cachedHash(computeSelectorHash(node))
+    , cachedHashHex(cachedHash.toHex())
 {}
 
 void SelectorPool::bind(TracingDecisionGraph & graph)
