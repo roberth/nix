@@ -1004,19 +1004,24 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
     /* fn and arg must be cache-boundary proxies whose identity is
        content-defined: OuterObject (outer values reached by the
        inner), TracingObject / TracingReplayObject (cached values
-       reached by the outer). No counter fallback — per the
-       Principles section, identity outside the CLI is grounded in
-       observation, not allocation order. If a non-proxy Object
-       reaches here it's a wiring bug that has to be addressed at
-       its construction site. */
-    auto getId = [](Object & obj) -> std::string {
-        if (auto hex = obj.getSelectorHashHex())
-            return *hex;
-        panic("TracingReplayEvaluator::apply: fn/arg lacks a content-defined identity");
-    };
+       reached by the outer). Under normal caller paths — the
+       `<cached-fn>` primop, callback dispatch, apply-result chaining
+       — both sides arrive wrapped and identifiable.
 
-    auto fnStateHashStr = getId(*fn);
-    auto argStateHashStr = getId(*arg);
+       Some callers construct plain-Interpreter results (mkString,
+       mkAttrs, getInternalPrimOp) and hand them straight to
+       `Evaluator::apply`. `callFlakeViaEvaluator` is the observed
+       instance: its curried apply chain over vLocks/vOverrides/
+       vFetchFinalTree passes InterpreterObjects with no producer
+       Selector. Under "correct or miss" (base priority 1) the only
+       safe response is to fall through to the inner evaluator —
+       recording nothing for this apply, no cache hit possible on
+       subsequent runs either, but no wrong hit through fabricated
+       identity. */
+    if (!fn->getSelectorHashHex() || !arg->getSelectorHashHex())
+        return inner->apply(fn, arg);
+    auto fnStateHashStr = *fn->getSelectorHashHex();
+    auto argStateHashStr = *arg->getSelectorHashHex();
 
     /* Outer-direction applies (= fn is an OuterObject) must NEVER
        be replayed from cache — the outer value's behaviour is the

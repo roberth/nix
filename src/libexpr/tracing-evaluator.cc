@@ -221,23 +221,15 @@ ref<Object> TracingEvaluator::mkAttrs(const std::map<std::string, ref<Object>> &
 
 ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
 {
-    /* fn and arg must be cache-boundary proxies whose identity is
-       content-defined. No counter fallback — see the parallel
-       comment in TracingReplayEvaluator::apply. */
-    auto getId = [](Object & obj) -> std::string {
-        if (auto hex = obj.getSelectorHashHex())
-            return *hex;
-        /* Invariant: every Object reaching TE::apply is a cache-boundary
-           proxy with a content-defined identity. Constructor sites are
-           responsible for wrapping (OuterObject, TracingObject,
-           TracingCallbackArg, TCallbackApplyResult, InterpreterObject
-           for mkString/mkInt/… — all supply hex). If we're here without
-           a hex, the caller passed a raw Object that skipped wrapping. */
-        panic("TracingEvaluator::apply: fn/arg lacks a content-defined identity");
-    };
-
-    auto fnStateHashStr = getId(*fn);
-    auto argStateHashStr = getId(*arg);
+    /* Peer to TracingReplayEvaluator::apply — see that comment for
+       why "no identity → fall through to inner" rather than panic.
+       Recording layer: nothing gets written for this apply, matching
+       the replay layer's behaviour so cold and warm see the same
+       (empty) recording for callFlakeViaEvaluator-style entries. */
+    if (!fn->getSelectorHashHex() || !arg->getSelectorHashHex())
+        return inner->apply(fn, arg);
+    auto fnStateHashStr = *fn->getSelectorHashHex();
+    auto argStateHashStr = *arg->getSelectorHashHex();
 
     tracingCacheLog("tracing: apply fnStateHash=%s argStateHash=%s", fnStateHashStr, argStateHashStr);
 
