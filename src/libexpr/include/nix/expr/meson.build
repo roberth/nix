@@ -46,7 +46,6 @@ headers = [ config_pub_h ] + files(
   'print.hh',
   'provenance-object.hh',
   'q-state.hh',
-  'tracing-callback-apply-result.hh',
   'replay-callback-arg.hh',
   'repl-exit-status.hh',
   'search-path.hh',

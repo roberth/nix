@@ -154,14 +154,10 @@ public:
     ObjectType getType() override;
     RootValue defeatCache() override;
     std::optional<FunctionInfo> getFunctionInfo() override;
-    /** Object-method apply entry. Delegates to the
-        TracingReplayEvaluator's apply (= walker lookup + cached
-        TracingReplayObject wrapping with the lazy callback to
-        inner), then returns the result as a shared_ptr<Object>.
-        This is the Object-method counterpart of
-        TracingReplayEvaluator::apply, letting callers route apply
-        through queryApply uniformly. */
-    std::shared_ptr<Object> queryApply(std::shared_ptr<Object> argObj) override;
+    /* No `queryApply` override: cache-boundary apply on a TRO lands
+       in `TracingReplayEvaluator::apply`, which owns walker lookup
+       and lazy inner activation. Base `Object::queryApply` throws —
+       reaching it means a call site skipped the evaluator method. */
 };
 
 } // namespace nix

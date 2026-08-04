@@ -70,9 +70,7 @@ public:
 
     /** Typed accessor for the callback firing's cell — lets consumers
         that hold a TCA propagate a `CallbackArgCell` handle without
-        going through the base-typed `getProxyArgCell()`. Used by
-        `TracingEvaluator::apply`'s fnIsTlo branch to attach the same
-        cell to the wrapping `TracingCallbackApplyResult`. */
+        going through the base-typed `getProxyArgCell()`. */
     ref<CallbackArgCell> getCallbackArgCell() const { return argCell; }
 
     /** Set the memoized WHNF from a known value (e.g. the applyResult's

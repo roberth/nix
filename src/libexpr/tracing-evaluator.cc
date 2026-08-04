@@ -1,7 +1,6 @@
 #include "nix/expr/tracing-evaluator.hh"
 #include "nix/expr/outer-object.hh"
 #include "nix/expr/expr-from-object.hh"
-#include "nix/expr/tracing-callback-apply-result.hh"
 #include "nix/expr/tracing-decision-graph.hh"
 #include "nix/expr/tracing-callback-arg.hh"
 #include "nix/expr/tracing-object.hh"
@@ -334,25 +333,6 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
     auto applySel = writer.getDecisionGraph().selectorPool.intern(trace::SelectorApply{fnSel});
     nlohmann::json applyQ = trace::toJson(*applySel);
 
-    /* If fn is a TracingCallbackArg (= inner-supplied lambda the
-       outer is now applying — the cb-higher-order case), capture the
-       enclosing cell's applyId before proceeding so that observations
-       recorded on the apply-result (via TracingCallbackApplyResult
-       below) route to the enclosing CallbackCell's runningObsSet
-       rather than to a fresh cell.
-
-       Skip `createCallbackCell` entirely for the TracingCallbackArg-fn
-       path: pushing a fresh empty cell there would produce spurious
-       state that the enclosing cell already covers, since the nested
-       apply is itself an observation on the enclosing cell's
-       contra-arg. */
-    /* Capture the typed TCA pointer alongside fnIsTlo — the fnIsTlo
-       branch below needs its typed callback-cell handle to attach to
-       the wrapping TracingCallbackApplyResult (#261). Dynamic_cast is
-       unavoidable here: we're discriminating fn's runtime type. */
-    auto * fnTca = dynamic_cast<TracingCallbackArg *>(fn.get_ptr().get());
-    bool fnIsTlo = fnTca != nullptr;
-
     /* Build the apply-result producer Selector.
 
        fn's identity hex comes directly from `getSelectorHashHex()`:
@@ -388,25 +368,15 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
            `«error: ...»` at nix eval time, hiding the real bug. */
         panic("TracingEvaluator::apply: arg had no argCell");
 
-    if (fnIsTlo) {
-        /* Nested cb-apply (fn is a TracingCallbackArg): the recursive
-           apply itself is an observation on the enclosing cell's
-           contra-arg. Carried through the enclosing cell's
-           runningObsSet — no dedicated fact record at the writer
-           level here. */
-    } else {
-        tracingCacheLog("createCallbackCell callsite=TracingEvaluator::apply fn=%s arg=%s",
-                        fnStateHashStr.substr(0, 12), argStateHashStr.substr(0, 12));
-        writer.createCallbackCell(applyQ);
-        /* #261: arg's cell must be a CallbackArgCell — the primop impl
-           (makeCachedFnPrimOp) is the only path that reaches here in
-           !fnIsTlo mode, and it creates seedCell as CallbackArgCell
-           with initialFnHex populated at construction. Verify via
-           the virtual accessor. */
-        auto * cs = cell->getCallbackState();
-        if (!cs)
-            panic("TracingEvaluator::apply: !fnIsTlo but arg cell is not a CallbackArgCell");
-    }
+    tracingCacheLog("createCallbackCell callsite=TracingEvaluator::apply fn=%s arg=%s",
+                    fnStateHashStr.substr(0, 12), argStateHashStr.substr(0, 12));
+    writer.createCallbackCell(applyQ);
+    /* #261: arg's cell must be a CallbackArgCell — the primop impl
+       (makeCachedFnPrimOp) is the only path that reaches here, and
+       it creates seedCell as CallbackArgCell with initialFnHex
+       populated at construction. */
+    if (!cell->getCallbackState())
+        panic("TracingEvaluator::apply: arg cell is not a CallbackArgCell");
 
     auto qHash = applySel->cachedHash;
     auto qHex = qHash.toHex();
@@ -428,26 +398,8 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
        discriminate structurally via per-cell factset isolation. */
     auto result = inner->apply(fn, arg);
 
-    /* For the TracingCallbackArg-fn case (cb-higher-order's recursive
-       cb-apply): wrap the result in a TracingCallbackApplyResult so
-       subsequent method calls (`getType`, `getInt`, etc.) route their
-       observations into the enclosing CallbackCell's runningObsSet
-       rather than into env main-trie Terminals.
-
-       #217: do NOT log a Terminal for the layer-2 SelectorApply. The
-       applyResult is routed through the enclosing SelectorCallbackApply
-       (via the callback cell's runningObsSet) — a Terminal here would
-       short-circuit warm's walker past the SelectorCallbackApply
-       dispatch that carries the arg-divergence check via argObsSet. */
-    if (fnIsTlo) {
-        auto laro = std::make_shared<TracingCallbackApplyResult>(
-            result, writer, applySel, fnTca->getCallbackArgCell());
-        laro->withArgCell(cell);
-        return ref<Object>(laro);
-    }
-
-    /* Non-TLO path: compute WHNF from the (already-forced-by-inner)
-       result, emit QCA against the applyResult (moved here from
+    /* Compute WHNF from the (already-forced-by-inner) result, emit
+       QCA against the applyResult (moved here from
        TracingObject::whnf so it still fires when the wrapper's
        cachedWHNF is pre-populated below), logResult inserts
        SelectorApply's Terminal, wrapper is constructed with

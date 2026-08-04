@@ -22,8 +22,8 @@
  *
  * Consumers that only need the topology / fact interface work with
  * `ArgCell` (base); consumers that specifically drive callback recording
- * (TracingCallbackArg, TracingCallbackApplyResult, OuterApply::run)
- * refer to `CallbackArgCell` directly so the type carries the invariant.
+ * (TracingCallbackArg, OuterApply::run) refer to `CallbackArgCell`
+ * directly so the type carries the invariant.
  *
  * The one mixed site — `TracingObject::getProducerSelectorHex` and
  * `TracingWriter::emitCallbackApplyForApplyResult`, both branching on
