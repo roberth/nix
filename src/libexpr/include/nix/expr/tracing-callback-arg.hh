@@ -103,6 +103,15 @@ public:
         replaying recorded probes on the live arg for divergence
         detection. */
     RootValue toValueOrProxy(EvalState & state, std::shared_ptr<struct OuterResolver> resolver) override;
+    /** Function-typed TCA materialises as a `<cb-apply>` primop —
+        delegate to `toValueOrProxy` which already builds it. */
+    Value * maybeMaterialiseAsFunctionValue(
+        EvalState & state,
+        std::shared_ptr<struct OuterResolver> resolver,
+        std::shared_ptr<Evaluator> /* innerEvaluator */) override
+    {
+        return *toValueOrProxy(state, std::move(resolver));
+    }
     std::optional<FunctionInfo> getFunctionInfo() override;
     PosIdx getPos() override;
     std::optional<std::vector<std::string>> getAttrPath() override;

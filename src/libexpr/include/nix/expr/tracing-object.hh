@@ -127,6 +127,10 @@ public:
     ObjectType getTypeLazy() override;
     ObjectType getType() override;
     RootValue defeatCache() override;
+    Value * maybeMaterialiseAsFunctionValue(
+        EvalState & state,
+        std::shared_ptr<OuterResolver> resolver,
+        std::shared_ptr<Evaluator> innerEvaluator) override;
     std::optional<FunctionInfo> getFunctionInfo() override;
     PosIdx getPos() override;
     std::optional<std::vector<std::string>> getAttrPath() override;

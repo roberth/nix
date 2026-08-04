@@ -339,7 +339,7 @@ void ExprProxy::bindVars(EvalState & /* es */, const std::shared_ptr<const Stati
  * Calls route through the inner evaluator, with the OuterResolver
  * bridging arguments between outer and inner.
  */
-static PrimOp * makeCachedFnPrimOp(
+PrimOp * makeCachedFnPrimOp(
     std::shared_ptr<Object> fnObj, std::shared_ptr<Evaluator> innerEval, std::shared_ptr<OuterResolver> resolver)
 {
     return new
@@ -460,7 +460,7 @@ static PrimOp * makeCachedFnPrimOp(
  * Create a PrimOp for an outer function (from the outer evaluator).
  * Calls dispatch through OuterObject::queryApply without an inner evaluator.
  */
-static PrimOp * makeOuterFnPrimOp(std::shared_ptr<Object> fnObj, std::shared_ptr<OuterResolver> resolver)
+PrimOp * makeOuterFnPrimOp(std::shared_ptr<Object> fnObj, std::shared_ptr<OuterResolver> resolver)
 {
     return new
 #if NIX_USE_BOEHMGC
@@ -547,58 +547,23 @@ void ExprFromObject::eval(EvalState & state, Env & env, Value & v)
     }
 
     case nFunction: {
-        /* Dispatch on obj's dynamic type. An OuterObject wraps an
-           outer value reached via outer query; its apply must
-           route through queryApply (makeOuterFnPrimOp). A concrete
-           fn with an inner evaluator goes through innerEval->apply
-           (makeCachedFnPrimOp). A concrete fn without an inner
-           evaluator falls back to makeOuterFnPrimOp — the impl
-           will throw at apply time (matching the prior behaviour
-           for that combination, which the unit tests rely on for
-           construction-only checks). */
-        /* ReplayCallbackArg reconstructs a lambda callback arg as a
-           primop via its own `toValueOrProxy`. Use it directly so
-           the recorded obsSet drives apply-time behaviour; the
-           generic cached/outer primops here would dispatch on
-           `ReplayCallbackArg::queryApply` which throws by design. */
-        if (dynamic_cast<ReplayCallbackArg *>(obj.get())) {
-            auto val = obj->toValueOrProxy(state, outerResolver);
-            v = **val;
-            break;
-        }
-        /* H2 companion: TracingCallbackArg materialises via a <cb-apply>
-           primop routing subsequent applies through TCA::queryApply,
-           which records compositional SCAs on the enclosing callback
-           firing's cell. Since TCA::queryApply now wraps its own
-           applyResult as another TCA, that wrapper reaches here on
-           further outer-side apples and must also route through TCA,
-           not through makeCachedFnPrimOp. */
-        if (dynamic_cast<TracingCallbackArg *>(obj.get())) {
-            auto val = obj->toValueOrProxy(state, outerResolver);
-            v = **val;
-            break;
-        }
-        PrimOp * primOp;
-        /* makeCachedFnPrimOp routes through the cache — needs a decision
-           graph to intern Selectors into AND a real producer Selector on
-           the fn (its argProducerFn wraps `SelectorApply{fn=fnObj->getSelector()}`).
-           When the graph isn't wired (tracing-eval-cache OPTION off, no
-           builtins.cache in scope) OR fn has no producer Selector (e.g. a
-           nav child of a non-cbApplyOrigin proxy), fall through to the
-           direct outer path — no cache-side identity to compose. */
-        auto hasGraph = [&] {
-            if (state.rootDecisionGraph) return true;
-            if (innerEvaluator && innerEvaluator->getEvalState().rootDecisionGraph) return true;
-            return false;
-        };
-        if (dynamic_cast<OuterObject *>(obj.get())) {
-            primOp = makeOuterFnPrimOp(obj, outerResolver);
-        } else if (innerEvaluator && hasGraph() && obj->getSelector().has_value()) {
-            primOp = makeCachedFnPrimOp(obj, innerEvaluator, outerResolver);
+        /* Each Object subclass materialises itself as the right
+           boundary-shaped Function Value via
+           `maybeMaterialiseAsFunctionValue`:
+           - OuterObject → `<outer-fn>` primop
+           - TObject / TReplayObject → `<cached-fn>` primop (when
+             cache infrastructure is present)
+           - ReplayCallbackArg / TracingCallbackArg → their own
+             recording primops (via their `toValueOrProxy`)
+           Fallback for Objects that don't self-materialise (raw
+           InterpreterObject-of-lambda etc.): wrap with the generic
+           `<outer-fn>` primop whose impl dispatches through
+           `fnObj->queryApply`. */
+        if (auto * fnVal = obj->maybeMaterialiseAsFunctionValue(state, outerResolver, innerEvaluator)) {
+            v = *fnVal;
         } else {
-            primOp = makeOuterFnPrimOp(obj, outerResolver);
+            v.mkPrimOp(makeOuterFnPrimOp(obj, outerResolver));
         }
-        v.mkPrimOp(primOp);
         break;
     }
 

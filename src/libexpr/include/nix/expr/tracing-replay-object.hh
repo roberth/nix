@@ -153,6 +153,10 @@ public:
     ObjectType getTypeLazy() override;
     ObjectType getType() override;
     RootValue defeatCache() override;
+    Value * maybeMaterialiseAsFunctionValue(
+        EvalState & state,
+        std::shared_ptr<struct OuterResolver> resolver,
+        std::shared_ptr<Evaluator> innerEvaluator) override;
     std::optional<FunctionInfo> getFunctionInfo() override;
     /* No `queryApply` override: cache-boundary apply on a TRO lands
        in `TracingReplayEvaluator::apply`, which owns walker lookup

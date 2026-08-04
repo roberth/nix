@@ -1,7 +1,9 @@
 #include "nix/expr/tracing-object.hh"
+#include "nix/expr/expr-from-object.hh"
 #include "nix/expr/tracing-cache-log.hh"
 #include "nix/expr/tracing-decision-graph.hh"
 #include "nix/expr/trace-types.hh"
+#include "nix/expr/eval.hh"
 #include "nix/expr/object-type.hh"
 #include "nix/util/error.hh"
 #include "nix/util/hash.hh"
@@ -376,6 +378,24 @@ ObjectType TracingObject::getType()
 RootValue TracingObject::defeatCache()
 {
     return inner->defeatCache();
+}
+
+Value * TracingObject::maybeMaterialiseAsFunctionValue(
+    EvalState & state,
+    std::shared_ptr<OuterResolver> resolver,
+    std::shared_ptr<Evaluator> innerEvaluator)
+{
+    /* Need the cache infrastructure to wrap: an inner evaluator, a
+       decision graph, and a real producer Selector. Missing any → let
+       the caller fall back to the generic outer-fn wrap. */
+    auto hasGraph = state.rootDecisionGraph
+        || (innerEvaluator && innerEvaluator->getEvalState().rootDecisionGraph);
+    if (!innerEvaluator || !hasGraph || !getSelector().has_value())
+        return nullptr;
+    auto * v = state.allocValue();
+    v->mkPrimOp(makeCachedFnPrimOp(
+        shared_from_this(), std::move(innerEvaluator), std::move(resolver)));
+    return v;
 }
 
 std::optional<FunctionInfo> TracingObject::getFunctionInfo()

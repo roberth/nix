@@ -127,4 +127,21 @@ std::shared_ptr<OuterResolver> makeOuterResolver(
     std::shared_ptr<Evaluator> innerEvaluator,
     TracingWriter * innerWriter = nullptr);
 
+/** PrimOp wrapping a cache-boundary function so apply routes through
+    `innerEval->apply` after opening a cached-fn cell chain. Used by
+    `TObject::maybeMaterialiseAsFunctionValue` and its replay-side
+    counterpart. */
+PrimOp * makeCachedFnPrimOp(
+    std::shared_ptr<Object> fnObj,
+    std::shared_ptr<Evaluator> innerEval,
+    std::shared_ptr<OuterResolver> resolver);
+
+/** PrimOp wrapping an outer-side function so apply dispatches through
+    `fnObj->queryApply`. Used by
+    `OuterObject::maybeMaterialiseAsFunctionValue` and as the
+    generic fallback in `ExprFromObject::eval`'s nFunction case. */
+PrimOp * makeOuterFnPrimOp(
+    std::shared_ptr<Object> fnObj,
+    std::shared_ptr<OuterResolver> resolver);
+
 } // namespace nix

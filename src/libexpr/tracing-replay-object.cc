@@ -1,8 +1,10 @@
 #include "nix/expr/tracing-replay-object.hh"
+#include "nix/expr/expr-from-object.hh"
 #include "nix/expr/tracing-replay-evaluator.hh"
 #include "nix/expr/tracing-object.hh"
 #include "nix/expr/tracing-writer.hh"
 #include "nix/expr/tracing-decision-graph.hh"
+#include "nix/expr/eval.hh"
 #include "nix/expr/value/context.hh"
 #include "nix/store/store-api.hh"
 #include "nix/util/error.hh"
@@ -393,6 +395,21 @@ RootValue TracingReplayObject::defeatCache()
 {
     tracingCacheLog("replay fallback: defeatCache");
     return ensureInner()->defeatCache();
+}
+
+Value * TracingReplayObject::maybeMaterialiseAsFunctionValue(
+    EvalState & state,
+    std::shared_ptr<OuterResolver> resolver,
+    std::shared_ptr<Evaluator> innerEvaluator)
+{
+    auto hasGraph = state.rootDecisionGraph
+        || (innerEvaluator && innerEvaluator->getEvalState().rootDecisionGraph);
+    if (!innerEvaluator || !hasGraph || !getSelector().has_value())
+        return nullptr;
+    auto * v = state.allocValue();
+    v->mkPrimOp(makeCachedFnPrimOp(
+        shared_from_this(), std::move(innerEvaluator), std::move(resolver)));
+    return v;
 }
 
 std::optional<FunctionInfo> TracingReplayObject::getFunctionInfo()

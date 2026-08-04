@@ -150,6 +150,15 @@ public:
         primop that throws — higher-order callback application is not
         currently supported (see the impl for details). */
     RootValue toValueOrProxy(EvalState & state, std::shared_ptr<OuterResolver> resolver) override;
+    /** Function-typed RCA materialises as a `<cb-replay>` primop —
+        delegate to `toValueOrProxy` which already builds it. */
+    Value * maybeMaterialiseAsFunctionValue(
+        EvalState & state,
+        std::shared_ptr<OuterResolver> resolver,
+        std::shared_ptr<Evaluator> /* innerEvaluator */) override
+    {
+        return *toValueOrProxy(state, std::move(resolver));
+    }
     std::optional<FunctionInfo> getFunctionInfo() override;
     /** Recorded frozen callback args can't be applied without
         reconstructing the function body from value-structure atoms

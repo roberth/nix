@@ -260,6 +260,16 @@ RootValue OuterObject::toValueOrProxy(EvalState & state, std::shared_ptr<OuterRe
     return allocRootValue(thunk);
 }
 
+Value * OuterObject::maybeMaterialiseAsFunctionValue(
+    EvalState & state,
+    std::shared_ptr<OuterResolver> resolver,
+    std::shared_ptr<Evaluator> /* innerEvaluator */)
+{
+    auto * v = state.allocValue();
+    v->mkPrimOp(makeOuterFnPrimOp(shared_from_this(), std::move(resolver)));
+    return v;
+}
+
 std::optional<FunctionInfo> OuterObject::getFunctionInfo()
 {
     auto parentSel = producer();

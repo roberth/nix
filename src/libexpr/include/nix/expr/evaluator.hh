@@ -214,6 +214,40 @@ public:
     }
 
     /**
+     * Materialise this Object as a Function-typed Value for the
+     * outer's cache boundary. Only called by `ExprFromObject::eval`'s
+     * `nFunction` case, where the outer is about to receive a Value
+     * whose apply must route through the appropriate primop wrapper
+     * (`<cached-fn>` / `<outer-fn>` / `<cb-apply>` etc.).
+     *
+     * Each Object subclass that has a boundary-shaped function
+     * materialisation returns the wrapped Value here:
+     * - `OuterObject` → `<outer-fn>` primop.
+     * - `TracingObject` / `TracingReplayObject` → `<cached-fn>`
+     *   primop when the cache infrastructure is available.
+     * - `ReplayCallbackArg` / `TracingCallbackArg` → their own
+     *   recording primops.
+     *
+     * Returns `nullptr` when the Object doesn't know how (base
+     * default). `ExprFromObject::eval` falls back to
+     * `makeOuterFnPrimOp` in that case, which handles raw
+     * `InterpreterObject`-of-lambda and similar unwrapped cases.
+     *
+     * Kept separate from `toValueOrProxy` because
+     * `Interpreter::apply` also calls `toValueOrProxy` and needs the
+     * raw lambda Value (not the cache-boundary primop) for its
+     * `mkApp` path — a shared method would recurse infinitely for
+     * `TracingObject`.
+     */
+    virtual Value * maybeMaterialiseAsFunctionValue(
+        EvalState & /* state */,
+        std::shared_ptr<struct OuterResolver> /* resolver */,
+        std::shared_ptr<class Evaluator> /* innerEvaluator */)
+    {
+        return nullptr;
+    }
+
+    /**
      * Get information about a function's formal arguments.
      * Returns nullopt if:
      * - This is not a lambda (use getType() to check)
