@@ -53,15 +53,17 @@ struct QState; // defined in q-state.hh; forward-declared here so
     callback state doesn't leak across trees. */
 struct CallbackState
 {
-    /** Fn's Q hex at the moment the callback firing was opened.
-        Deliberately NOT tracked forward — fn's live identity can
-        evolve (nested apply-result identities compose), but the
-        producer Selector emitted for this firing references fn's
+    /** Fn's producer Selector at the moment the callback firing was
+        opened. Deliberately NOT tracked forward — fn's live identity
+        can evolve (nested apply-result identities compose), but the
+        SelectorCallbackApply emitted for this firing references fn's
         identity **at firing time**, so we snapshot it here and never
-        touch it again. Downstream code that needs current fn hex
-        must call `fn->getSelectorHashHex()` afresh; anything reading
-        this field is opting in to the frozen-at-firing value. */
-    std::string initialFnHex;
+        touch it again. Downstream code that needs the current fn
+        identity must ask fn afresh; anything reading this field is
+        opting in to the frozen-at-firing value. Held as a `ref` to
+        the pool-interned Selector, so SCA construction doesn't need
+        a hex→pool round-trip. */
+    ref<const trace::Selector> initialFn;
 
     /** Observations the outer made on this cell's contra-arg during
         the callback body's evaluation. Snapshotted into the
@@ -321,9 +323,9 @@ struct RecordingCallbackArgCell : ArgCell
 
     RecordingCallbackArgCell(std::shared_ptr<ArgCell> parent_,
                     std::shared_ptr<Object> liveObject_,
-                    std::string initialFnHex)
+                    ref<const trace::Selector> initialFn)
         : ArgCell(std::move(parent_), std::move(liveObject_))
-        , callbackState{std::move(initialFnHex), {}}
+        , callbackState{std::move(initialFn), {}}
     {
     }
 
@@ -331,16 +333,16 @@ struct RecordingCallbackArgCell : ArgCell
        TU (satisfies -Werror=weak-vtables). */
     const CallbackState * getCallbackState() const override;
 
-    /** Construct a recording cell. `initialFnHex` is the fn's Q hex
-        at firing time. */
+    /** Construct a recording cell. `initialFn` is the fn's producer
+        Selector at firing time. */
     static std::shared_ptr<RecordingCallbackArgCell> make(
         std::shared_ptr<ArgCell> parent_,
         std::shared_ptr<Object> liveObject_,
-        std::string initialFnHex)
+        ref<const trace::Selector> initialFn)
     {
         return std::make_shared<RecordingCallbackArgCell>(
             std::move(parent_), std::move(liveObject_),
-            std::move(initialFnHex));
+            std::move(initialFn));
     }
 };
 
@@ -357,10 +359,10 @@ struct ReplayCallbackArgCell : ArgCell
 
     ReplayCallbackArgCell(std::shared_ptr<ArgCell> parent_,
                     std::shared_ptr<Object> liveObject_,
-                    std::string initialFnHex,
+                    ref<const trace::Selector> initialFn,
                     std::vector<TracingDecisionGraph::InlineFact> recordedObsSet)
         : ArgCell(std::move(parent_), std::move(liveObject_))
-        , callbackState{std::move(initialFnHex), std::move(recordedObsSet)}
+        , callbackState{std::move(initialFn), std::move(recordedObsSet)}
     {
     }
 
@@ -368,18 +370,19 @@ struct ReplayCallbackArgCell : ArgCell
        TU (satisfies -Werror=weak-vtables). */
     const CallbackState * getCallbackState() const override;
 
-    /** Construct a replay cell. `initialFnHex` is the fn's Q hex at
-        firing time; `recordedObsSet` is the frozen observation
-        sequence lifted from the RCA that hydrated this cell. */
+    /** Construct a replay cell. `initialFn` is the fn's producer
+        Selector at firing time; `recordedObsSet` is the frozen
+        observation sequence lifted from the RCA that hydrated this
+        cell. */
     static std::shared_ptr<ReplayCallbackArgCell> make(
         std::shared_ptr<ArgCell> parent_,
         std::shared_ptr<Object> liveObject_,
-        std::string initialFnHex,
+        ref<const trace::Selector> initialFn,
         std::vector<TracingDecisionGraph::InlineFact> recordedObsSet)
     {
         return std::make_shared<ReplayCallbackArgCell>(
             std::move(parent_), std::move(liveObject_),
-            std::move(initialFnHex), std::move(recordedObsSet));
+            std::move(initialFn), std::move(recordedObsSet));
     }
 };
 

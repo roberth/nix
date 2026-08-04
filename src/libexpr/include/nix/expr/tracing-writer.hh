@@ -402,16 +402,8 @@ public:
             if (cs.runningObsSet.empty())
                 return false;
             auto obsSetHash = decisionGraph.insertObservationSet(cs.runningObsSet);
-            /* initialFnHex captures fn's Q-space identity at firing
-               time. Look up in pool; fall back to fnParent on miss. */
-            ref<const trace::Selector> fnRef = fnParent;
-            try {
-                auto fnHash = trace::parseTracingHex(cs.initialFnHex);
-                if (auto found = decisionGraph.selectorPool.find(fnHash))
-                    fnRef = *found;
-            } catch (...) {}
             auto qcaSel = decisionGraph.selectorPool.intern(trace::SelectorCallbackApply{
-                obsSetHash, fnRef});
+                obsSetHash, cs.initialFn});
             std::shared_ptr<ArgCell> attrCell = callbackCell ? callbackCell->parent : nullptr;
             logOuterObservation(
                 qcaSel,

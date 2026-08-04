@@ -152,8 +152,6 @@ OuterApplyResult OuterApply::run(
     std::shared_ptr<Object> fnObj, ref<const trace::Selector> fnProducer,
     std::shared_ptr<Object> argObj, std::shared_ptr<ArgCell> callerScope)
 {
-    auto fnId = fnProducer->cachedHash;
-    auto fnIdStr = fnId.toHex();
     if (!outerState)
         throw Error("outer apply requires outerState");
 
@@ -182,7 +180,7 @@ OuterApplyResult OuterApply::run(
             for (const auto & [selectorHash, responsePayload] : *obsMap)
                 recordedObs.push_back({selectorHash, responsePayload});
         }
-        localCell = ReplayCallbackArgCell::make(callerScope, argObj, fnIdStr, std::move(recordedObs));
+        localCell = ReplayCallbackArgCell::make(callerScope, argObj, fnProducer, std::move(recordedObs));
         /* Register weak with callerScope so
            tryReuseLiveCallbackApplication can discover this callback
            application cell via chain traversal from later walks.
@@ -191,7 +189,7 @@ OuterApplyResult OuterApply::run(
         if (callerScope)
             callerScope->liveCallbackChildren.push_back(localCell);
     } else {
-        recordingCell = RecordingCallbackArgCell::make(callerScope, argObj, fnIdStr);
+        recordingCell = RecordingCallbackArgCell::make(callerScope, argObj, fnProducer);
         localCell = recordingCell;
         if (callerScope)
             callerScope->liveCallbackChildren.push_back(localCell);
@@ -224,7 +222,8 @@ OuterApplyResult OuterApply::run(
     if (innerWriter) {
         nlohmann::json applyQ = trace::toJson(*applySel);
         tracingCacheLog("createCallbackCell callsite=OuterApply::run fn=%s arg=%s",
-                        fnIdStr.substr(0, 12), argStateHashStr.substr(0, 12));
+                        fnProducer->cachedHash.toHex().substr(0, 12).c_str(),
+                        argStateHashStr.substr(0, 12).c_str());
         innerWriter->createCallbackCell(applyQ);
     }
 
@@ -280,18 +279,11 @@ OuterApplyResult OuterApply::run(
     std::function<ref<const trace::Selector>()> producerFn;
     if (innerWriter) {
         auto & dg = innerWriter->getDecisionGraph();
-        producerFn = [localCell, fnProducer, &dg]() -> ref<const trace::Selector> {
+        producerFn = [localCell, &dg]() -> ref<const trace::Selector> {
             auto * cs = localCell->getCallbackState();
             auto obsSetHash = dg.insertObservationSet(cs->runningObsSet);
-            /* Look up cs->initialFnHex in pool; fallback to fnProducer. */
-            ref<const trace::Selector> fnRef = fnProducer;
-            try {
-                auto fnHash = trace::parseTracingHex(cs->initialFnHex);
-                if (auto found = dg.selectorPool.find(fnHash))
-                    fnRef = *found;
-            } catch (...) {}
             auto qcaSel = dg.selectorPool.intern(trace::SelectorCallbackApply{
-                obsSetHash, fnRef});
+                obsSetHash, cs->initialFn});
             nlohmann::json qcaJson = trace::toJson(*qcaSel);
             dg.insertRequest(qcaSel->cachedHash, jsonToCborString(qcaJson));
             return qcaSel;
@@ -352,15 +344,15 @@ PrimOp * makeCachedFnPrimOp(
                            cell — inner->apply(fnObj, outerArgProxy)
                            reaches TracingEvaluator::apply's non-fnIsTlo
                            branch which requires arg's cell to be a
-                           RecordingCallbackArgCell. `initialFnHex` comes from
-                           fnObj's Selector, which must exist here (the
-                           primop is only synthesised when
+                           RecordingCallbackArgCell. `initialFn` comes
+                           from fnObj's Selector, which must exist here
+                           (the primop is only synthesised when
                            `obj->getSelector().has_value()`; see
                            `ExprFromObject::eval` dispatch). */
                         auto parentCell = effectiveArgCell(*fnObj);
-                        auto fnSelHex = fnObj->getSelectorHashHex().value();
+                        auto fnSel = fnObj->getSelector().value();
                         auto seedCell = RecordingCallbackArgCell::make(
-                            parentCell, /*liveObject set below*/ nullptr, fnSelHex);
+                            parentCell, /*liveObject set below*/ nullptr, fnSel);
                         /* Selector-is-a-sequence: the arg is identified
                            by the apply that scoped it — SelectorApply
                            whose `fn` is fnObj's CURRENT selector hex.
