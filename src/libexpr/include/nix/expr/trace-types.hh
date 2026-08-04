@@ -95,6 +95,23 @@ struct FileReadResponse
 
 DECLARE_TRACE_PAIR(FileReadRequest, FileReadResponse)
 
+/**
+ * Direct-bytes encoding of the response payload (task #266). Cold's
+ * writer and warm's dispatcher call this to produce the byte string
+ * that goes into `computeResponseHash`. The result is *not* CBOR and
+ * intentionally isn't self-describing — response payloads are hashed
+ * and discarded (see tracing-eval-cache.md §Storage: no Responses
+ * table), so any deterministic encoding both sides agree on works.
+ * Direct raw bytes save two overheads that showed up as hotspots on
+ * the warm profile: nlohmann::basic_json tree allocation / teardown
+ * (`json_value::destroy` at ~1.4%) and Hash-to-SRI-base64 conversion
+ * (`base64::encode` at ~1%).
+ */
+inline std::string encodeResponsePayload(const FileReadResponse & r)
+{
+    return std::string(reinterpret_cast<const char *>(r.contentHash.hash), r.contentHash.hashSize);
+}
+
 // ---------------------------------------------------------------------------
 // Environment variable lookup
 // ---------------------------------------------------------------------------
@@ -111,6 +128,19 @@ struct GetEnvResponse
 };
 
 DECLARE_TRACE_PAIR(GetEnvRequest, GetEnvResponse)
+
+/** Direct-bytes encoding — see FileReadResponse's overload. Layout:
+    one leading byte (0=null, 1=present) plus, if present, the raw
+    string bytes. */
+inline std::string encodeResponsePayload(const GetEnvResponse & r)
+{
+    std::string out;
+    out.reserve(1 + (r.value ? r.value->size() : 0));
+    out.push_back(r.value ? '\x01' : '\x00');
+    if (r.value)
+        out.append(*r.value);
+    return out;
+}
 
 // ---------------------------------------------------------------------------
 // User query infrastructure

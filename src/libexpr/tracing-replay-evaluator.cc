@@ -321,11 +321,11 @@ std::optional<std::string> TracingReplayEvaluator::computeLiveResponse(const tra
         auto result = std::visit(overloaded{
             [&](const trace::FileReadRequest & r) -> std::optional<std::string> {
                 auto currentHash = validationEnv.getFileHash(r.absPath);
-                return jsonToCborString(nlohmann::json(trace::FileReadResponse{currentHash}));
+                return trace::encodeResponsePayload(trace::FileReadResponse{currentHash});
             },
             [&](const trace::GetEnvRequest & r) -> std::optional<std::string> {
                 auto currentVal = validationEnv.getEnv(r.name);
-                return jsonToCborString(nlohmann::json(trace::GetEnvResponse{currentVal}));
+                return trace::encodeResponsePayload(trace::GetEnvResponse{currentVal});
             },
             [&](const trace::OuterValueRequest & r) -> std::optional<std::string> {
                 return dispatchQueryRequest(trace::toJson(*r.query), ctx);

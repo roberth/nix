@@ -594,9 +594,11 @@ public:
     {
         sink.log(nlohmann::json(resp));
         nlohmann::json reqJson = resp.request;
-        nlohmann::json respJson = resp.response;
         auto selectorHash = TracingDecisionGraph::computeSelectorHash(resp.request);
-        auto responsePayload = jsonToCborString(respJson);
+        /* #266: bypass nlohmann tree + base64 stringification for the
+           response payload — the bytes are only ever hashed, never
+           decoded, so a direct encoding cold and warm agree on works. */
+        auto responsePayload = trace::encodeResponsePayload(resp.response);
         auto responseHash = TracingDecisionGraph::computeResponseHash(responsePayload);
         decisionGraph.insertRequest(selectorHash, jsonToCborString(reqJson));
         auto factHash = TracingDecisionGraph::xorFactIntoHash(
