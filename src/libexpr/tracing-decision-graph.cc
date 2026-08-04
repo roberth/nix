@@ -538,7 +538,7 @@ static void dg_bindBlob(SQLiteStmt::Use & use, std::string_view blob)
    choose set members can construct collisions algebraically. For
    an internal eval cache this is acceptable — the worst case is a
    wrong cache hit which is detected on next use. */
-static TracingHash dg_factElementHash(const TracingHash & request, const TracingHash & response)
+TracingHash TracingDecisionGraph::factElementHash(const TracingHash & request, const TracingHash & response)
 {
     std::string buf;
     buf.reserve(2 * TracingHash::size);
@@ -916,7 +916,7 @@ TracingDecisionGraph::computeFactSetHash(const std::vector<Fact> & members)
     auto canonical = dg_sortAndDedup(members);
     SetHash out = emptySetHash();
     for (const auto & f : canonical)
-        out.xorInPlace(dg_factElementHash(f.request, f.response));
+        out.xorInPlace(factElementHash(f.request, f.response));
     return out;
 }
 
@@ -1002,7 +1002,7 @@ TracingDecisionGraph::insertFactSet(std::vector<Fact> members)
     auto canonical = dg_sortAndDedup(std::move(members));
     SetHash setHash = emptySetHash();
     for (const auto & f : canonical)
-        setHash.xorInPlace(dg_factElementHash(f.request, f.response));
+        setHash.xorInPlace(factElementHash(f.request, f.response));
     auto state(_state->lock());
     state->factSetCache.try_emplace(setHash, std::optional{std::move(canonical)});
     return setHash;
@@ -1011,7 +1011,7 @@ TracingDecisionGraph::insertFactSet(std::vector<Fact> members)
 TracingHash TracingDecisionGraph::xorFactIntoHash(
     const TracingHash & h, const TracingHash & request, const TracingHash & response)
 {
-    return h.xorWith(dg_factElementHash(request, response));
+    return h.xorWith(factElementHash(request, response));
 }
 
 void TracingDecisionGraph::persistRequestSetNode(

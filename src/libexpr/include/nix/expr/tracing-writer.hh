@@ -112,6 +112,17 @@ public:
 
 private:
 
+    /** Per-fact staging entry carried into insertBarrieredChain — mirrors
+        ArgCell::FactEntry (response + elementHash + barrier). The
+        elementHash is the precomputed BLAKE3(req||resp) so the follow
+        loop's XOR-fold uses it directly instead of re-hashing. */
+    struct ChainFact
+    {
+        uint64_t barrier;
+        TracingHash response;
+        TracingHash elementHash;
+    };
+
     /** #187 + follow-then-insert: at each cur, first follow any
         existing outgoing Ask whose requestSet is a subset of our
         remaining reqs (no live dispatch — we fold in our
@@ -122,7 +133,7 @@ private:
     void insertBarrieredChain(
         const TracingHash & selectorHash,
         const TracingHash & startCur,
-        const std::unordered_map<TracingHash, std::pair<uint64_t, TracingHash>> & facts)
+        const std::unordered_map<TracingHash, ChainFact> & facts)
     {
         if (facts.empty())
             return;
@@ -155,10 +166,11 @@ private:
                     continue;
                 /* Follow: fold each useful req/resp into cur, mark
                    dispatched. `subset` above guarantees facts.at(req)
-                   succeeds. */
+                   succeeds. Uses the precomputed elementHash so this
+                   loop is BLAKE3-free. */
                 for (const auto & req : useful) {
                     auto it = facts.find(req);
-                    cur = TracingDecisionGraph::xorFactIntoHash(cur, req, it->second.second);
+                    cur.xorInPlace(it->second.elementHash);
                     dispatchedSoFar.insert(req);
                 }
                 tracingCacheLog("insertBarrieredChain follow Q=%s cur→%s (consumed %zu req)",
@@ -176,9 +188,9 @@ private:
         if (dispatchedSoFar.size() == facts.size())
             return;
         std::map<uint64_t, std::vector<TracingDecisionGraph::Fact>> byBarrier;
-        for (auto & [req, br_resp] : facts)
+        for (auto & [req, cf] : facts)
             if (!dispatchedSoFar.count(req))
-                byBarrier[br_resp.first].push_back({req, br_resp.second});
+                byBarrier[cf.barrier].push_back({req, cf.response});
         /* Iterate by barrier group; the barrier value itself isn't
            needed in-loop — sortedness of `byBarrier` drives the order. */
         for (auto & barrierGroup : byBarrier) {
@@ -299,7 +311,7 @@ private:
                        search finds the first tail entry >= threshold
                        and we iterate only what we need — no scan of the
                        pre-parent-record prefix. */
-                    std::unordered_map<TracingHash, std::pair<uint64_t, TracingHash>> deltaFacts;
+                    std::unordered_map<TracingHash, ChainFact> deltaFacts;
                     auto threshold = it->second.barrierAtRecord;
                     for (auto c = cell.get(); c; c = c->parent.get()) {
                         auto & v = c->factsInOrder;
@@ -307,7 +319,7 @@ private:
                             [](const auto & p, uint64_t t) { return p.second.barrier < t; });
                         for (auto j = lb; j != v.end(); ++j)
                             deltaFacts.try_emplace(j->first,
-                                j->second.barrier, j->second.response);
+                                ChainFact{j->second.barrier, j->second.response, j->second.elementHash});
                     }
                     if (!deltaFacts.empty())
                         insertBarrieredChain(selectorHash,
@@ -319,11 +331,11 @@ private:
 
         if (!structuralInserted) {
             /* Full chain: cell + ancestors, from ∅. */
-            std::unordered_map<TracingHash, std::pair<uint64_t, TracingHash>> allFacts;
+            std::unordered_map<TracingHash, ChainFact> allFacts;
             for (auto c = cell.get(); c; c = c->parent.get())
                 for (auto & [req, entry] : c->factsInOrder)
                     allFacts.try_emplace(req,
-                        entry.barrier, entry.response);
+                        ChainFact{entry.barrier, entry.response, entry.elementHash});
             insertBarrieredChain(selectorHash,
                 TracingDecisionGraph::emptySetHash(), allFacts);
 
@@ -331,10 +343,10 @@ private:
                parent.terminalCur. Covers callback-firing nesting where
                the structural-parent isn't on the same cell. */
             if (cell->parent && !cell->factsInOrder.empty()) {
-                std::unordered_map<TracingHash, std::pair<uint64_t, TracingHash>> ownFacts;
+                std::unordered_map<TracingHash, ChainFact> ownFacts;
                 for (auto & [req, entry] : cell->factsInOrder)
                     ownFacts.try_emplace(req,
-                        entry.barrier, entry.response);
+                        ChainFact{entry.barrier, entry.response, entry.elementHash});
                 auto parentCur = cell->parent->factSetHash();
                 insertBarrieredChain(selectorHash, parentCur, ownFacts);
             }

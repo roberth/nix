@@ -92,10 +92,18 @@ struct ArgCell : std::enable_shared_from_this<ArgCell>
         causally-ordered Ask edges (Foundational principle 9). Barriers
         are NOT persisted — only the writer's Ask-insertion logic reads
         them; the walker's fact additions use the writer's current
-        barrier value at peek time. */
+        barrier value at peek time.
+
+        `elementHash` = BLAKE3(req || resp) — the per-fact contribution
+        to any factSet XOR-fold. Precomputed at addFact time so every
+        consumer that folds this fact into a set (walker dispatch,
+        writer's insertBarrieredChain follow loop, structural-chain
+        rebuilds) uses this cached value instead of re-hashing 32 bytes
+        per fold. */
     struct FactEntry
     {
         TracingHash response;
+        TracingHash elementHash;
         uint64_t barrier = 0;
     };
 
@@ -184,11 +192,11 @@ struct ArgCell : std::enable_shared_from_this<ArgCell>
         logOuterObservation is the canonical caller). */
     bool addFact(const TracingHash & reqHash, const TracingHash & respHash, uint64_t barrier = 0) const
     {
-        auto [it, inserted] = facts.try_emplace(reqHash, FactEntry{respHash, barrier});
+        auto elem = TracingDecisionGraph::factElementHash(reqHash, respHash);
+        auto [it, inserted] = facts.try_emplace(reqHash, FactEntry{respHash, elem, barrier});
         if (inserted) {
             factsInOrder.emplace_back(reqHash, it->second);
-            cachedOwnFactSetHash = TracingDecisionGraph::xorFactIntoHash(
-                cachedOwnFactSetHash, reqHash, respHash);
+            cachedOwnFactSetHash.xorInPlace(elem);
         }
         return inserted;
     }
@@ -207,8 +215,7 @@ struct ArgCell : std::enable_shared_from_this<ArgCell>
         auto it = facts.find(reqHash);
         if (it == facts.end())
             return;
-        cachedOwnFactSetHash = TracingDecisionGraph::xorFactIntoHash(
-            cachedOwnFactSetHash, reqHash, it->second.response);
+        cachedOwnFactSetHash.xorInPlace(it->second.elementHash);
         factsInOrder.erase(
             std::remove_if(factsInOrder.begin(), factsInOrder.end(),
                 [&](const auto & p) { return p.first == reqHash; }),

@@ -221,9 +221,15 @@ public:
 
     SetHash insertFactSet(std::vector<Fact> members);
 
+    /* Per-Fact element hash: BLAKE3(request || response). Callers with
+       a fact in hand precompute this once (e.g. ArgCell::FactEntry) so
+       downstream XOR-folds skip the re-hash. */
+    static TracingHash factElementHash(const TracingHash & request, const TracingHash & response);
+
     /* XOR-fold one Fact into a running set hash. Used by callers that
        maintain their factSet hash incrementally to avoid the O(N)
-       cost of insertFactSet. */
+       cost of insertFactSet. Prefer .xorInPlace(factElementHash(...))
+       when the elementHash is already known (cached on FactEntry). */
     static TracingHash xorFactIntoHash(const TracingHash & h, const TracingHash & request, const TracingHash & response);
 
     static TracingHash xorHashes(const TracingHash & a, const TracingHash & b);
