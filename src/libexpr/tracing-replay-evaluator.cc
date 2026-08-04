@@ -38,7 +38,7 @@ std::optional<TracingReplayEvaluator::WalkResult>
 TracingReplayEvaluator::walk(
     const TracingHash & selectorHash,
     std::shared_ptr<Object> currentProxy,
-    std::shared_ptr<const ArgCell> cell)
+    std::shared_ptr<ArgCell> cell)
 {
     ResolutionContext ctx{
         std::move(currentProxy),
@@ -188,7 +188,7 @@ TracingReplayEvaluator::walk(
                     trace::tracingZeroHash(), requestHash, h),
                 requestHash,
                 h,
-                std::weak_ptr<const ArgCell>{},
+                std::weak_ptr<ArgCell>{},
             });
             tracingCacheLog(
                 "dispatch env: req=%s payload=%s resp=%s",
@@ -710,7 +710,7 @@ std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nl
 
 template<typename Q>
 std::optional<std::pair<std::string, TriePosition>>
-TracingReplayEvaluator::lookup(const Q & query, std::shared_ptr<Object> currentProxy, std::shared_ptr<const ArgCell> cell)
+TracingReplayEvaluator::lookup(const Q & query, std::shared_ptr<Object> currentProxy, std::shared_ptr<ArgCell> cell)
 {
     auto selectorHash = TracingDecisionGraph::computeSelectorHash(query);
     /* Task #110: pass Q's typed payload so the walker can re-derive
@@ -981,11 +981,11 @@ template std::optional<std::pair<std::string, TriePosition>>
 TracingReplayEvaluator::lookup<trace::SelectorGetAttr>(
     const trace::SelectorGetAttr &,
     std::shared_ptr<Object>,
-    std::shared_ptr<const ArgCell>);
+    std::shared_ptr<ArgCell>);
 template std::optional<std::pair<std::string, TriePosition>>
 TracingReplayEvaluator::lookup<trace::SelectorGetListElem>(
     const trace::SelectorGetListElem &,
     std::shared_ptr<Object>,
-    std::shared_ptr<const ArgCell>);
+    std::shared_ptr<ArgCell>);
 
 } // namespace nix

@@ -47,7 +47,7 @@ using OuterQueryFn = std::function<OuterQueryResult(
     std::shared_ptr<Object> outerObj,
     ref<const trace::Selector> query,
     ref<const trace::Selector> producer,
-    std::shared_ptr<const ArgCell> callerCell)>;
+    std::shared_ptr<ArgCell> callerCell)>;
 
 /**
  * Result of an OuterApplyFn call. `applyResult` is the outer's raw
@@ -85,7 +85,7 @@ using OuterApplyFn = std::function<OuterApplyResult(
     std::shared_ptr<Object> fnObj,
     ref<const trace::Selector> fnProducer,
     std::shared_ptr<Object> argObj,
-    std::shared_ptr<const ArgCell> callerScope)>;
+    std::shared_ptr<ArgCell> callerScope)>;
 
 /**
  * Object implementation backed by outer queries to the outer evaluator.
@@ -121,7 +121,7 @@ class OuterObject : public Object
        same cell as their parent; apply-result proxies open a fresh
        cell rooted at the fn's cell. Ancestor chain reached via the
        cell's own `parent` field. */
-    std::shared_ptr<const ArgCell> argCell;
+    std::shared_ptr<ArgCell> argCell;
 
     /* SelectorPool for interning child Selectors constructed here
        (maybeGetAttr → SelectorGetAttr, etc.). Lives on the shared
@@ -142,13 +142,13 @@ public:
 
     /** Set the proxy's argCell. Call right after construction at
         boundary sites. Returns *this for chaining. */
-    OuterObject & withArgCell(std::shared_ptr<const ArgCell> argScope_)
+    OuterObject & withArgCell(std::shared_ptr<ArgCell> argScope_)
     {
         argCell = std::move(argScope_);
         return *this;
     }
 
-    std::shared_ptr<const ArgCell> getProxyArgCell() const override { return argCell; }
+    std::shared_ptr<ArgCell> getProxyArgCell() const override { return argCell; }
 
     std::shared_ptr<Object> maybeGetAttr(const std::string & name) override;
     std::vector<std::string> getAttrNames() override;

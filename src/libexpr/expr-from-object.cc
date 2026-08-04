@@ -113,7 +113,7 @@ struct OuterApply
     OuterApplyResult run(
         std::shared_ptr<Object> fnObj, ref<const trace::Selector> fnProducer,
         std::shared_ptr<Object> argObj,
-        std::shared_ptr<const ArgCell> callerScope);
+        std::shared_ptr<ArgCell> callerScope);
 };
 
 struct OuterResolver : std::enable_shared_from_this<OuterResolver>
@@ -138,7 +138,7 @@ struct OuterResolver : std::enable_shared_from_this<OuterResolver>
         OuterObject. */
     OuterApplyResult apply(
         std::shared_ptr<Object> fnObj, ref<const trace::Selector> fnProducer,
-        std::shared_ptr<Object> argObj, std::shared_ptr<const ArgCell> callerScope)
+        std::shared_ptr<Object> argObj, std::shared_ptr<ArgCell> callerScope)
     {
         return OuterApply{
             bridgedLocals, outerState, innerEvaluator, innerWriter, outerRootFSRoot,
@@ -150,7 +150,7 @@ struct OuterResolver : std::enable_shared_from_this<OuterResolver>
 
 OuterApplyResult OuterApply::run(
     std::shared_ptr<Object> fnObj, ref<const trace::Selector> fnProducer,
-    std::shared_ptr<Object> argObj, std::shared_ptr<const ArgCell> callerScope)
+    std::shared_ptr<Object> argObj, std::shared_ptr<ArgCell> callerScope)
 {
     auto fnId = fnProducer->cachedHash;
     auto fnIdStr = fnId.toHex();
@@ -168,7 +168,7 @@ OuterApplyResult OuterApply::run(
        localCell inside this function and as the wrapped TCA's
        argCell (so recordObservation lands in the same runningObsSet
        the producer callable snapshots). */
-    std::shared_ptr<const ArgCell> localCell;
+    std::shared_ptr<ArgCell> localCell;
     std::shared_ptr<CallbackArgCell> callbackCell;
     if (innerWriter) {
         callbackCell = CallbackArgCell::make(callerScope, argObj, fnIdStr);
@@ -407,8 +407,8 @@ static PrimOp * makeCachedFnPrimOp(
                             std::shared_ptr<Object> outerObj,
                             ref<const trace::Selector> q,
                             ref<const trace::Selector> producer,
-                            std::shared_ptr<const ArgCell> callerCell) {
-                            std::shared_ptr<const ArgCell> attributionCell = callerCell;
+                            std::shared_ptr<ArgCell> callerCell) {
+                            std::shared_ptr<ArgCell> attributionCell = callerCell;
                             OuterQueryResult qr = dispatchOuterQuery(std::move(outerObj), q->node);
                             innerEnv.outerQuery(
                                 q,
@@ -421,7 +421,7 @@ static PrimOp * makeCachedFnPrimOp(
                             std::shared_ptr<Object> fnObj,
                             ref<const trace::Selector> fnProducer,
                             std::shared_ptr<Object> argObj,
-                            std::shared_ptr<const ArgCell> callerScope) -> OuterApplyResult {
+                            std::shared_ptr<ArgCell> callerScope) -> OuterApplyResult {
                             return resolver->apply(std::move(fnObj), std::move(fnProducer),
                                                     std::move(argObj), std::move(callerScope));
                         };

@@ -37,7 +37,7 @@ public:
         ref<const trace::Selector> query,
         std::function<trace::ResultVariant(ref<const trace::Selector>)> resolve,
         ref<const trace::Selector> producer,
-        const std::shared_ptr<const ArgCell> & attributionCell = {}) override;
+        const std::shared_ptr<ArgCell> & attributionCell = {}) override;
     TraceSink * getTraceSink() override;
 };
 

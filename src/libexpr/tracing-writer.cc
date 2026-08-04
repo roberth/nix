@@ -32,7 +32,7 @@ struct CanonicaliseResult {
 
 std::optional<CanonicaliseResult> tryStateCreepCanonicalise(
     TracingDecisionGraph & dg,
-    const std::shared_ptr<const ArgCell> & cell,
+    const std::shared_ptr<ArgCell> & cell,
     ref<const trace::Selector> incomingSelector,
     const TracingHash & incomingRespHash)
 {
@@ -118,7 +118,7 @@ void TracingWriter::logOuterObservation(
     ref<const trace::Selector> query,
     const trace::ResultVariant & result,
     std::string producerDesc,
-    const std::shared_ptr<const ArgCell> & attributionCell)
+    const std::shared_ptr<ArgCell> & attributionCell)
 {
     std::string queryTag = std::visit(
         [](const auto & q) -> std::string { return std::string(q.tag); }, query->node);

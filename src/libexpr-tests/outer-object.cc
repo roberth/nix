@@ -110,7 +110,7 @@ TEST_F(OuterObjectTest, ProducerWiring)
         [producer]() { return producer; },
         std::make_shared<StubObject>(),
         [](std::shared_ptr<Object>, ref<const trace::Selector>, ref<const trace::Selector>,
-           std::shared_ptr<const ArgCell>) -> OuterQueryResult
+           std::shared_ptr<ArgCell>) -> OuterQueryResult
         { throw std::runtime_error("queryFn should not fire"); },
         srcRoot,
         g->selectorPool);
@@ -131,7 +131,7 @@ TEST_F(OuterObjectTest, MaybeGetAttrChildProducer)
     auto callerCell = RegularArgCell::make(nullptr, nullptr);
 
     OuterQueryFn queryFn = [stubChild](std::shared_ptr<Object>, ref<const trace::Selector>,
-                                        ref<const trace::Selector>, std::shared_ptr<const ArgCell>) {
+                                        ref<const trace::Selector>, std::shared_ptr<ArgCell>) {
         return OuterQueryResult{trace::ResultWHNF{"set", trace::WHNFAttrs{{"x", "y"}}}, stubChild};
     };
 
@@ -164,7 +164,7 @@ TEST_F(OuterObjectTest, GetListElemChildProducer)
     auto callerCell = RegularArgCell::make(nullptr, nullptr);
 
     OuterQueryFn queryFn = [stubChild](std::shared_ptr<Object>, ref<const trace::Selector>,
-                                        ref<const trace::Selector>, std::shared_ptr<const ArgCell>) {
+                                        ref<const trace::Selector>, std::shared_ptr<ArgCell>) {
         return OuterQueryResult{trace::ResultWHNF{"list", trace::WHNFList{3}}, stubChild};
     };
 
@@ -197,7 +197,7 @@ TEST_F(OuterObjectTest, GetFunctionInfoQuerySelector)
     std::optional<TracingHash> capturedSelectorHash;
 
     OuterQueryFn queryFn = [&capturedSelectorHash](std::shared_ptr<Object>, ref<const trace::Selector> q,
-                                                    ref<const trace::Selector>, std::shared_ptr<const ArgCell>) {
+                                                    ref<const trace::Selector>, std::shared_ptr<ArgCell>) {
         capturedSelectorHash = q->cachedHash;
         return OuterQueryResult{trace::ResultFunctionInfo{true, {{"a", false}}, false}, nullptr};
     };
@@ -229,7 +229,7 @@ TEST_F(OuterObjectTest, QueryApplyResultProducer)
     std::optional<TracingHash> capturedFnProducerHash;
     OuterApplyFn applyFn = [applyResultProducer, &capturedFnProducerHash](
         std::shared_ptr<Object>, ref<const trace::Selector> fnProducerArg,
-        std::shared_ptr<Object>, std::shared_ptr<const ArgCell>) {
+        std::shared_ptr<Object>, std::shared_ptr<ArgCell>) {
         capturedFnProducerHash = fnProducerArg->cachedHash;
         return OuterApplyResult{
             std::make_shared<StubObject>(),
@@ -237,7 +237,7 @@ TEST_F(OuterObjectTest, QueryApplyResultProducer)
         };
     };
     OuterQueryFn queryFn = [](std::shared_ptr<Object>, ref<const trace::Selector>, ref<const trace::Selector>,
-                              std::shared_ptr<const ArgCell>) -> OuterQueryResult
+                              std::shared_ptr<ArgCell>) -> OuterQueryResult
     { throw std::runtime_error("queryFn should not fire for apply"); };
 
     auto outer = std::make_shared<OuterObject>(
@@ -270,10 +270,10 @@ TEST_F(OuterObjectTest, ArgCellPropagation)
 
     // Capture the callerScope handed to applyFn — under the lift it is
     // literally the caller's cell, not a fresh cell parented to it.
-    std::shared_ptr<const ArgCell> capturedCallerScope;
+    std::shared_ptr<ArgCell> capturedCallerScope;
     OuterApplyFn applyFn = [&capturedCallerScope, producer](
         std::shared_ptr<Object>, ref<const trace::Selector>,
-        std::shared_ptr<Object>, std::shared_ptr<const ArgCell> callerScope) {
+        std::shared_ptr<Object>, std::shared_ptr<ArgCell> callerScope) {
         capturedCallerScope = callerScope;
         return OuterApplyResult{
             std::make_shared<StubObject>(),
@@ -281,7 +281,7 @@ TEST_F(OuterObjectTest, ArgCellPropagation)
         };
     };
     OuterQueryFn queryFn = [](std::shared_ptr<Object>, ref<const trace::Selector>, ref<const trace::Selector>,
-                              std::shared_ptr<const ArgCell>) -> OuterQueryResult
+                              std::shared_ptr<ArgCell>) -> OuterQueryResult
     { throw std::runtime_error("queryFn should not fire"); };
 
     auto outer = std::make_shared<OuterObject>(

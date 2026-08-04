@@ -30,7 +30,7 @@ class TracingReplayObject : public Object
 
     /* Apply-result proxies open a fresh cell rooted at the fn's cell;
        navigation children carry the same cell as their parent. */
-    std::shared_ptr<const ArgCell> argCell;
+    std::shared_ptr<ArgCell> argCell;
 
     /* When apply-result, the producer Selector identifying it
        structurally. */
@@ -76,7 +76,7 @@ public:
         TracingReplayEvaluator & evaluator, TriePosition triePos, std::function<ref<Object>()> getInner);
 
     /** Set the proxy's argCell. Returns *this for chaining. */
-    TracingReplayObject & withArgCell(std::shared_ptr<const ArgCell> argScope_)
+    TracingReplayObject & withArgCell(std::shared_ptr<ArgCell> argScope_)
     {
         argCell = std::move(argScope_);
         return *this;
@@ -129,7 +129,7 @@ public:
         return *this;
     }
 
-    std::shared_ptr<const ArgCell> getProxyArgCell() const override { return argCell; }
+    std::shared_ptr<ArgCell> getProxyArgCell() const override { return argCell; }
 
     std::optional<std::string> getSelectorHashHex() const override { return triePos.queryHashStr; }
 

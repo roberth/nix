@@ -79,7 +79,7 @@ struct ArgCell : std::enable_shared_from_this<ArgCell>
 
     /** Next-outer cell. Null at the root (the cache call's
         argument). */
-    std::shared_ptr<const ArgCell> parent;
+    std::shared_ptr<ArgCell> parent;
 
     /** The live Object the cell represents. The walker's
         cell-chain resolution returns this to identify the live
@@ -93,15 +93,9 @@ struct ArgCell : std::enable_shared_from_this<ArgCell>
         expr-from-object.cc) that carry proxy identity through a
         boundary without owning a Selector chain.
 
-        `mutable` because ArgCells are held throughout via
-        `shared_ptr<const ArgCell>`; the pointer needs to be
-        assignable through a const cell. The QState pointee itself is
-        not const — its fields evolve as observations attribute to
-        this cell.
-
         See q-state.hh for the field breakdown and the concurrency
         rationale. */
-    mutable std::shared_ptr<QState> qState;
+    std::shared_ptr<QState> qState;
 
     /** Per-fact entry. `response` is the fact's response hash (identity
         contribution to factSetHash). `barrier` is a writer-side monotonic
@@ -129,24 +123,20 @@ struct ArgCell : std::enable_shared_from_this<ArgCell>
         observations append to the arg's own cell. XOR-fold over
         response hashes is order-independent (identity is a set, not
         a sequence). Cumulative — never cleared (state creep,
-        dedup at CAS).
-
-        `mutable` because ArgCells are held via
-        `shared_ptr<const ArgCell>`; appends happen through the
-        const pointer. */
-    mutable std::map<TracingHash, FactEntry> facts;
+        dedup at CAS). */
+    std::map<TracingHash, FactEntry> facts;
 
     /** Same members as `facts`, kept in insertion order. Callers
         that emit Ask chains iterate this to preserve barrier
         ordering (map iteration is by reqHash, meaningless here). */
-    mutable std::vector<std::pair<TracingHash, FactEntry>> factsInOrder;
+    std::vector<std::pair<TracingHash, FactEntry>> factsInOrder;
 
     /** XOR-fold of just this cell's own facts, maintained
         incrementally by addFact/removeFact (XOR is self-inverse, so
         both operations are O(1)). `factSetHash()` composes this with
         the parent chain via O(depth) hash XORs — no SHA-256 recompute
         per call. */
-    mutable TracingDecisionGraph::SetHash cachedOwnFactSetHash =
+    TracingDecisionGraph::SetHash cachedOwnFactSetHash =
         TracingDecisionGraph::emptySetHash();
 
     /** Per-Selector oldest recorded terminalCur on this cell — used
@@ -165,16 +155,14 @@ struct ArgCell : std::enable_shared_from_this<ArgCell>
         XOR-cancel.
 
         Lives on the cell (not global) because the same Selector on
-        different argument cells resolves to different terminalCurs.
-
-        Mutable for the same reason as `facts`. */
+        different argument cells resolves to different terminalCurs. */
     struct FirstTerminalRecord
     {
         TracingDecisionGraph::SetHash terminalCur;
         uint64_t barrierAtRecord;
         uint64_t epochAtRecord;
     };
-    mutable std::map<TracingHash, FirstTerminalRecord> firstTerminalCurs;
+    std::map<TracingHash, FirstTerminalRecord> firstTerminalCurs;
 
     /** Bumped on every removeFact call. FirstTerminalRecord captures
         the aggregate ancestry epoch (see canonicalisationEpochChain)
@@ -184,7 +172,7 @@ struct ArgCell : std::enable_shared_from_this<ArgCell>
         cell factset and a barrier-based delta can't reconstruct the
         removed fact's XOR contribution. Structural chain skips in
         that case; the ∅-chain fallback keeps correctness. */
-    mutable uint64_t canonicalisationEpoch = 0;
+    uint64_t canonicalisationEpoch = 0;
 
     /* Out-of-line dtor (defined in arg-cell.cc) so the base's vtable
        is emitted in one TU — satisfies -Werror=weak-vtables. */
@@ -221,7 +209,7 @@ struct ArgCell : std::enable_shared_from_this<ArgCell>
         return value to gate barrier bumping and any other side
         effects that should only fire per cell-new fact (the writer's
         logOuterObservation is the canonical caller). */
-    bool addFact(const TracingHash & reqHash, const TracingHash & respHash, uint64_t barrier = 0) const
+    bool addFact(const TracingHash & reqHash, const TracingHash & respHash, uint64_t barrier = 0)
     {
         auto elem = TracingDecisionGraph::factElementHash(reqHash, respHash);
         auto [it, inserted] = facts.try_emplace(reqHash, FactEntry{respHash, elem, barrier});
@@ -241,7 +229,7 @@ struct ArgCell : std::enable_shared_from_this<ArgCell>
         XOR is self-inverse, so removal is O(1) for the cached hash.
         The insertion-order vector needs a linear scan; canonicalisation
         is rare enough that the O(n) removal cost doesn't dominate. */
-    void removeFact(const TracingHash & reqHash) const
+    void removeFact(const TracingHash & reqHash)
     {
         auto it = facts.find(reqHash);
         if (it == facts.end())
@@ -267,7 +255,7 @@ struct ArgCell : std::enable_shared_from_this<ArgCell>
     }
 
 protected:
-    ArgCell(std::shared_ptr<const ArgCell> parent_,
+    ArgCell(std::shared_ptr<ArgCell> parent_,
             std::shared_ptr<Object> liveObject_)
         : depth(parent_ ? parent_->depth + 1 : 0)
         , parent(std::move(parent_))
@@ -282,7 +270,7 @@ protected:
     nullptr. */
 struct RegularArgCell : ArgCell
 {
-    RegularArgCell(std::shared_ptr<const ArgCell> parent_,
+    RegularArgCell(std::shared_ptr<ArgCell> parent_,
                    std::shared_ptr<Object> liveObject_)
         : ArgCell(std::move(parent_), std::move(liveObject_))
     {
@@ -297,7 +285,7 @@ struct RegularArgCell : ArgCell
         may be null at construction if the live proxy isn't yet
         constructed; assign to the cell's `liveObject` field afterwards. */
     static std::shared_ptr<RegularArgCell> make(
-        std::shared_ptr<const ArgCell> parent_,
+        std::shared_ptr<ArgCell> parent_,
         std::shared_ptr<Object> liveObject_)
     {
         return std::make_shared<RegularArgCell>(
@@ -314,7 +302,7 @@ struct CallbackArgCell : ArgCell
     /** Inline callback-firing state. */
     CallbackState callbackState;
 
-    CallbackArgCell(std::shared_ptr<const ArgCell> parent_,
+    CallbackArgCell(std::shared_ptr<ArgCell> parent_,
                     std::shared_ptr<Object> liveObject_,
                     std::string initialFnHex)
         : ArgCell(std::move(parent_), std::move(liveObject_))
@@ -330,7 +318,7 @@ struct CallbackArgCell : ArgCell
         at firing time (populated into callbackState.initialFnHex at
         construction; used by producer Selector construction). */
     static std::shared_ptr<CallbackArgCell> make(
-        std::shared_ptr<const ArgCell> parent_,
+        std::shared_ptr<ArgCell> parent_,
         std::shared_ptr<Object> liveObject_,
         std::string initialFnHex)
     {
@@ -344,7 +332,7 @@ struct CallbackArgCell : ArgCell
     cell. Navigation children carry the parent's cell directly; apply
     results carry their own fresh cell. Returns null for non-proxy
     Objects or for proxies that haven't been scoped. */
-inline std::shared_ptr<const ArgCell> effectiveArgCell(const Object & obj)
+inline std::shared_ptr<ArgCell> effectiveArgCell(const Object & obj)
 {
     return obj.getProxyArgCell();
 }

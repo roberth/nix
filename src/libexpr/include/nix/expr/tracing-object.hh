@@ -32,7 +32,7 @@ class TracingObject : public Object
     /* Apply-result proxies (constructed by TracingEvaluator::apply)
        open a fresh cell rooted at the fn's cell; navigation children
        (maybeGetAttr / getListElem) inherit the parent's cell. */
-    std::shared_ptr<const ArgCell> argCell;
+    std::shared_ptr<ArgCell> argCell;
 
     /* For apply-result wrappers: the producer Selector that identifies
        this apply structurally (SelectorApplyStep{parent=fn}). Null on
@@ -62,7 +62,7 @@ public:
         std::optional<TriePosition> triePos = std::nullopt);
 
     /** Set the proxy's argCell. Returns *this for chaining. */
-    TracingObject & withArgCell(std::shared_ptr<const ArgCell> argScope_)
+    TracingObject & withArgCell(std::shared_ptr<ArgCell> argScope_)
     {
         argCell = std::move(argScope_);
         return *this;
@@ -102,7 +102,7 @@ public:
         return *this;
     }
 
-    std::shared_ptr<const ArgCell> getProxyArgCell() const override { return argCell; }
+    std::shared_ptr<ArgCell> getProxyArgCell() const override { return argCell; }
 
     std::optional<std::string> getSelectorHashHex() const override
     {

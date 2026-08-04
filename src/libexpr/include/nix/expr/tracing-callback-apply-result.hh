@@ -48,7 +48,7 @@ class TracingCallbackApplyResult : public Object
     std::string qHex;
 
     /* Argument cell — same shape as TracingObject. */
-    std::shared_ptr<const ArgCell> argCell;
+    std::shared_ptr<ArgCell> argCell;
 
     /* The enclosing callback firing's cell. Observations in recordD2
        append to callbackCell->callbackState.runningObsSet directly. */
@@ -72,13 +72,13 @@ public:
 
     std::optional<ref<const trace::Selector>> getSelector() const override { return producer; }
 
-    TracingCallbackApplyResult & withArgCell(std::shared_ptr<const ArgCell> cell)
+    TracingCallbackApplyResult & withArgCell(std::shared_ptr<ArgCell> cell)
     {
         argCell = std::move(cell);
         return *this;
     }
 
-    std::shared_ptr<const ArgCell> getProxyArgCell() const override { return argCell; }
+    std::shared_ptr<ArgCell> getProxyArgCell() const override { return argCell; }
 
     /** The apply-result's Q hash hex — content hash of the stored
         SelectorApply producer. */

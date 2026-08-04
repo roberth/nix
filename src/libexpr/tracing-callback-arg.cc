@@ -283,7 +283,7 @@ std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> a
         std::shared_ptr<Object> outerObj,
         ref<const trace::Selector> q,
         ref<const trace::Selector> /*producer*/,
-        std::shared_ptr<const ArgCell> /*callerCell*/) {
+        std::shared_ptr<ArgCell> /*callerCell*/) {
         auto qr = dispatchOuterQuery(std::move(outerObj), q->node);
         nlohmann::json rJson = std::visit(
             [](const auto & r) -> nlohmann::json { return r; }, qr.result);
@@ -313,7 +313,7 @@ std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> a
         std::shared_ptr<Object> fnObj,
         ref<const trace::Selector> fnProducer,
         std::shared_ptr<Object> argObj2,
-        std::shared_ptr<const ArgCell> callerScope) -> OuterApplyResult {
+        std::shared_ptr<ArgCell> callerScope) -> OuterApplyResult {
         /* #261: Cell for THIS nested apply — created directly as
            CallbackArgCell (was previously a Regular cell created by
            OuterObject::queryApply then mutated in-place with
@@ -327,7 +327,7 @@ std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> a
             std::shared_ptr<Object> outerObj,
             ref<const trace::Selector> q,
             ref<const trace::Selector> /*producer*/,
-            std::shared_ptr<const ArgCell> /*callerCell*/) {
+            std::shared_ptr<ArgCell> /*callerCell*/) {
             auto qr = dispatchOuterQuery(std::move(outerObj), q->node);
             nlohmann::json rJson = std::visit(
                 [](const auto & r) -> nlohmann::json { return r; }, qr.result);

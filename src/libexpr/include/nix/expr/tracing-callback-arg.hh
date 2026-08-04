@@ -83,7 +83,7 @@ public:
 
     std::optional<ref<const trace::Selector>> getSelector() const override { return producer; }
 
-    std::shared_ptr<const ArgCell> getProxyArgCell() const override { return argCell.get_ptr(); }
+    std::shared_ptr<ArgCell> getProxyArgCell() const override { return argCell.get_ptr(); }
 
     std::shared_ptr<Object> maybeGetAttr(const std::string & name) override;
     std::vector<std::string> getAttrNames() override;

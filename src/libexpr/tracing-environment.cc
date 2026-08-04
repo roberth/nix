@@ -60,7 +60,7 @@ trace::ResultVariant TracingEnvironment::outerQuery(
     ref<const trace::Selector> query,
     std::function<trace::ResultVariant(ref<const trace::Selector>)> resolve,
     ref<const trace::Selector> producer,
-    const std::shared_ptr<const ArgCell> & attributionCell)
+    const std::shared_ptr<ArgCell> & attributionCell)
 {
     auto result = resolve(query);
     writer.logOuterObservation(query, result, trace::describe(*producer), attributionCell);

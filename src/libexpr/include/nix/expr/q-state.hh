@@ -10,7 +10,7 @@
  * Held via `mutable std::shared_ptr<QState>` on ArgCell so that:
  * - Topology-only cells (localCell / seedCell in expr-from-object.cc)
  *   don't pay the field's size — they never allocate a QState.
- * - Cells held via `std::shared_ptr<const ArgCell>` (the codebase's
+ * - Cells held via `std::shared_ptr<ArgCell>` (the codebase's
  *   convention) can still mutate the pointer to install / reset the
  *   Q state; the pointee's fields mutate freely because the QState
  *   itself is not const-qualified.
@@ -47,7 +47,7 @@ struct QState
         up `cell->factSetHash()` for Ask/Terminal keying under the
         per-cell factset direction (task #177). weak_ptr avoids the
         obvious cycle (cell holds shared_ptr<QState>). */
-    std::weak_ptr<const ArgCell> cell;
+    std::weak_ptr<ArgCell> cell;
 
     /** Selector hash for this Q. Stable under #178 — no evolution;
         the same Q hash for the whole invocation. */

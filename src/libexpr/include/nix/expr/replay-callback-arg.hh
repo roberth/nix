@@ -79,7 +79,7 @@ class ReplayCallbackArg : public Object
 
     /* Navigation children carry the same cell as their parent; the
        top-level (cb-arg) Local carries the apply's cell. */
-    std::shared_ptr<const ArgCell> argCell;
+    std::shared_ptr<ArgCell> argCell;
 
 public:
     /* Constructor for derived children. Subject is built by the
@@ -96,7 +96,7 @@ public:
     std::optional<ref<const trace::Selector>> getSelector() const override { return producer; }
 
     /** Set the proxy's argCell. Returns *this for chaining. */
-    ReplayCallbackArg & withArgCell(std::shared_ptr<const ArgCell> argScope_)
+    ReplayCallbackArg & withArgCell(std::shared_ptr<ArgCell> argScope_)
     {
         argCell = std::move(argScope_);
         return *this;
@@ -120,7 +120,7 @@ public:
         return obsSetResponses;
     }
 
-    std::shared_ptr<const ArgCell> getProxyArgCell() const override { return argCell; }
+    std::shared_ptr<ArgCell> getProxyArgCell() const override { return argCell; }
 
     /** Content-defined identity is the producer Selector's cached hash.
         Lets evaluator.apply compute the apply Request hash when this

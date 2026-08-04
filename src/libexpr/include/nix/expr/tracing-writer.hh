@@ -257,7 +257,7 @@ private:
         Both chains reach the same final cur = cell.factSetHash(). */
     void insertBarrieredAskChain(
         const TracingHash & selectorHash,
-        const std::shared_ptr<const ArgCell> & cell)
+        const std::shared_ptr<ArgCell> & cell)
     {
         /* Structural chain (task 1a, task 1b enabler): if this
            Selector is a getter whose parent is also a getter recorded
@@ -389,7 +389,7 @@ public:
         (fn, obsSet) pair produces the same QCA selectorHash across
         callers — parent's chain sees a single QCA-per-firing. */
     void emitCallbackApplyForApplyResult(
-        const std::shared_ptr<const ArgCell> & callbackCell,
+        const std::shared_ptr<ArgCell> & callbackCell,
         ref<const trace::Selector> applyResultProducer,
         const trace::ResultWHNF & whnf)
     {
@@ -412,7 +412,7 @@ public:
             } catch (...) {}
             auto qcaSel = decisionGraph.selectorPool.intern(trace::SelectorCallbackApply{
                 obsSetHash, fnRef});
-            std::shared_ptr<const ArgCell> attrCell = callbackCell ? callbackCell->parent : nullptr;
+            std::shared_ptr<ArgCell> attrCell = callbackCell ? callbackCell->parent : nullptr;
             logOuterObservation(
                 qcaSel,
                 trace::ResultVariant{whnf},
@@ -447,7 +447,7 @@ public:
      */
     template<typename Q>
     std::pair<ValueHandle, SelectorHandle> logRootSelectorOnCell(
-        const std::shared_ptr<const ArgCell> & cell,
+        const std::shared_ptr<ArgCell> & cell,
         const Q & query)
     {
         auto valueNum = sink.logSelector(query);
@@ -477,7 +477,7 @@ public:
      */
     template<typename Q>
     std::pair<ValueHandle, SelectorHandle> logSelectorOnCell(
-        const std::shared_ptr<const ArgCell> & cell,
+        const std::shared_ptr<ArgCell> & cell,
         const Q & query)
     {
         auto valueNum = sink.logSelector(query);
@@ -533,7 +533,7 @@ public:
         const R & result,
         const SelectorHandle & qh,
         const TracingHash & anchorCur,
-        const std::shared_ptr<const ArgCell> & cell = {})
+        const std::shared_ptr<ArgCell> & cell = {})
     {
         sink.logResult(valueNum, result);
         nlohmann::json j = result;
@@ -648,7 +648,7 @@ public:
         ref<const trace::Selector> query,
         const trace::ResultVariant & result,
         std::string producerDesc,
-        const std::shared_ptr<const ArgCell> & attributionCell = {});
+        const std::shared_ptr<ArgCell> & attributionCell = {});
 
     /**
      * Insert a Query payload into the Requests pool at its natural
@@ -686,7 +686,7 @@ public:
         ValueHandle valueNum,
         const R & result,
         const SelectorHandle & qh,
-        const std::shared_ptr<const ArgCell> & cell = {})
+        const std::shared_ptr<ArgCell> & cell = {})
     {
         sink.logResult(valueNum, result);
 

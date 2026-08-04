@@ -71,7 +71,7 @@ class TracingReplayEvaluator : public Evaluator
             constructed to represent it. Resolution walks this chain
             FIRST, then falls back to currentProxy.argCell. Null when
             no cell is provided to walk(). */
-        std::shared_ptr<const ArgCell> walkCell;
+        std::shared_ptr<ArgCell> walkCell;
         /** Memoise id → resolved Object within this single history so
             recursive resolveIdentity calls don't redo work. */
         std::map<std::string, std::shared_ptr<Object>> memo;
@@ -120,7 +120,7 @@ class TracingReplayEvaluator : public Evaluator
     std::optional<WalkResult> walk(
         const TracingHash & selectorHash,
         std::shared_ptr<Object> currentProxy = nullptr,
-        std::shared_ptr<const ArgCell> cell = nullptr);
+        std::shared_ptr<ArgCell> cell = nullptr);
 
 public:
     /** Look up a Query in the decision graph, returning (payload,
@@ -131,7 +131,7 @@ public:
     std::optional<std::pair<std::string, TriePosition>> lookup(
         const Q & query,
         std::shared_ptr<Object> currentProxy = nullptr,
-        std::shared_ptr<const ArgCell> cell = nullptr);
+        std::shared_ptr<ArgCell> cell = nullptr);
 
 
     TracingReplayEvaluator(
