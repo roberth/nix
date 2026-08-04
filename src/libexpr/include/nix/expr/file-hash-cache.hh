@@ -5,6 +5,8 @@
 
 #include <filesystem>
 #include <optional>
+#include <string>
+#include <string_view>
 
 namespace nix {
 
@@ -13,6 +15,13 @@ namespace nix {
  *
  * Uses mtime to detect when a cached entry needs revalidation.
  * Cache is stored in ~/.cache/nix/file-hash-cache.sqlite.
+ *
+ * Path arguments take `std::string_view` — the hot warm-replay path
+ * feeds paths in as `std::string` from Env-layer `FileReadRequest`
+ * payloads, and every conversion to `std::filesystem::path` triggers
+ * `_M_split_cmpts` (measured at ~1.4% of warm runtime on network.nix).
+ * The cache treats paths as opaque byte strings for lookup equality;
+ * path-component semantics aren't needed here.
  */
 class FileHashCache
 {
@@ -33,18 +42,18 @@ public:
      * If the file's mtime matches the cached entry, returns the cached hash.
      * Otherwise, computes the hash, updates the cache, and returns the new hash.
      */
-    Hash getHash(const std::filesystem::path & path);
+    Hash getHash(std::string_view path);
 
     /**
      * Look up a hash without computing it if not cached or stale.
      * Returns nullopt if the cache doesn't have a valid entry.
      */
-    std::optional<Hash> lookup(const std::filesystem::path & path);
+    std::optional<Hash> lookup(std::string_view path);
 
     /**
      * Remove a specific path from the cache.
      */
-    void invalidate(const std::filesystem::path & path);
+    void invalidate(std::string_view path);
 
 private:
     struct State;

@@ -6,15 +6,22 @@
 #include "nix/util/users.hh"
 
 #include <sys/stat.h>
+#include <cstring>
 #include <ctime>
+#include <string>
 
 namespace nix {
 
+/* Schema uses table name `FileHashesV2` (not `FileHashes`) to
+   invalidate the old text-hash cache: the hash column is now `blob`
+   holding raw 32-byte SHA-256 bytes rather than a base64/SRI string.
+   Old-schema caches sit unused until the file is deleted; readers
+   populate the V2 table on demand. */
 static const char * fileHashCacheSchema = R"sql(
-create table if not exists FileHashes (
+create table if not exists FileHashesV2 (
     path text primary key,
     mtime integer not null,
-    hash text not null
+    hash blob not null
 );
 )sql";
 
@@ -67,20 +74,24 @@ void FileHashCache::ensureOpen(FileHashCache::State & state)
         state.db.exec(fileHashCacheSchema);
     }
 
-    state.selectorHash.create(state.db, "select mtime, hash from FileHashes where path = ?");
-    state.insertHash.create(state.db, "insert or replace into FileHashes(path, mtime, hash) values (?, ?, ?)");
-    state.deleteHash.create(state.db, "delete from FileHashes where path = ?");
+    state.selectorHash.create(state.db, "select mtime, hash from FileHashesV2 where path = ?");
+    state.insertHash.create(state.db, "insert or replace into FileHashesV2(path, mtime, hash) values (?, ?, ?)");
+    state.deleteHash.create(state.db, "delete from FileHashesV2 where path = ?");
 }
 
-static std::optional<time_t> getMtime(const std::filesystem::path & path)
+static std::optional<time_t> getMtime(std::string_view path)
 {
+    /* stat(2) needs a NUL-terminated C string; string_view isn't
+       guaranteed to be one. Callers pass owning strings on the hot
+       path, so the copy is negligible against the syscall itself. */
+    std::string pathStr(path);
     struct stat st;
-    if (stat(path.c_str(), &st) != 0)
+    if (stat(pathStr.c_str(), &st) != 0)
         return std::nullopt;
     return st.st_mtime;
 }
 
-std::optional<Hash> FileHashCache::lookup(const std::filesystem::path & path)
+std::optional<Hash> FileHashCache::lookup(std::string_view path)
 {
     auto currentMtime = getMtime(path);
     if (!currentMtime)
@@ -88,28 +99,36 @@ std::optional<Hash> FileHashCache::lookup(const std::filesystem::path & path)
 
     auto state(_state->lock());
     ensureOpen(*state);
-    auto query = state->selectorHash.use()(path.string());
+    auto query = state->selectorHash.use()(path);
     if (!query.next())
         return std::nullopt;
 
     auto cachedMtime = static_cast<time_t>(query.getInt(0));
     if (cachedMtime != *currentMtime) {
-        debug("file hash cache: mtime changed for %s", path.string());
+        debug("file hash cache: mtime changed for %s", path);
         return std::nullopt;
     }
 
-    auto hashStr = query.getStr(1);
-    return Hash::parseAny(hashStr, HashAlgorithm::SHA256);
+    /* Blob stores raw SHA-256 bytes — no format parsing, no base64
+       decode. Construct a zero-initialised Hash of the right algo and
+       memcpy the bytes into its buffer. */
+    Hash result(HashAlgorithm::SHA256);
+    auto blob = query.getBlob(1);
+    if (blob.size() != result.hashSize)
+        throw Error("file hash cache: cached hash for '%s' has wrong length %d (expected %d)",
+                    path, blob.size(), result.hashSize);
+    std::memcpy(result.hash, blob.data(), result.hashSize);
+    return result;
 }
 
-Hash FileHashCache::getHash(const std::filesystem::path & path)
+Hash FileHashCache::getHash(std::string_view path)
 {
     if (auto cached = lookup(path)) {
-        debug("file hash cache hit: %s", path.string());
+        debug("file hash cache hit: %s", path);
         return *cached;
     }
 
-    debug("file hash cache miss: %s", path.string());
+    debug("file hash cache miss: %s", path);
 
     /* Stat-hash-stat sandwich with the freshness check sampled
        *before* the hash:
@@ -135,26 +154,26 @@ Hash FileHashCache::getHash(const std::filesystem::path & path)
            any later second would have bumped mtime. */
     auto mtimeBefore = getMtime(path);
     if (!mtimeBefore)
-        throw Error("cannot stat file '%s'", path.string());
+        throw Error("cannot stat file '%s'", path);
 
     auto nowAtStart = ::time(nullptr);
 
-    auto hash = hashFile(HashAlgorithm::SHA256, path);
+    auto hash = hashFile(HashAlgorithm::SHA256, std::filesystem::path(path));
 
     auto mtimeAfter = getMtime(path);
     if (!mtimeAfter)
-        throw Error("cannot stat file '%s'", path.string());
+        throw Error("cannot stat file '%s'", path);
 
     if (*mtimeBefore == *mtimeAfter && nowAtStart > *mtimeBefore) {
         auto state(_state->lock());
         ensureOpen(*state);
-        state->insertHash.use()(path.string())(static_cast<int64_t>(*mtimeBefore))(
-            hash.to_string(HashFormat::SRI, true))
+        state->insertHash.use()(path)(static_cast<int64_t>(*mtimeBefore))(
+            reinterpret_cast<const unsigned char *>(hash.hash), hash.hashSize)
             .exec();
     } else {
         debug(
             "file hash cache: not caching %s (mtimeBefore=%d, mtimeAfter=%d, nowAtStart=%d)",
-            path.string(),
+            path,
             static_cast<int64_t>(*mtimeBefore),
             static_cast<int64_t>(*mtimeAfter),
             static_cast<int64_t>(nowAtStart));
@@ -163,11 +182,11 @@ Hash FileHashCache::getHash(const std::filesystem::path & path)
     return hash;
 }
 
-void FileHashCache::invalidate(const std::filesystem::path & path)
+void FileHashCache::invalidate(std::string_view path)
 {
     auto state(_state->lock());
     ensureOpen(*state);
-    state->deleteHash.use()(path.string()).exec();
+    state->deleteHash.use()(path).exec();
 }
 
 } // namespace nix

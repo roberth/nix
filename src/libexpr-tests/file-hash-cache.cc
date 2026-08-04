@@ -38,7 +38,7 @@ TEST_F(FileHashCacheTest, ComputesHashOnMiss)
     writeFile("hello world");
 
     FileHashCache cache{dbPath};
-    auto hash = cache.getHash(testFile);
+    auto hash = cache.getHash(testFile.string());
 
     // SHA-256 of "hello world"
     EXPECT_EQ(
@@ -50,8 +50,8 @@ TEST_F(FileHashCacheTest, ReturnsFromCacheOnHit)
     writeFile("cached content");
 
     FileHashCache cache{dbPath};
-    auto hash1 = cache.getHash(testFile);
-    auto hash2 = cache.getHash(testFile);
+    auto hash1 = cache.getHash(testFile.string());
+    auto hash2 = cache.getHash(testFile.string());
     EXPECT_EQ(hash1, hash2);
 }
 
@@ -60,7 +60,7 @@ TEST_F(FileHashCacheTest, LookupReturnsNulloptOnMiss)
     writeFile("some content");
 
     FileHashCache cache{dbPath};
-    auto result = cache.lookup(testFile);
+    auto result = cache.lookup(testFile.string());
     EXPECT_FALSE(result.has_value());
 }
 
@@ -74,9 +74,9 @@ TEST_F(FileHashCacheTest, LookupReturnsHashAfterGet)
     std::this_thread::sleep_for(std::chrono::milliseconds(1100));
 
     FileHashCache cache{dbPath};
-    auto hash = cache.getHash(testFile);
+    auto hash = cache.getHash(testFile.string());
 
-    auto result = cache.lookup(testFile);
+    auto result = cache.lookup(testFile.string());
     ASSERT_TRUE(result.has_value());
     EXPECT_EQ(*result, hash);
 }
@@ -86,10 +86,10 @@ TEST_F(FileHashCacheTest, InvalidateClearsCache)
     writeFile("invalidate test");
 
     FileHashCache cache{dbPath};
-    cache.getHash(testFile);
-    cache.invalidate(testFile);
+    cache.getHash(testFile.string());
+    cache.invalidate(testFile.string());
 
-    auto result = cache.lookup(testFile);
+    auto result = cache.lookup(testFile.string());
     EXPECT_FALSE(result.has_value());
 }
 
@@ -98,13 +98,13 @@ TEST_F(FileHashCacheTest, DetectsMtimeChange)
     writeFile("original");
 
     FileHashCache cache{dbPath};
-    auto hash1 = cache.getHash(testFile);
+    auto hash1 = cache.getHash(testFile.string());
 
     // Ensure mtime changes
     std::this_thread::sleep_for(std::chrono::milliseconds(1100));
     writeFile("modified");
 
-    auto hash2 = cache.getHash(testFile);
+    auto hash2 = cache.getHash(testFile.string());
     EXPECT_NE(hash1, hash2);
 }
 
@@ -120,18 +120,18 @@ TEST_F(FileHashCacheTest, RefusesToCacheSameSecondWrite)
     writeFile("fresh content");
 
     FileHashCache cache{dbPath};
-    auto hash = cache.getHash(testFile);
+    auto hash = cache.getHash(testFile.string());
 
     /* No cache entry yet — getHash refused because the write was
        too recent. */
-    auto immediate = cache.lookup(testFile);
+    auto immediate = cache.lookup(testFile.string());
     EXPECT_FALSE(immediate.has_value()) << "must not cache an entry whose mtime equals the current second";
 
     /* Wait past the second boundary so the file's mtime is strictly
        in the past, then re-request. This call should cache. */
     std::this_thread::sleep_for(std::chrono::milliseconds(1100));
-    cache.getHash(testFile);
-    auto ripened = cache.lookup(testFile);
+    cache.getHash(testFile.string());
+    auto ripened = cache.lookup(testFile.string());
     ASSERT_TRUE(ripened.has_value()) << "must cache once the file's mtime is strictly older than now";
     EXPECT_EQ(*ripened, hash);
 }
@@ -146,12 +146,12 @@ TEST_F(FileHashCacheTest, ServesNoStaleHashAfterSameSecondMutation)
     writeFile("A");
 
     FileHashCache cache{dbPath};
-    auto h1 = cache.getHash(testFile);
+    auto h1 = cache.getHash(testFile.string());
 
     /* Same-second overwrite. The mtime stays at the current second
        (still ≤ now). */
     writeFile("BB");
-    auto h2 = cache.getHash(testFile);
+    auto h2 = cache.getHash(testFile.string());
 
     EXPECT_NE(h1, h2) << "must compute B's hash, not serve the cached A";
 }
