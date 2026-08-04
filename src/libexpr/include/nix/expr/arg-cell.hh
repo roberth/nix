@@ -196,8 +196,9 @@ struct ArgCell : std::enable_shared_from_this<ArgCell>
         consumers — `TracingObject::getProducerSelectorHex` and
         `TracingWriter::emitCallbackApplyForApplyResult` — use this
         to branch on cell kind through a base pointer without
-        `dynamic_cast`. */
-    virtual CallbackState * getCallbackState() const = 0;
+        `dynamic_cast`. Read-only; mutation goes through a typed
+        `ref<CallbackArgCell>` handle. */
+    virtual const CallbackState * getCallbackState() const = 0;
 
     /** Sum of canonicalisationEpoch over this cell + all ancestors.
         Cheap: O(depth) walk. Since delta chains fold facts from cell
@@ -289,7 +290,7 @@ struct RegularArgCell : ArgCell
 
     /* Defined out-of-line in arg-cell.cc so the vtable lands in one
        TU (satisfies -Werror=weak-vtables). */
-    CallbackState * getCallbackState() const override;
+    const CallbackState * getCallbackState() const override;
 
     /** Construct a Regular cell whose parent is `parent_`. depth is
         one deeper than parent (or 0 if parent is null). `liveObject_`
@@ -310,9 +311,8 @@ struct RegularArgCell : ArgCell
     `runningObsSet` accumulates through the firing's lifetime. */
 struct CallbackArgCell : ArgCell
 {
-    /** Inline callback-firing state. `mutable` for the same
-        shared_ptr<const ArgCell> reason as the base's facts. */
-    mutable CallbackState callbackState;
+    /** Inline callback-firing state. */
+    CallbackState callbackState;
 
     CallbackArgCell(std::shared_ptr<const ArgCell> parent_,
                     std::shared_ptr<Object> liveObject_,
@@ -324,7 +324,7 @@ struct CallbackArgCell : ArgCell
 
     /* Defined out-of-line in arg-cell.cc so the vtable lands in one
        TU (satisfies -Werror=weak-vtables). */
-    CallbackState * getCallbackState() const override;
+    const CallbackState * getCallbackState() const override;
 
     /** Construct a Callback cell. `initialFnHex` is the fn's Q hex
         at firing time (populated into callbackState.initialFnHex at

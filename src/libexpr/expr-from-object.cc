@@ -169,11 +169,10 @@ OuterApplyResult OuterApply::run(
        argCell (so recordObservation lands in the same runningObsSet
        the producer callable snapshots). */
     std::shared_ptr<const ArgCell> localCell;
-    std::shared_ptr<const CallbackArgCell> callbackCell;
+    std::shared_ptr<CallbackArgCell> callbackCell;
     if (innerWriter) {
-        auto cc = CallbackArgCell::make(callerScope, argObj, fnIdStr);
-        callbackCell = cc;
-        localCell = cc;
+        callbackCell = CallbackArgCell::make(callerScope, argObj, fnIdStr);
+        localCell = callbackCell;
     } else {
         localCell = RegularArgCell::make(callerScope, argObj);
     }
@@ -256,7 +255,7 @@ OuterApplyResult OuterApply::run(
         ? std::shared_ptr<Object>(std::make_shared<TracingCallbackArg>(
               argObj, argProducerSel, *innerWriter,
               ref<SourceRoot>(outerRootFSRoot),
-              ref<const CallbackArgCell>(callbackCell)))
+              ref<CallbackArgCell>(callbackCell)))
         : argObj;
 
     /* Bridge local arg via ExprFromObject. The cache memoises by

@@ -7,12 +7,12 @@ namespace nix {
 
 ArgCell::~ArgCell() = default;
 
-CallbackState * RegularArgCell::getCallbackState() const
+const CallbackState * RegularArgCell::getCallbackState() const
 {
     return nullptr;
 }
 
-CallbackState * CallbackArgCell::getCallbackState() const
+const CallbackState * CallbackArgCell::getCallbackState() const
 {
     return &callbackState;
 }

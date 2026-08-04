@@ -49,7 +49,7 @@ class TracingCallbackArg : public Object
 
     /* The callback-firing cell this local belongs to. Navigation
        children share the parent's cell. */
-    ref<const CallbackArgCell> argCell;
+    ref<CallbackArgCell> argCell;
 
     /* Memoized WHNF observation. First call to any of getType / getInt /
        getString / etc. fires `whnf()`, which records ONE observation
@@ -66,14 +66,14 @@ public:
         ref<const trace::Selector> producer,
         TracingWriter & writer,
         ref<SourceRoot> rootFSRoot,
-        ref<const CallbackArgCell> argCell);
+        ref<CallbackArgCell> argCell);
 
     /** Typed accessor for the callback firing's cell — lets consumers
         that hold a TCA propagate a `CallbackArgCell` handle without
         going through the base-typed `getProxyArgCell()`. Used by
         `TracingEvaluator::apply`'s fnIsTlo branch to attach the same
         cell to the wrapping `TracingCallbackApplyResult`. */
-    ref<const CallbackArgCell> getCallbackArgCell() const { return argCell; }
+    ref<CallbackArgCell> getCallbackArgCell() const { return argCell; }
 
     /** Set the memoized WHNF from a known value (e.g. the applyResult's
         WHNF captured by TCA::queryApply before wrapping). Suppresses the

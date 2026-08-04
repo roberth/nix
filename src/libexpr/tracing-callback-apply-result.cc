@@ -11,7 +11,7 @@ TracingCallbackApplyResult::TracingCallbackApplyResult(
     ref<Object> inner_,
     TracingWriter & writer_,
     ref<const trace::Selector> producer_,
-    ref<const CallbackArgCell> callbackCell_)
+    ref<CallbackArgCell> callbackCell_)
     : inner(std::move(inner_))
     , writer(writer_)
     , producer(std::move(producer_))

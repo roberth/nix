@@ -52,7 +52,7 @@ class TracingCallbackApplyResult : public Object
 
     /* The enclosing callback firing's cell. Observations in recordD2
        append to callbackCell->callbackState.runningObsSet directly. */
-    ref<const CallbackArgCell> callbackCell;
+    ref<CallbackArgCell> callbackCell;
 
     /* Memoized WHNF observation. First call to any of getType / getInt /
        getString / etc. fires `whnf()`, which records ONE observation
@@ -68,7 +68,7 @@ public:
         ref<Object> inner,
         TracingWriter & writer,
         ref<const trace::Selector> producer,
-        ref<const CallbackArgCell> callbackCell);
+        ref<CallbackArgCell> callbackCell);
 
     std::optional<ref<const trace::Selector>> getSelector() const override { return producer; }
 

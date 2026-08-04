@@ -26,7 +26,7 @@ TracingCallbackArg::TracingCallbackArg(
     ref<const trace::Selector> producer_,
     TracingWriter & writer,
     ref<SourceRoot> rootFSRoot,
-    ref<const CallbackArgCell> argCell)
+    ref<CallbackArgCell> argCell)
     : inner(std::move(inner))
     , producer(std::move(producer_))
     , writer(writer)
