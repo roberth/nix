@@ -107,15 +107,15 @@ std::optional<std::string> TracingObject::getProducerSelectorHex(TracingWriter &
             auto & cs = *cbState;
             auto & dg = w.getDecisionGraph();
             auto obsSetHash = dg.insertObservationSet(cs.runningObsSet);
-            /* fnStateHashHex captures fn's Q-space identity — set from the
+            /* initialFnHex captures fn's Q-space identity — set from the
                hash of a Selector the writer just interned into the pool
                (TCA::queryApply, OuterApply::run). The pool lookup must
                succeed; a nullopt here means someone populated
-               fnStateHashHex without the corresponding Selector, which is
+               initialFnHex without the corresponding Selector, which is
                a bug in the setter. */
-            auto fnRef = dg.selectorPool.findByHex(cs.fnStateHashHex);
+            auto fnRef = dg.selectorPool.findByHex(cs.initialFnHex);
             if (!fnRef)
-                panic("TracingObject::getProducerSelectorHex: fnStateHashHex not in selector pool");
+                panic("TracingObject::getProducerSelectorHex: initialFnHex not in selector pool");
             auto qcaSel = dg.selectorPool.intern(trace::SelectorCallbackApply{
                 obsSetHash, *fnRef});
             nlohmann::json qcaJson = trace::toJson(*qcaSel);

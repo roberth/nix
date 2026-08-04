@@ -51,11 +51,8 @@ class TracingCallbackApplyResult : public Object
     std::shared_ptr<const ArgCell> argCell;
 
     /* The enclosing callback firing's cell. Observations in recordD2
-       append to callbackCell->callbackState.runningObsSet directly.
-       Typed as CallbackArgCell (#261) so recordD2 has no null-check —
-       withCallbackCell is called with a typed CallbackArgCell handle
-       coming from a TCA fn's getCallbackArgCell(). */
-    std::shared_ptr<const CallbackArgCell> callbackCell;
+       append to callbackCell->callbackState.runningObsSet directly. */
+    ref<const CallbackArgCell> callbackCell;
 
     /* Memoized WHNF observation. First call to any of getType / getInt /
        getString / etc. fires `whnf()`, which records ONE observation
@@ -70,19 +67,14 @@ public:
     TracingCallbackApplyResult(
         ref<Object> inner,
         TracingWriter & writer,
-        ref<const trace::Selector> producer);
+        ref<const trace::Selector> producer,
+        ref<const CallbackArgCell> callbackCell);
 
     std::optional<ref<const trace::Selector>> getSelector() const override { return producer; }
 
     TracingCallbackApplyResult & withArgCell(std::shared_ptr<const ArgCell> cell)
     {
         argCell = std::move(cell);
-        return *this;
-    }
-
-    TracingCallbackApplyResult & withCallbackCell(std::shared_ptr<const CallbackArgCell> cell)
-    {
-        callbackCell = std::move(cell);
         return *this;
     }
 

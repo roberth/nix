@@ -26,20 +26,13 @@ TracingCallbackArg::TracingCallbackArg(
     ref<const trace::Selector> producer_,
     TracingWriter & writer,
     ref<SourceRoot> rootFSRoot,
-    std::shared_ptr<const CallbackArgCell> argCell)
+    ref<const CallbackArgCell> argCell)
     : inner(std::move(inner))
     , producer(std::move(producer_))
     , writer(writer)
     , rootFSRoot(std::move(rootFSRoot))
     , argCell(std::move(argCell))
 {
-    /* argCell is unconditional and typed CallbackArgCell (#261): every
-       TCA construction site (OuterApply::run in the innerWriter branch,
-       this class's own nav children) supplies a real callback cell.
-       The type carries the invariant so callback-state access needs no
-       null-check. */
-    if (!this->argCell)
-        panic("TracingCallbackArg: constructed with null argCell");
 }
 
 std::shared_ptr<Object> TracingCallbackArg::maybeGetAttr(const std::string & name)
@@ -235,8 +228,6 @@ std::optional<std::vector<std::string>> TracingCallbackArg::getAttrPath()
 
 void TracingCallbackArg::recordObservation(ref<const trace::Selector> query, const trace::ResultVariant & result)
 {
-    /* #261: argCell is typed CallbackArgCell — its callbackState is
-       always present, no null-check needed. */
     auto qh = query->cachedHash;
     tracingCacheLog(
         "TracingCallbackArg::recordObservation: cell=%p appending q=%s",
@@ -272,9 +263,9 @@ std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> a
        where inner's probes on the outer-arg accumulate — same shape
        OuterApply::run uses for its localCell, mirrored for this
        direction (outer applies inner-fn rather than inner→outer).
-       fnStateHashHex captured at construction (#261). */
+       initialFnHex captured at construction (#261). */
     auto layer2Cell = CallbackArgCell::make(
-        argCell, argObj, producer->cachedHash.toHex());
+        argCell.get_ptr(), argObj, producer->cachedHash.toHex());
 
     /* Producer for the wrapped outer-arg — SelectorArg{depth} at the
        layer-2 firing cell's reverse-De-Bruijn depth. Global uniqueness
@@ -326,7 +317,7 @@ std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> a
         /* #261: Cell for THIS nested apply — created directly as
            CallbackArgCell (was previously a Regular cell created by
            OuterObject::queryApply then mutated in-place with
-           callbackState). fnStateHashHex populated at construction. */
+           callbackState). initialFnHex populated at construction. */
         auto nestedCell = CallbackArgCell::make(
             callerScope, argObj2, fnProducer->cachedHash.toHex());
 

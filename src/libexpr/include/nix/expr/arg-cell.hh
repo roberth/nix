@@ -15,7 +15,7 @@
  *     topology (sessionRootCell). Never carries callback-firing state.
  *
  *   - **CallbackArgCell** — a callback firing's arg cell (including
- *     higher-order and nested). Carries `callbackState` = `{fnStateHashHex,
+ *     higher-order and nested). Carries `callbackState` = `{initialFnHex,
  *     runningObsSet}`; the contra-arg observations accumulate here and are
  *     snapshotted into an ObservationSet CAS when a producer Selector is
  *     queried.
@@ -53,10 +53,15 @@ struct QState; // defined in q-state.hh; forward-declared here so
     callback state doesn't leak across trees. */
 struct CallbackState
 {
-    /** Fn's Q hash hex, captured at cell allocation from the enclosing
-        SelectorApply's `fn`. Emitted as the SelectorCallbackApply
-        payload's `fn` field at QCA time. */
-    std::string fnStateHashHex;
+    /** Fn's Q hex at the moment the callback firing was opened.
+        Deliberately NOT tracked forward — fn's live identity can
+        evolve (nested apply-result identities compose), but the
+        producer Selector emitted for this firing references fn's
+        identity **at firing time**, so we snapshot it here and never
+        touch it again. Downstream code that needs current fn hex
+        must call `fn->getSelectorHashHex()` afresh; anything reading
+        this field is opting in to the frozen-at-firing value. */
+    std::string initialFnHex;
 
     /** Observations the outer made on this cell's contra-arg during
         the callback body's evaluation. Snapshotted into the
@@ -301,7 +306,7 @@ struct RegularArgCell : ArgCell
 
 /** Cell for a callback firing (regular, higher-order, or nested).
     Always carries `callbackState` — `getCallbackState()` returns
-    `&callbackState`. `fnStateHashHex` is captured at construction;
+    `&callbackState`. `initialFnHex` is captured at construction;
     `runningObsSet` accumulates through the firing's lifetime. */
 struct CallbackArgCell : ArgCell
 {
@@ -311,27 +316,27 @@ struct CallbackArgCell : ArgCell
 
     CallbackArgCell(std::shared_ptr<const ArgCell> parent_,
                     std::shared_ptr<Object> liveObject_,
-                    std::string fnStateHashHex)
+                    std::string initialFnHex)
         : ArgCell(std::move(parent_), std::move(liveObject_))
+        , callbackState{std::move(initialFnHex), {}}
     {
-        callbackState.fnStateHashHex = std::move(fnStateHashHex);
     }
 
     /* Defined out-of-line in arg-cell.cc so the vtable lands in one
        TU (satisfies -Werror=weak-vtables). */
     CallbackState * getCallbackState() const override;
 
-    /** Construct a Callback cell. `fnStateHashHex` is the fn's Q hex
-        at firing time (populated into callbackState.fnStateHashHex at
+    /** Construct a Callback cell. `initialFnHex` is the fn's Q hex
+        at firing time (populated into callbackState.initialFnHex at
         construction; used by producer Selector construction). */
     static std::shared_ptr<CallbackArgCell> make(
         std::shared_ptr<const ArgCell> parent_,
         std::shared_ptr<Object> liveObject_,
-        std::string fnStateHashHex)
+        std::string initialFnHex)
     {
         return std::make_shared<CallbackArgCell>(
             std::move(parent_), std::move(liveObject_),
-            std::move(fnStateHashHex));
+            std::move(initialFnHex));
     }
 };
 

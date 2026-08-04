@@ -153,7 +153,7 @@ OuterApplyResult OuterApply::run(
     std::shared_ptr<Object> argObj, std::shared_ptr<const ArgCell> callerScope)
 {
     auto fnId = fnProducer->cachedHash;
-    auto fnIdStrEarly = fnId.toHex();
+    auto fnIdStr = fnId.toHex();
     if (!outerState)
         throw Error("outer apply requires outerState");
 
@@ -171,7 +171,7 @@ OuterApplyResult OuterApply::run(
     std::shared_ptr<const ArgCell> localCell;
     std::shared_ptr<const CallbackArgCell> callbackCell;
     if (innerWriter) {
-        auto cc = CallbackArgCell::make(callerScope, argObj, fnIdStrEarly);
+        auto cc = CallbackArgCell::make(callerScope, argObj, fnIdStr);
         callbackCell = cc;
         localCell = cc;
     } else {
@@ -197,7 +197,6 @@ OuterApplyResult OuterApply::run(
     tracingCacheLog("OuterApply::run: argStateHash=%s",
                     argStateHash.toHex().substr(0, 12));
 
-    auto fnIdStr  = fnId.toHex();
     auto argStateHashStr = argStateHash.toHex();
 
     /* Intern SelectorApply{parent=fnProducer} — the apply's identity. */
@@ -256,7 +255,8 @@ OuterApplyResult OuterApply::run(
                        && !dynamic_cast<ReplayCallbackArg *>(argObj.get()))
         ? std::shared_ptr<Object>(std::make_shared<TracingCallbackArg>(
               argObj, argProducerSel, *innerWriter,
-              ref<SourceRoot>(outerRootFSRoot), callbackCell))
+              ref<SourceRoot>(outerRootFSRoot),
+              ref<const CallbackArgCell>(callbackCell)))
         : argObj;
 
     /* Bridge local arg via ExprFromObject. The cache memoises by
@@ -298,10 +298,10 @@ OuterApplyResult OuterApply::run(
         producerFn = [callbackCell, fnProducer, &dg]() -> ref<const trace::Selector> {
             auto & cs = callbackCell->callbackState;
             auto obsSetHash = dg.insertObservationSet(cs.runningObsSet);
-            /* Look up cs.fnStateHashHex in pool; fallback to fnProducer. */
+            /* Look up cs.initialFnHex in pool; fallback to fnProducer. */
             ref<const trace::Selector> fnRef = fnProducer;
             try {
-                auto fnHash = trace::parseTracingHex(cs.fnStateHashHex);
+                auto fnHash = trace::parseTracingHex(cs.initialFnHex);
                 if (auto found = dg.selectorPool.find(fnHash))
                     fnRef = *found;
             } catch (...) {}
@@ -366,7 +366,7 @@ static PrimOp * makeCachedFnPrimOp(
                            cell — inner->apply(fnObj, outerArgProxy)
                            reaches TracingEvaluator::apply's non-fnIsTlo
                            branch which requires arg's cell to be a
-                           CallbackArgCell. `fnStateHashHex` comes from
+                           CallbackArgCell. `initialFnHex` comes from
                            fnObj's Selector, which must exist here (the
                            primop is only synthesised when
                            `obj->getSelector().has_value()`; see

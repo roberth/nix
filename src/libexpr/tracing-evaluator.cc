@@ -401,7 +401,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
         /* #261: arg's cell must be a CallbackArgCell — the primop impl
            (makeCachedFnPrimOp) is the only path that reaches here in
            !fnIsTlo mode, and it creates seedCell as CallbackArgCell
-           with fnStateHashHex populated at construction. Verify via
+           with initialFnHex populated at construction. Verify via
            the virtual accessor. */
         auto * cs = cell->getCallbackState();
         if (!cs)
@@ -441,13 +441,8 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
        dispatch that carries the arg-divergence check via argObsSet. */
     if (fnIsTlo) {
         auto laro = std::make_shared<TracingCallbackApplyResult>(
-            result, writer, applySel);
+            result, writer, applySel, fnTca->getCallbackArgCell());
         laro->withArgCell(cell);
-        /* #184/#261: the enclosing callback firing's cell is fn's cell
-           — fn is a TracingCallbackArg whose argCell IS the
-           OuterApply::run localCell (a CallbackArgCell). Grab the
-           typed handle so recordD2 doesn't have to null-check. */
-        laro->withCallbackCell(fnTca->getCallbackArgCell());
         return ref<Object>(laro);
     }
 

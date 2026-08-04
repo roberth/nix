@@ -10,22 +10,18 @@ namespace nix {
 TracingCallbackApplyResult::TracingCallbackApplyResult(
     ref<Object> inner_,
     TracingWriter & writer_,
-    ref<const trace::Selector> producer_)
+    ref<const trace::Selector> producer_,
+    ref<const CallbackArgCell> callbackCell_)
     : inner(std::move(inner_))
     , writer(writer_)
     , producer(std::move(producer_))
+    , callbackCell(std::move(callbackCell_))
 {
     qHex = producer->cachedHash.toHex();
 }
 
 void TracingCallbackApplyResult::recordD2(ref<const trace::Selector> query, const trace::ResultVariant & result)
 {
-    /* Invariant (#261): callbackCell is typed CallbackArgCell —
-       withCallbackCell in TE::apply's fnIsTlo branch takes the
-       typed handle from the fn TCA's getCallbackArgCell(), so the
-       cell always has callbackState. Panic on null pointer only. */
-    if (!callbackCell)
-        panic("TracingCallbackApplyResult::recordD2: no callbackCell");
     auto qh = query->cachedHash;
     nlohmann::json rJson = std::visit(
         [](const auto & r) -> nlohmann::json { return r; },

@@ -76,7 +76,7 @@ struct OuterApplyResult
  * Cell-kind rule (#261): the implementation creates its own apply
  * cell parented to `callerScope`. Callback-firing implementations
  * create a `CallbackArgCell` (with `fnProducer->cachedHash` as
- * `fnStateHashHex`); pure outer applies with no inner writer create
+ * `initialFnHex`); pure outer applies with no inner writer create
  * a `RegularArgCell`. Lifting cell creation into the callee is what
  * lets the concrete cell type be picked without post-construction
  * mutation.
