@@ -295,7 +295,6 @@ OuterApplyResult OuterApply::run(
     return OuterApplyResult{
         .applyResult = resultObj,
         .producerFn = std::move(producerFn),
-        .applyCell = localCell,
     };
 }
 
