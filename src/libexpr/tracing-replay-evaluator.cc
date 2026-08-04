@@ -362,7 +362,6 @@ struct ReuseHit
 {
     std::shared_ptr<Object> cachedApplyResult;
     std::shared_ptr<ReplayCallbackArg> reusedRCA;
-    std::shared_ptr<ArgCell> targetCell;  ///< The chosen live application's cell (for populate-on-fresh)
 };
 
 /**
@@ -441,7 +440,16 @@ ReuseHit tryReuseLiveCallbackApplication(
     for (auto cell = startCell; cell; cell = cell->parent) {
         ++seen;
         checkCandidate(cell);
-        for (auto & weakChild : cell->liveCallbackChildren) {
+        /* Compact expired weak entries opportunistically while walking.
+           Populate-via-`.back()` means every live callback application
+           adds an entry; without compaction this grows with unique
+           obsSets across the session. */
+        auto & children = cell->liveCallbackChildren;
+        children.erase(
+            std::remove_if(children.begin(), children.end(),
+                [](const std::weak_ptr<ArgCell> & w) { return w.expired(); }),
+            children.end());
+        for (auto & weakChild : children) {
             if (auto child = weakChild.lock())
                 checkCandidate(child);
         }
@@ -486,7 +494,6 @@ ReuseHit tryReuseLiveCallbackApplication(
     return ReuseHit{
         .cachedApplyResult = locked,
         .reusedRCA = bestRCA,
-        .targetCell = bestCell,
     };
 }
 
@@ -701,10 +708,8 @@ std::shared_ptr<Object> TracingReplayEvaluator::dispatchLiveCallbackApplication(
         return hit.cachedApplyResult;
 
     std::shared_ptr<Object> replayArg;
-    std::shared_ptr<ArgCell> populateCell;
     if (hit.reusedRCA) {
         replayArg = hit.reusedRCA;
-        populateCell = hit.targetCell;
     } else {
         /* Contra-arg identity: SelectorArg{depth} matching writer's
            firingCell.depth = fn.argCell.depth + 1. */
@@ -725,21 +730,20 @@ std::shared_ptr<Object> TracingReplayEvaluator::dispatchLiveCallbackApplication(
         auto resultObj = fnObj->queryApply(replayArg);
         if (!resultObj)
             return nullptr;
-        /* Populate cachedApplyResult on the just-created callback
-           application cell. Reuse-but-expired path: cell known
-           directly (targetCell). Fresh-miss path: OuterApply::run
-           registered its localCell as the last entry in
-           fnObj.argCell.liveCallbackChildren. */
-        std::shared_ptr<ArgCell> cell = populateCell;
-        if (!cell) {
-            if (auto fnArgCell = fnObj->getProxyArgCell()) {
-                if (!fnArgCell->liveCallbackChildren.empty())
-                    cell = fnArgCell->liveCallbackChildren.back().lock();
+        /* Populate cachedApplyResult on the callback application cell
+           OuterApply::run just created — it registered itself as the
+           last entry in fnObj.argCell.liveCallbackChildren. This holds
+           for both fresh and reuse-hit-expired paths: the reuse-expired
+           path's queryApply also re-enters OuterApply::run with the
+           reused RCA, creating and registering a new cell whose
+           runningObsSet inherits the reused RCA's extended obsSet. */
+        if (auto fnArgCell = fnObj->getProxyArgCell()) {
+            if (!fnArgCell->liveCallbackChildren.empty()) {
+                if (auto cell = fnArgCell->liveCallbackChildren.back().lock()) {
+                    if (auto * cs = const_cast<CallbackState *>(cell->getCallbackState()))
+                        cs->cachedApplyResult = resultObj;
+                }
             }
-        }
-        if (cell) {
-            if (auto * cs = const_cast<CallbackState *>(cell->getCallbackState()))
-                cs->cachedApplyResult = resultObj;
         }
         /* Anchor lifetime in the recent-callback ring so the weak
            cachedApplyResult stays resolvable across walker calls for
