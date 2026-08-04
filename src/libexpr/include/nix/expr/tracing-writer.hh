@@ -643,8 +643,14 @@ public:
      */
     void deferRequest(nlohmann::json payload)
     {
-        auto key = trace::tracingHash(payload.dump());
-        decisionGraph.insertRequest(key, jsonToCborString(payload));
+        /* Hash the CBOR bytes rather than payload.dump() — one blake3
+           call over one buffer instead of dump-string-into-vector +
+           blake3, and CBOR is what gets stored anyway so key + payload
+           share their derivation. Also robust to any binary_t fields
+           in the JSON (dump() throws on those). */
+        auto cbor = jsonToCborString(payload);
+        auto key = trace::tracingHash(cbor);
+        decisionGraph.insertRequest(key, std::move(cbor));
     }
 
     /**
