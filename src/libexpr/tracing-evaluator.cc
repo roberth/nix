@@ -210,88 +210,17 @@ ref<Object> TracingEvaluator::evalExprLazy(const std::string & expr, const Roote
     return obj;
 }
 
-ref<Object> TracingEvaluator::mkString(const std::string & s)
-{
-    auto result = inner->mkString(s);
-    // Deterministic identity from content — no trie entry needed.
-    auto hash = trace::tracingHash("mkString:" + s);
-    auto hashStr = hash.toHex();
-    auto triePos = TriePosition{.resultNodeHash = hash, .queryHashStr = hashStr};
-    auto v = writer.getSink().allocValue();
-    return TracingObject::create(result, writer, v, triePos);
-}
-
-ref<Object> TracingEvaluator::mkInt(NixInt i)
-{
-    auto result = inner->mkInt(i);
-    auto hash = trace::tracingHash("mkInt:" + std::to_string(i.value));
-    auto hashStr = hash.toHex();
-    auto triePos = TriePosition{.resultNodeHash = hash, .queryHashStr = hashStr};
-    auto v = writer.getSink().allocValue();
-    return TracingObject::create(result, writer, v, triePos);
-}
-
-ref<Object> TracingEvaluator::mkBool(bool b)
-{
-    auto result = inner->mkBool(b);
-    auto hash = trace::tracingHash(b ? "mkBool:true" : "mkBool:false");
-    auto hashStr = hash.toHex();
-    auto triePos = TriePosition{.resultNodeHash = hash, .queryHashStr = hashStr};
-    auto v = writer.getSink().allocValue();
-    return TracingObject::create(result, writer, v, triePos);
-}
-
-ref<Object> TracingEvaluator::mkPath(const RootedPath & path)
-{
-    auto result = inner->mkPath(path);
-    /* Identity from the SourceRoot's unpinnedId + canon path. The
-       unpinnedId strips revision-output attrs from the URL, so the
-       same logical source at two different revs produces the same
-       identity — exactly the property the trie needs to replay across
-       upgrades of an input. SourceRoots without an unpinnedId (e.g.
-       internal-helper accessors) fall back to a per-instance address;
-       those are typically process-scoped and don't need cross-run
-       replay anyway. */
-    std::string content = "mkPath:";
-    if (path.root->unpinnedId)
-        content += *path.root->unpinnedId;
-    else
-        content += fmt("addr:%p", (void *) &*path.root);
-    content += ":" + path.path.abs();
-    auto hash = trace::tracingHash(content);
-    auto hashStr = hash.toHex();
-    auto triePos = TriePosition{.resultNodeHash = hash, .queryHashStr = hashStr};
-    auto v = writer.getSink().allocValue();
-    return TracingObject::create(result, writer, v, triePos);
-}
-
-ref<Object> TracingEvaluator::getInternalPrimOp(const std::string & name)
-{
-    auto result = inner->getInternalPrimOp(name);
-    auto hash = trace::tracingHash("internalPrimOp:" + name);
-    auto hashStr = hash.toHex();
-    auto triePos = TriePosition{.resultNodeHash = hash, .queryHashStr = hashStr};
-    auto v = writer.getSink().allocValue();
-    return TracingObject::create(result, writer, v, triePos);
-}
-
-ref<Object> TracingEvaluator::mkAttrs(const std::map<std::string, ref<Object>> & attrs)
-{
-    auto result = inner->mkAttrs(attrs);
-    // Deterministic identity from attr names + child identities.
-    std::string content = "mkAttrs:";
-    for (auto & [name, obj] : attrs) {
-        content += name + "=";
-        if (auto hex = obj->getSelectorHashHex())
-            content += *hex;
-        content += ",";
-    }
-    auto hash = trace::tracingHash(content);
-    auto hashStr = hash.toHex();
-    auto triePos = TriePosition{.resultNodeHash = hash, .queryHashStr = hashStr};
-    auto v = writer.getSink().allocValue();
-    return TracingObject::create(result, writer, v, triePos);
-}
+/* Leaf synthesisers delegate straight to inner. Wrapping them in
+   TracingObject was a no-op passthrough — argCell/producer unset, the
+   synthesised triePos hash never interned as a Selector, every getter
+   falling back through the `findByHex` miss branch. Matches
+   TracingReplayEvaluator's mk* and CoarseEvalCache's mk*. */
+ref<Object> TracingEvaluator::mkString(const std::string & s) { return inner->mkString(s); }
+ref<Object> TracingEvaluator::mkInt(NixInt i) { return inner->mkInt(i); }
+ref<Object> TracingEvaluator::mkBool(bool b) { return inner->mkBool(b); }
+ref<Object> TracingEvaluator::mkPath(const RootedPath & path) { return inner->mkPath(path); }
+ref<Object> TracingEvaluator::getInternalPrimOp(const std::string & name) { return inner->getInternalPrimOp(name); }
+ref<Object> TracingEvaluator::mkAttrs(const std::map<std::string, ref<Object>> & attrs) { return inner->mkAttrs(attrs); }
 
 ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
 {
