@@ -313,6 +313,85 @@ void ExprProxy::bindVars(EvalState & /* es */, const std::shared_ptr<const Stati
 }
 
 /**
+ * Wrap a raw arg (typically an InterpreterObject) in an OuterObject
+ * with the ceremony that gives it a content-defined identity at the
+ * apply boundary: producer Selector = SelectorApply{fnObj's selector},
+ * seedCell = fresh RecordingCallbackArgCell parented under fnObj's
+ * cell, and queryFn/applyFn that dispatch through the outer resolver
+ * plus inner evaluator's environment.
+ *
+ * Extracted from makeCachedFnPrimOp.impl so the same ceremony can
+ * be invoked from Evaluator::apply when it receives a raw arg
+ * (e.g. from callFlakeViaEvaluator's curried apply chain rather
+ * than from a <cached-fn> primop callsite).
+ */
+ref<OuterObject> wrapArgAsCallbackScope(
+    EvalState & state,
+    std::shared_ptr<Object> fnObj,
+    std::shared_ptr<Object> rawArg,
+    std::shared_ptr<Evaluator> innerEval,
+    std::shared_ptr<OuterResolver> resolver)
+{
+    /* Scope-graph cell for this arg. Parent = the fn proxy's cell
+       (so curried applies chain through depth 0, 1, ... naturally).
+       #261: this cell IS the callback firing's arg cell — later
+       apply() reaches its non-fnIsTlo branch which requires
+       RecordingCallbackArgCell. `initialFn` comes from fnObj's
+       Selector, which must exist here. */
+    auto parentCell = effectiveArgCell(*fnObj);
+    auto fnSel = fnObj->getSelector().value();
+    auto seedCell = RecordingCallbackArgCell::make(
+        parentCell, /*liveObject set below*/ nullptr, fnSel);
+
+    /* Both outer and inner may hold the graph — outer's is set when
+       the outer EvalCommand is running under the tracing-eval-cache
+       option, inner's unconditionally by builtins.cache's setup. */
+    auto & dg = state.rootDecisionGraph
+        ? *state.rootDecisionGraph
+        : *innerEval->getEvalState().rootDecisionGraph;
+    auto & pool = dg.selectorPool;
+
+    /* Selector-is-a-sequence: the arg is identified by the apply
+       that scoped it — SelectorApply whose `fn` is fnObj's current
+       producer Selector. Live callable so fnObj's identity is
+       recomputed on demand (fnObj may itself be a proxy). */
+    auto argProducerFn = [&pool, fnObj]() -> ref<const trace::Selector> {
+        auto fnSel = fnObj->getSelector();
+        return pool.intern(trace::SelectorApply{*fnSel});
+    };
+    auto & innerEnv = *innerEval->getEvalState().environment;
+    OuterQueryFn queryFn = [&innerEnv](
+        std::shared_ptr<Object> outerObj,
+        ref<const trace::Selector> q,
+        ref<const trace::Selector> producer,
+        std::shared_ptr<ArgCell> callerCell) {
+        std::shared_ptr<ArgCell> attributionCell = callerCell;
+        OuterQueryResult qr = dispatchOuterQuery(std::move(outerObj), q->node);
+        innerEnv.outerQuery(
+            q,
+            [&](ref<const trace::Selector>) { return qr.result; },
+            producer,
+            attributionCell);
+        return qr;
+    };
+    OuterApplyFn applyFn = [resolver](
+        std::shared_ptr<Object> fnObj,
+        ref<const trace::Selector> fnProducer,
+        std::shared_ptr<Object> argObj,
+        std::shared_ptr<ArgCell> callerScope) -> OuterApplyResult {
+        return resolver->apply(std::move(fnObj), std::move(fnProducer),
+                                std::move(argObj), std::move(callerScope));
+    };
+    auto outerArgProxy = make_ref<OuterObject>(
+        argProducerFn, rawArg, std::move(queryFn),
+        state.rootFSRoot, pool, seedCell, std::move(applyFn));
+    /* Wire seedCell.liveObject to outerArgProxy now that it exists.
+       Deliberate shared_ptr cycle documented on ArgCell::liveObject. */
+    seedCell->liveObject = outerArgProxy.get_ptr();
+    return outerArgProxy;
+}
+
+/*
  * Create a PrimOp for a function defined inside the cache boundary.
  * Calls route through the inner evaluator, with the OuterResolver
  * bridging arguments between outer and inner.
@@ -332,86 +411,10 @@ PrimOp * makeCachedFnPrimOp(
                     [fnObj, innerEval, resolver](EvalState & state, const PosIdx /* pos */, Value ** args, Value & v) {
                         // Do NOT force args[0] — it may be self-referential.
                         auto outerArgObj = std::make_shared<InterpreterObject>(state, allocRootValue(args[0]));
-                        /* Scope-graph cell for this arg. Parent = the
-                           fn proxy's cell (so curried applies chain
-                           through depth 0, 1, ... naturally).
-                           cell.liveObject is set to the OuterObject
-                           we're about to construct (below) so chain
-                           navigation returns the proxy.
-
-                           #261: this cell IS the callback firing's arg
-                           cell — inner->apply(fnObj, outerArgProxy)
-                           reaches TracingEvaluator::apply's non-fnIsTlo
-                           branch which requires arg's cell to be a
-                           RecordingCallbackArgCell. `initialFn` comes
-                           from fnObj's Selector, which must exist here
-                           (the primop is only synthesised when
-                           `obj->getSelector().has_value()`; see
-                           `ExprFromObject::eval` dispatch). */
-                        auto parentCell = effectiveArgCell(*fnObj);
-                        auto fnSel = fnObj->getSelector().value();
-                        auto seedCell = RecordingCallbackArgCell::make(
-                            parentCell, /*liveObject set below*/ nullptr, fnSel);
-                        /* Selector-is-a-sequence: the arg is identified
-                           by the apply that scoped it — SelectorApply
-                           whose `fn` is fnObj's CURRENT selector hex.
-                           Passed as a live callable so the hex is
-                           recomputed on demand (fnObj may be a proxy
-                           whose identity evolves). */
-                        /* Both outer and inner may hold the graph — outer's is set when
-                           the outer EvalCommand is running under the tracing-eval-cache
-                           OPTION, inner's is set unconditionally by builtins.cache's
-                           stack setup. The ExprFromObject::eval dispatch (below) only
-                           routes here when one of these is non-null; the reference bind
-                           is total under correct routing. */
-                        auto & dg = state.rootDecisionGraph
-                            ? *state.rootDecisionGraph
-                            : *innerEval->getEvalState().rootDecisionGraph;
-                        auto & pool = dg.selectorPool;
-                        /* Selector-is-a-sequence: the arg is identified by the apply
-                           that scoped it — SelectorApply whose `fn` is fnObj's current
-                           producer Selector. Live callable so fnObj's identity is
-                           recomputed on demand (fnObj may itself be a proxy). The
-                           outside/Query surface takes the more descriptive shape;
-                           SelectorArg is reserved for INSIDE (contra-arg producer)
-                           sites where context is already established by the enclosing
-                           callback firing. */
-                        auto argProducerFn = [&pool, fnObj]() -> ref<const trace::Selector> {
-                            auto fnSel = fnObj->getSelector();
-                            return pool.intern(trace::SelectorApply{*fnSel});
-                        };
-                        auto & innerEnv = *innerEval->getEvalState().environment;
-                        OuterQueryFn queryFn = [&innerEnv](
-                            std::shared_ptr<Object> outerObj,
-                            ref<const trace::Selector> q,
-                            ref<const trace::Selector> producer,
-                            std::shared_ptr<ArgCell> callerCell) {
-                            std::shared_ptr<ArgCell> attributionCell = callerCell;
-                            OuterQueryResult qr = dispatchOuterQuery(std::move(outerObj), q->node);
-                            innerEnv.outerQuery(
-                                q,
-                                [&](ref<const trace::Selector>) { return qr.result; },
-                                producer,
-                                attributionCell);
-                            return qr;
-                        };
-                        OuterApplyFn applyFn = [resolver](
-                            std::shared_ptr<Object> fnObj,
-                            ref<const trace::Selector> fnProducer,
-                            std::shared_ptr<Object> argObj,
-                            std::shared_ptr<ArgCell> callerScope) -> OuterApplyResult {
-                            return resolver->apply(std::move(fnObj), std::move(fnProducer),
-                                                    std::move(argObj), std::move(callerScope));
-                        };
-                        auto outerArgProxy =
-                            make_ref<OuterObject>(argProducerFn, outerArgObj, std::move(queryFn), state.rootFSRoot, pool, seedCell, std::move(applyFn));
-                        /* Wire seedCell.liveObject to outerArgProxy now
-                           that it exists. This is the deliberate
-                           shared_ptr cycle documented on
-                           ArgCell::liveObject. */
-                        seedCell->liveObject = outerArgProxy.get_ptr();
-                        tracingCacheLog("makeCachedFnPrimOp.impl: outerArgProxy=%p seedCell=%p outerArg=%p",
-                                        (void*)outerArgProxy.get_ptr().get(), (void*)seedCell.get(),
+                        auto outerArgProxy = wrapArgAsCallbackScope(
+                            state, fnObj, outerArgObj, innerEval, resolver);
+                        tracingCacheLog("makeCachedFnPrimOp.impl: outerArgProxy=%p outerArg=%p",
+                                        (void*)outerArgProxy.get_ptr().get(),
                                         (void*)outerArgObj.get());
                         try {
                             auto result = innerEval->apply(ref<Object>(fnObj), outerArgProxy);

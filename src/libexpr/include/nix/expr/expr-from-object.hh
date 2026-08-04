@@ -127,6 +127,29 @@ std::shared_ptr<OuterResolver> makeOuterResolver(
     std::shared_ptr<Evaluator> innerEvaluator,
     TracingWriter * innerWriter = nullptr);
 
+/** Wrap a raw argument Object (typically an InterpreterObject from
+    mkString/mkAttrs/getInternalPrimOp) in an OuterObject with a
+    `SelectorApply{fnObj->getSelector()}` producer, a seeded
+    `RecordingCallbackArgCell` parented under `fnObj`'s cell, and
+    queryFn/applyFn that dispatch through the outer resolver plus
+    the inner evaluator's environment.
+
+    The wrapping is the mechanism that gives outer-supplied args a
+    content-defined identity at the cache boundary — without it,
+    `Evaluator::apply` sees an identity-less arg and can't record
+    the call. Hoisted out of `makeCachedFnPrimOp.impl` so
+    `TE/TRE::apply` can perform the same wrapping when a raw arg
+    reaches them (e.g. from `callFlakeViaEvaluator`'s curried apply
+    chain).
+
+    Precondition: `fnObj->getSelector()` returns non-empty. */
+ref<OuterObject> wrapArgAsCallbackScope(
+    EvalState & state,
+    std::shared_ptr<Object> fnObj,
+    std::shared_ptr<Object> rawArg,
+    std::shared_ptr<Evaluator> innerEval,
+    std::shared_ptr<OuterResolver> resolver);
+
 /** PrimOp wrapping a cache-boundary function so apply routes through
     `innerEval->apply` after opening a cached-fn cell chain. Used by
     `TObject::maybeMaterialiseAsFunctionValue` and its replay-side
