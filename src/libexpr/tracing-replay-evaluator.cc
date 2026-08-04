@@ -1001,9 +1001,57 @@ ref<Object> TracingReplayEvaluator::getInternalPrimOp(const std::string & name)
 
 ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
 {
-    /* Frontend for fn's own queryApply. Tracing behaviour (arg
-       wrapping, walker lookup, TRO wrapping) lives in
-       TracingReplayObject::queryApply where it belongs. */
+    /* Frontend behavior: probe the walker for a recorded SelectorApply
+       Terminal keyed on fn's Selector. If we find one, wrap the
+       cached result in a TRO and return — this is what makes
+       within-session second-invocation apply-calls hit the first
+       invocation's recording without re-invoking the writer.
+
+       On miss, delegate to fn's queryApply. TO's writer path
+       records. TRO's walker path (from a warm evalFile hit) would
+       also probe but this path handles the more common
+       cold-writer-then-warm-consult sequence within one session. */
+    auto fnSelOpt = fn->getSelector();
+    if (fnSelOpt) {
+        /* Need a cell to key the walker's per-walk state on. Wrap the
+           arg if it's raw — writes into wrapArgAsCallbackScope's
+           seedCell, which is what effectiveArgCell then reads. */
+        std::shared_ptr<Object> probeArg = arg.get_ptr();
+        if (!probeArg->getSelectorHashHex()) {
+            probeArg = wrapArgAsCallbackScope(
+                inner->getEvalState(), fn.get_ptr(), probeArg,
+                inner, ref<OuterResolver>(inner->getOuterResolver())).get_ptr();
+        }
+        auto cell = effectiveArgCell(*probeArg);
+        auto applySel = decisionGraph.selectorPool.intern(trace::SelectorApply{*fnSelOpt});
+        auto & applySelector = std::get<trace::SelectorApply>(applySel->node);
+        auto applyLookup = lookup(applySelector, fn.get_ptr(), cell);
+        if (applyLookup) {
+            std::optional<trace::ResultWHNF> cachedWHNF;
+            try {
+                auto whnfJson = cborStringToJson(applyLookup->first);
+                trace::ResultWHNF parsed;
+                from_json(whnfJson, parsed);
+                cachedWHNF = std::move(parsed);
+            } catch (const std::exception &) { extern thread_local bool rcaBailFlag; if (rcaBailFlag) throw; }
+            if (cachedWHNF) {
+                auto capturedFn = fn;
+                auto capturedArg = probeArg;
+                return make_ref<TracingReplayObject>(
+                    *this, applyLookup->second,
+                    [capturedFn, capturedArg]() {
+                        auto & fnObj = *capturedFn;
+                        auto r = fnObj.queryApply(capturedArg);
+                        if (!r) panic("TRE::apply cache-hit fallback: queryApply returned null");
+                        return ref<Object>(r);
+                    },
+                    std::move(cell),
+                    applySel, std::move(cachedWHNF));
+            }
+        }
+    }
+    /* Miss (or fn had no Selector) — delegate to fn's queryApply for
+       the writer/wrap path. */
     auto result = fn->queryApply(arg.get_ptr());
     if (!result)
         panic("TracingReplayEvaluator::apply: fn->queryApply returned null");
