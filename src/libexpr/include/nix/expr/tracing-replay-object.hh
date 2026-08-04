@@ -73,54 +73,16 @@ class TracingReplayObject : public Object
 
 public:
     TracingReplayObject(
-        TracingReplayEvaluator & evaluator, TriePosition triePos, std::function<ref<Object>()> getInner, std::shared_ptr<ArgCell> argCell);
-
-    /** Attach the apply-result producer Selector. Mirrors the
-        writer-side `TracingObject::withProducer`. */
-    TracingReplayObject & withProducer(ref<const trace::Selector> p)
-    {
-        producer = std::move(p);
-        return *this;
-    }
+        TracingReplayEvaluator & evaluator,
+        TriePosition triePos,
+        std::function<ref<Object>()> getInner,
+        std::shared_ptr<ArgCell> argCell,
+        std::optional<ref<const trace::Selector>> producer = std::nullopt,
+        std::optional<trace::ResultWHNF> cachedWHNF = std::nullopt,
+        bool cbApplyOrigin = false,
+        bool walkerMissed = false);
 
     std::optional<ref<const trace::Selector>> getSelector() const override { return producer; }
-
-    /** Symmetric to `TracingObject::withCbApplyOrigin`. Walker
-        propagates through navigation children so their
-        `producer` matches cold's Q payloads. */
-    TracingReplayObject & withCbApplyOrigin()
-    {
-        cbApplyOrigin = true;
-        return *this;
-    }
-
-    /** Pre-populate `cachedWHNF` at wrapper construction. Used by
-        cell-migration Phase B: `TracingReplayEvaluator::apply`
-        pre-invokes lookup(SelectorApply{...}) via the cell and, on
-        hit, populates the walker-side applyResult wrapper's cached
-        WHNF from the Terminal's Result payload. Downstream `.foo`
-        probes on this wrapper use the cached WHNF for membership
-        without a separate walk. */
-    TracingReplayObject & withCachedWHNF(trace::ResultWHNF whnf_)
-    {
-        cachedWHNF = std::move(whnf_);
-        return *this;
-    }
-
-    /** Mark this TRO as walker-missed at construction: TRE::apply's
-        cell-anchor SelectorApply lookup returned nullopt, so we're
-        wrapping an unrecorded value. maybeGetAttr/getListElem check
-        this and skip their own walker call — descendants of a
-        never-recorded parent are (in practice) also never recorded,
-        so the walker attempt is nearly-guaranteed miss with a heavy
-        cost. Trades the rare case of "descendant was recorded via
-        some other path" for avoiding the walker overhead on the
-        common case. */
-    TracingReplayObject & withWalkerMissed()
-    {
-        walkerMissed = true;
-        return *this;
-    }
 
     std::shared_ptr<ArgCell> getProxyArgCell() const override { return argCell; }
 

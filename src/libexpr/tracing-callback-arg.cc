@@ -26,12 +26,14 @@ TracingCallbackArg::TracingCallbackArg(
     ref<const trace::Selector> producer_,
     TracingWriter & writer,
     ref<SourceRoot> rootFSRoot,
-    ref<RecordingCallbackArgCell> argCell)
+    ref<RecordingCallbackArgCell> argCell,
+    std::optional<trace::ResultWHNF> cachedWHNF_)
     : inner(std::move(inner))
     , producer(std::move(producer_))
     , writer(writer)
     , rootFSRoot(std::move(rootFSRoot))
     , argCell(std::move(argCell))
+    , cachedWHNF(std::move(cachedWHNF_))
 {
 }
 
@@ -414,15 +416,13 @@ std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> a
        routes the subsequent apply as plain SelectorApply. Warm then
        has no compositional SCA to look up. Doc §6a's "deferred cases"
        note. */
-    auto wrapper = std::make_shared<TracingCallbackArg>(
-        ref<Object>(std::move(resultObj)), scaSel, writer, rootFSRoot, argCell);
     /* Pre-populate cachedWHNF so wrapper->whnf() returns the value we
        already computed. Otherwise the first probe (typically getType()
        via toValueOrProxy) fires whnf() → recordObservation(scaSel,
        applyResultWhnf) — a second copy of the same Fact we recorded on
        the enclosing cell four lines up. */
-    wrapper->withCachedWHNF(applyResultWhnf);
-    return wrapper;
+    return std::make_shared<TracingCallbackArg>(
+        ref<Object>(std::move(resultObj)), scaSel, writer, rootFSRoot, argCell, applyResultWhnf);
 }
 
 RootValue TracingCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_ptr<struct OuterResolver> resolver)

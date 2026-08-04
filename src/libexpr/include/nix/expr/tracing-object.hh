@@ -41,18 +41,28 @@ class TracingObject : public Object
 
     /* True on wrappers rooted at a cb-apply (OuterApply::run) and on
        navigation descendants of such wrappers. Gates whether children
-       inherit `producer` for QCA emission. See `withCbApplyOrigin`
-       for rationale. */
-    bool cbApplyOrigin = false;
+       inherit `producer` for QCA emission. Non-cb apply results (e.g.
+       inner's own function application in TracingEvaluator::apply)
+       leave this false so their children stay order-independent. */
+    bool cbApplyOrigin;
 
     /* Memoized WHNF payload. First call to any of getType / getInt /
        getString / etc. fires `whnf()`, which computes the type
        discriminator plus type-determined payload once. Subsequent
-       calls decode the cached result. */
+       calls decode the cached result. Pre-populated at construction
+       when the caller already computed it (cell-migration Phase B). */
     std::optional<trace::ResultWHNF> cachedWHNF;
     trace::ResultWHNF & whnf();
 
-    TracingObject(ref<Object> inner, TracingWriter & writer, ValueHandle valueNum, std::optional<TriePosition> triePos, std::shared_ptr<ArgCell> argCell);
+    TracingObject(
+        ref<Object> inner,
+        TracingWriter & writer,
+        ValueHandle valueNum,
+        std::optional<TriePosition> triePos,
+        std::shared_ptr<ArgCell> argCell,
+        std::optional<ref<const trace::Selector>> producer,
+        std::optional<trace::ResultWHNF> cachedWHNF,
+        bool cbApplyOrigin);
 
 public:
     static ref<TracingObject> create(
@@ -60,41 +70,10 @@ public:
         TracingWriter & writer,
         ValueHandle valueNum,
         std::optional<TriePosition> triePos,
-        std::shared_ptr<ArgCell> argCell);
-
-    /** Attach the apply-result producer Selector — for apply-result
-        wrappers, so subsequent child queries hang off this producer.
-        Mirrors TracingReplayObject's machinery. */
-    TracingObject & withProducer(ref<const trace::Selector> p)
-    {
-        producer = std::move(p);
-        return *this;
-    }
-
-    /** Pre-populate `cachedWHNF` at wrapper construction. Used by
-        cell-migration Phase B: `TracingEvaluator::apply` computes the
-        applyResult's WHNF as part of the atomic apply operation and
-        pre-populates the wrapper, so subsequent `.whnf()` short-
-        circuits without recomputing. */
-    TracingObject & withCachedWHNF(trace::ResultWHNF whnf_)
-    {
-        cachedWHNF = std::move(whnf_);
-        return *this;
-    }
-
-    /** Mark this wrapper as originating from a callback-application
-        boundary (OuterApply::run). Descendants of a cb-apply-marked
-        wrapper inherit the mark and inherit `producer` through
-        navigation, so their own whnf fires
-        emitCallbackApplyForApplyResult against the enclosing
-        CallbackCell (callback-model §7). Non-cb apply results (e.g.
-        inner's own function application in TracingEvaluator::apply)
-        leave this false so their children stay order-independent. */
-    TracingObject & withCbApplyOrigin()
-    {
-        cbApplyOrigin = true;
-        return *this;
-    }
+        std::shared_ptr<ArgCell> argCell,
+        std::optional<ref<const trace::Selector>> producer = std::nullopt,
+        std::optional<trace::ResultWHNF> cachedWHNF = std::nullopt,
+        bool cbApplyOrigin = false);
 
     std::shared_ptr<ArgCell> getProxyArgCell() const override { return argCell; }
 

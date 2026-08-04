@@ -66,18 +66,13 @@ public:
         ref<const trace::Selector> producer,
         TracingWriter & writer,
         ref<SourceRoot> rootFSRoot,
-        ref<RecordingCallbackArgCell> argCell);
+        ref<RecordingCallbackArgCell> argCell,
+        std::optional<trace::ResultWHNF> cachedWHNF = std::nullopt);
 
     /** Typed accessor for the callback firing's cell — lets consumers
         that hold a TCA propagate a `RecordingCallbackArgCell` handle without
         going through the base-typed `getProxyArgCell()`. */
     ref<RecordingCallbackArgCell> getCallbackArgCell() const { return argCell; }
-
-    /** Set the memoized WHNF from a known value (e.g. the applyResult's
-        WHNF captured by TCA::queryApply before wrapping). Suppresses the
-        recording that whnf() would fire on first access — the caller has
-        already recorded the observation on the enclosing cell. */
-    void withCachedWHNF(trace::ResultWHNF whnf) { cachedWHNF = std::move(whnf); }
 
     std::optional<ref<const trace::Selector>> getSelector() const override { return producer; }
 

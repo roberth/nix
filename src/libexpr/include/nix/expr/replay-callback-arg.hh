@@ -84,30 +84,26 @@ class ReplayCallbackArg : public Object
 public:
     /* Constructor for derived children. Subject is built by the
        parent's maybeGetAttr / getListElem as `DerivedSubject{parent,
-       ...}`. */
+       ...}`.
+
+       `obsSetResponses` maps selectorHash → recorded CBOR response
+       payload; each probe on this RCA (or its derived children, if
+       the shared_ptr is passed through) looks up its selectorHash
+       here and decodes the payload. Enables live outer validation
+       from the recorded obsSet content. */
     ReplayCallbackArg(
         ref<const trace::Selector> producer_,
         TracingDecisionGraph & dg,
         ref<SourceRoot> rootFSRoot,
         EvalState * state,
-        std::shared_ptr<ArgCell> argCell)
+        std::shared_ptr<ArgCell> argCell,
+        std::shared_ptr<std::map<TracingHash, std::string>> obsSetResponses = nullptr)
         : producer(producer_)
-        , decisionGraph(dg), rootFSRoot(std::move(rootFSRoot)), state(state), argCell(std::move(argCell)) {}
+        , decisionGraph(dg), rootFSRoot(std::move(rootFSRoot)), state(state)
+        , obsSetResponses(std::move(obsSetResponses))
+        , argCell(std::move(argCell)) {}
 
     std::optional<ref<const trace::Selector>> getSelector() const override { return producer; }
-
-    /** Attach an obsSet response source. Each probe on this
-        ReplayCallbackArg (or its derived children, if the
-        shared_ptr is passed through) looks up its selectorHash in
-        this map and decodes the CBOR payload as the response
-        Result. Enables live outer validation from the recorded
-        obsSet content. */
-    ReplayCallbackArg & withObsSetResponses(
-        std::shared_ptr<std::map<TracingHash, std::string>> map)
-    {
-        obsSetResponses = std::move(map);
-        return *this;
-    }
 
     std::shared_ptr<std::map<TracingHash, std::string>> getObsSetResponses() const
     {

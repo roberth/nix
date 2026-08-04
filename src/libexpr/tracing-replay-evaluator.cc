@@ -457,8 +457,8 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveIdentity(const std::strin
             argProducerSel,
             decisionGraph, inner->getEvalState().rootFSRoot,
             &inner->getEvalState(),
-            nullptr);
-        replayArg->withObsSetResponses(obsSetMap);
+            nullptr,
+            obsSetMap);
         try {
             auto resultObj = fnObj->queryApply(replayArg);
             if (resultObj)
@@ -626,8 +626,8 @@ std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nl
                     argProducerSel,
                     decisionGraph, inner->getEvalState().rootFSRoot,
                     &inner->getEvalState(),
-                    nullptr);
-                replayArg->withObsSetResponses(obsSetMap);
+                    nullptr,
+                    obsSetMap);
                 try {
                     auto resultObj = fnObj->queryApply(replayArg);
                     if (!resultObj)
@@ -766,17 +766,18 @@ ref<Object> TracingReplayEvaluator::evalFile(const RootedPath & path, const std:
     trace::SelectorImport rootSel{displayPath};
     if (auto result = lookup(rootSel, nullptr, rootCell)) {
         tracingCacheLog("replay hit: evalFile %s", displayPath);
-        auto obj = make_ref<TracingReplayObject>(
-            *this, result->second, [this, path, displayPath]() { return inner->evalFile(path, displayPath); }, rootCell);
+        std::optional<trace::ResultWHNF> cachedWHNF;
         try {
             auto whnfJson = cborStringToJson(result->first);
             trace::ResultWHNF parsed;
             from_json(whnfJson, parsed);
-            obj->withCachedWHNF(std::move(parsed));
+            cachedWHNF = std::move(parsed);
         } catch (const std::exception &) { extern thread_local bool rcaBailFlag; if (rcaBailFlag) throw; /* rca-bail-diagnostic */ /* fall through */ }
-        rootCell->liveObject = obj.get_ptr();
         /* Bootstrap the pool with this root Selector. */
-        obj->withProducer(decisionGraph.selectorPool.intern(rootSel));
+        auto obj = make_ref<TracingReplayObject>(
+            *this, result->second, [this, path, displayPath]() { return inner->evalFile(path, displayPath); }, rootCell,
+            decisionGraph.selectorPool.intern(rootSel), std::move(cachedWHNF));
+        rootCell->liveObject = obj.get_ptr();
         return obj;
     }
     tracingCacheLog("replay miss: evalFile %s", displayPath);
@@ -791,16 +792,17 @@ ref<Object> TracingReplayEvaluator::evalExpr(const std::string & expr, const Roo
     trace::SelectorExpr rootSel{expr, basePath.path.abs()};
     if (auto result = lookup(rootSel, nullptr, rootCell)) {
         tracingCacheLog("replay hit: evalExpr");
-        auto obj = make_ref<TracingReplayObject>(
-            *this, result->second, [this, expr, basePath]() { return inner->evalExpr(expr, basePath); }, rootCell);
+        std::optional<trace::ResultWHNF> cachedWHNF;
         try {
             auto whnfJson = cborStringToJson(result->first);
             trace::ResultWHNF parsed;
             from_json(whnfJson, parsed);
-            obj->withCachedWHNF(std::move(parsed));
+            cachedWHNF = std::move(parsed);
         } catch (const std::exception &) { extern thread_local bool rcaBailFlag; if (rcaBailFlag) throw; /* rca-bail-diagnostic */ /* fall through */ }
+        auto obj = make_ref<TracingReplayObject>(
+            *this, result->second, [this, expr, basePath]() { return inner->evalExpr(expr, basePath); }, rootCell,
+            decisionGraph.selectorPool.intern(rootSel), std::move(cachedWHNF));
         rootCell->liveObject = obj.get_ptr();
-        obj->withProducer(decisionGraph.selectorPool.intern(rootSel));
         return obj;
     }
     tracingCacheLog("replay miss: evalExpr");
@@ -957,20 +959,16 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
             /* Parse failure — fall through to lazy path. */
         }
     }
-    auto obj = make_ref<TracingReplayObject>(
-        *this, triePos, [this, fn, arg]() { return inner->apply(fn, arg); }, std::move(cell));
-    obj->withProducer(applySel);
-    if (cachedWHNF)
-        obj->withCachedWHNF(std::move(*cachedWHNF));
-    else
-        /* Walker missed on this SelectorApply. Nav methods on this
-           wrapper skip their own walker calls (which would nearly-
-           always miss too — descendants of unrecorded applies aren't
-           recorded either). Trades the rare "descendant recorded via
-           other path" hit for skipping the walker's ~5% inclusive
-           dispatch overhead on the mostly-missing path. */
-        obj->withWalkerMissed();
-    return obj;
+    /* When cachedWHNF is nullopt the walker missed on this SelectorApply.
+       Nav methods on this wrapper skip their own walker calls (which would
+       nearly-always miss too — descendants of unrecorded applies aren't
+       recorded either). Trades the rare "descendant recorded via other
+       path" hit for skipping the walker's ~5% inclusive dispatch overhead
+       on the mostly-missing path. */
+    bool walkerMissed = !cachedWHNF.has_value();
+    return make_ref<TracingReplayObject>(
+        *this, triePos, [this, fn, arg]() { return inner->apply(fn, arg); }, std::move(cell),
+        applySel, std::move(cachedWHNF), /*cbApplyOrigin=*/false, walkerMissed);
 }
 
 /* Explicit instantiations for public consumers of lookup() (e.g.

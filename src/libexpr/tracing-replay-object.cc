@@ -20,11 +20,22 @@
 namespace nix {
 
 TracingReplayObject::TracingReplayObject(
-    TracingReplayEvaluator & evaluator, TriePosition triePos, std::function<ref<Object>()> getInner, std::shared_ptr<ArgCell> argCell_)
+    TracingReplayEvaluator & evaluator,
+    TriePosition triePos,
+    std::function<ref<Object>()> getInner,
+    std::shared_ptr<ArgCell> argCell_,
+    std::optional<ref<const trace::Selector>> producer_,
+    std::optional<trace::ResultWHNF> cachedWHNF_,
+    bool cbApplyOrigin_,
+    bool walkerMissed_)
     : evaluator(evaluator)
     , triePos(triePos)
     , getInner(std::move(getInner))
     , argCell(std::move(argCell_))
+    , producer(std::move(producer_))
+    , cbApplyOrigin(cbApplyOrigin_)
+    , walkerMissed(walkerMissed_)
+    , cachedWHNF(std::move(cachedWHNF_))
 {
 }
 
@@ -153,9 +164,6 @@ std::shared_ptr<Object> TracingReplayObject::maybeGetAttr(const std::string & na
     }
     tracingCacheLog("replay hit: getAttr '%s' -> found", name);
     auto self = std::static_pointer_cast<TracingReplayObject>(shared_from_this());
-    auto child = std::make_shared<TracingReplayObject>(
-        evaluator, result->second, [self, name]() { return ref<Object>(self->ensureInner()->maybeGetAttr(name)); }, argCell);
-    child->cachedWHNF = std::move(result->first);
     /* The nav child's identity IS SelectorGetAttr{name, parent=self.producer}
        — set it unconditionally so downstream code (ExprFromObject::eval's
        fn dispatch, makeCachedFnPrimOp's argProducerFn) has a real Selector
@@ -163,11 +171,9 @@ std::shared_ptr<Object> TracingReplayObject::maybeGetAttr(const std::string & na
        and other callers tolerated nullopt via getSelectorHashHex().value_or("");
        under the recursive Selector model there's no silent empty-string
        fallback. */
-    child->withProducer(querySel);
-    if (cbApplyOrigin) {
-        child->withCbApplyOrigin();
-    }
-    return child;
+    return std::make_shared<TracingReplayObject>(
+        evaluator, result->second, [self, name]() { return ref<Object>(self->ensureInner()->maybeGetAttr(name)); }, argCell,
+        querySel, std::move(result->first), cbApplyOrigin);
     } catch (Error & e) {
         /* Stamp so the reader knows this was TRO's maybeGetAttr —
            the walker-side replay Object, distinguishing from OO
@@ -355,9 +361,6 @@ std::shared_ptr<Object> TracingReplayObject::getListElem(size_t idx)
     if (auto result = lookupStructuralChild<trace::SelectorGetListElem, trace::ResultWHNF>(query)) {
         tracingCacheLog("replay hit: getListElem %d", idx);
         auto self = std::static_pointer_cast<TracingReplayObject>(shared_from_this());
-        auto child = std::make_shared<TracingReplayObject>(
-            evaluator, result->second, [self, idx]() { return ref<Object>(self->ensureInner()->getListElem(idx)); }, argCell);
-        child->cachedWHNF = std::move(result->first);
         /* Mirror maybeGetAttr and TracingObject::getListElem: the nav
            child's identity IS SelectorGetListElem{index, parent=self}.
            Set unconditionally so downstream code (ExprFromObject fn
@@ -365,11 +368,9 @@ std::shared_ptr<Object> TracingReplayObject::getListElem(size_t idx)
            Selector. Previously gated on cbApplyOrigin and used self's
            producer (wrong shape), leaving non-callback list-element
            children with getSelector()=nullopt. */
-        child->withProducer(querySel);
-        if (cbApplyOrigin) {
-            child->withCbApplyOrigin();
-        }
-        return child;
+        return std::make_shared<TracingReplayObject>(
+            evaluator, result->second, [self, idx]() { return ref<Object>(self->ensureInner()->getListElem(idx)); }, argCell,
+            querySel, std::move(result->first), cbApplyOrigin);
     }
     tracingCacheLog("replay fallback: getListElem %d", idx);
     return ensureInner()->getListElem(idx);

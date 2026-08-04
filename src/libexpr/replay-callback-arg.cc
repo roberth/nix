@@ -67,13 +67,11 @@ std::shared_ptr<Object> ReplayCallbackArg::maybeGetAttr(const std::string & name
     auto childSel = decisionGraph.selectorPool.intern(trace::SelectorGetAttr{name, producer});
     auto & query = std::get<trace::SelectorGetAttr>(childSel->node);
     auto rJson = readResponse(query, obsSetResponses);
-    auto child = std::make_shared<ReplayCallbackArg>(
-        childSel, decisionGraph, rootFSRoot, state, argCell);
-    child->cachedWHNF = rJson.get<trace::ResultWHNF>();
     /* Derived children probe within the same callback firing, so
        the same obsSet serves their responses too. */
-    if (obsSetResponses)
-        child->withObsSetResponses(obsSetResponses);
+    auto child = std::make_shared<ReplayCallbackArg>(
+        childSel, decisionGraph, rootFSRoot, state, argCell, obsSetResponses);
+    child->cachedWHNF = rJson.get<trace::ResultWHNF>();
     return child;
     } catch (Error & e) {
         /* RCA sits on the walker side, feeding a callback firing's
@@ -345,8 +343,7 @@ std::shared_ptr<Object> ReplayCallbackArg::queryApply(std::shared_ptr<Object> ar
                     auto argSel = decisionGraph.selectorPool.intern(
                         trace::SelectorArg{fnArg->depth + 1});
                     auto nestedRca = std::make_shared<ReplayCallbackArg>(
-                        argSel, decisionGraph, rootFSRoot, state, nullptr);
-                    nestedRca->withObsSetResponses(nestedObsMap);
+                        argSel, decisionGraph, rootFSRoot, state, nullptr, nestedObsMap);
                     auto nestedResultObj = argObj->queryApply(nestedRca);
                     if (!nestedResultObj) { allMatch = false; break; }
                     liveResult = computeWHNFFromObject(*nestedResultObj);
@@ -381,9 +378,8 @@ std::shared_ptr<Object> ReplayCallbackArg::queryApply(std::shared_ptr<Object> ar
                each level's queryApply picks the entry whose parent
                matches its own producer. */
             auto childRca = std::make_shared<ReplayCallbackArg>(
-                *scaOpt, decisionGraph, rootFSRoot, state, nullptr);
+                *scaOpt, decisionGraph, rootFSRoot, state, nullptr, obsSetResponses);
             childRca->cachedWHNF = matchedWhnf;
-            childRca->withObsSetResponses(obsSetResponses);
             return childRca;
         }
     }
