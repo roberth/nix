@@ -363,7 +363,7 @@ public:
     TracingWriter(TraceSink & sink, TracingDecisionGraph & decisionGraph)
         : sink(sink)
         , decisionGraph(decisionGraph)
-        , sessionRootCell(ArgCell::make(nullptr, nullptr))
+        , sessionRootCell(RegularArgCell::make(nullptr, nullptr))
     {
     }
 
@@ -420,15 +420,16 @@ public:
                 attrCell);
             return true;
         };
-        if (callbackCell && callbackCell->callbackState
-            && tryEmitFromCell(*callbackCell->callbackState))
-            return;
+        if (callbackCell)
+            if (auto * cs = callbackCell->getCallbackState())
+                if (tryEmitFromCell(*cs))
+                    return;
 
         tracingCacheLog(
             "emitCallbackApplyForApplyResult: primary path returned false; "
             "callbackCell=%p callbackState=%p fnParent=%s",
             (void*) callbackCell.get(),
-            callbackCell ? (void*) callbackCell->callbackState.get() : nullptr,
+            callbackCell ? (void*) callbackCell->getCallbackState() : nullptr,
             fnParent->cachedHash.toHex().substr(0, 12).c_str());
     }
 

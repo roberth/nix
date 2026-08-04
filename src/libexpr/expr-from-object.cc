@@ -105,11 +105,15 @@ struct OuterApply
         For a callback firing the callable synthesises
         `SelectorCallbackApply{fn=<fn hex>, argObsSet=<snapshot hash>}`
         each time it's called, so probes at different moments sample
-        the current runningObsSet. */
+        the current runningObsSet.
+
+        `callerScope` is the caller's cell — the apply's own cell is
+        created here (Callback if `innerWriter` is set, Regular
+        otherwise) parented to `callerScope`. */
     OuterApplyResult run(
         std::shared_ptr<Object> fnObj, ref<const trace::Selector> fnProducer,
         std::shared_ptr<Object> argObj,
-        std::shared_ptr<const ArgCell> applyCell);
+        std::shared_ptr<const ArgCell> callerScope);
 };
 
 struct OuterResolver : std::enable_shared_from_this<OuterResolver>
@@ -146,17 +150,33 @@ struct OuterResolver : std::enable_shared_from_this<OuterResolver>
 
 OuterApplyResult OuterApply::run(
     std::shared_ptr<Object> fnObj, ref<const trace::Selector> fnProducer,
-    std::shared_ptr<Object> argObj, std::shared_ptr<const ArgCell> applyCell)
+    std::shared_ptr<Object> argObj, std::shared_ptr<const ArgCell> callerScope)
 {
     auto fnId = fnProducer->cachedHash;
+    auto fnIdStrEarly = fnId.toHex();
     if (!outerState)
         throw Error("outer apply requires outerState");
 
-    /* applyCell is the one cell for this apply — created by
-       OuterObject::queryApply. `callbackState` populated below marks
-       it as a callback firing; the producer callable returned to the
-       caller reads runningObsSet from it on demand. */
-    auto localCell = applyCell;
+    /* #261: the apply's own cell is created here (lifted out of
+       OuterObject::queryApply). Callback firing (`innerWriter` set)
+       → CallbackArgCell carrying fn's Q hex; pure outer apply → a
+       Regular cell. The concrete type is picked up front so the
+       producer-callback captures a typed cell — no post-construction
+       mutation of the callback state.
+
+       For the callback branch the returned cell is used both as
+       localCell inside this function and as the wrapped TCA's
+       argCell (so recordObservation lands in the same runningObsSet
+       the producer callable snapshots). */
+    std::shared_ptr<const ArgCell> localCell;
+    std::shared_ptr<const CallbackArgCell> callbackCell;
+    if (innerWriter) {
+        auto cc = CallbackArgCell::make(callerScope, argObj, fnIdStrEarly);
+        callbackCell = cc;
+        localCell = cc;
+    } else {
+        localCell = RegularArgCell::make(callerScope, argObj);
+    }
     /* Each new value that crosses INTO a cb-apply is
        treated uniformly as a value — no inherited Subject is
        propagated. Identity at this boundary starts fresh as
@@ -188,14 +208,6 @@ OuterApplyResult OuterApply::run(
         tracingCacheLog("createCallbackCell callsite=OuterApply::run fn=%s arg=%s",
                         fnIdStr.substr(0, 12), argStateHashStr.substr(0, 12));
         innerWriter->createCallbackCell(applyQ);
-        /* Phase D2 companion: populate the callback state on the
-           cell (localCell) so the contra-arg observations that
-           TracingCallbackArg::recordObservation will accumulate can be
-           reached via the cell chain, not just via the writer-owned
-           callbackCells vector. Applies to `localCell` directly since
-           this cell IS the callback firing's arg cell. */
-        localCell->callbackState = std::make_shared<CallbackState>();
-        localCell->callbackState->fnStateHashHex = fnIdStr;
         /* Walker-side pre-population: when the arg is a ReplayCallbackArg
            (walker-materialised callback firing), pre-populate the
            runningObsSet with the ReplayCallbackArg's obsSetResponses.
@@ -208,7 +220,7 @@ OuterApplyResult OuterApply::run(
         if (auto * rca = dynamic_cast<ReplayCallbackArg *>(argObj.get())) {
             if (auto obsMap = rca->getObsSetResponses()) {
                 for (const auto & [selectorHash, responsePayload] : *obsMap) {
-                    localCell->callbackState->runningObsSet.push_back(
+                    callbackCell->callbackState.runningObsSet.push_back(
                         {selectorHash, responsePayload});
                 }
                 tracingCacheLog(
@@ -244,7 +256,7 @@ OuterApplyResult OuterApply::run(
                        && !dynamic_cast<ReplayCallbackArg *>(argObj.get()))
         ? std::shared_ptr<Object>(std::make_shared<TracingCallbackArg>(
               argObj, argProducerSel, *innerWriter,
-              ref<SourceRoot>(outerRootFSRoot), localCell))
+              ref<SourceRoot>(outerRootFSRoot), callbackCell))
         : argObj;
 
     /* Bridge local arg via ExprFromObject. The cache memoises by
@@ -270,13 +282,12 @@ OuterApplyResult OuterApply::run(
     }
 
     /* Build the producer callable for the wrapping OuterObject.
-       For a callback firing (innerWriter present, localCell has
-       callbackState populated above), the callable synthesises
-       `SelectorCallbackApply{fn=<fn hex>, argObsSet=<snapshot hash>}`
-       from localCell.callbackState.runningObsSet on demand — probes
-       at different moments produce distinct compositional Selectors
-       per §7 of the callback model. For non-callback applies (no
-       innerWriter), falls back to a stable SelectorApply.
+       For a callback firing (innerWriter present), the callable
+       synthesises `SelectorCallbackApply{fn=<fn hex>, argObsSet=<snapshot hash>}`
+       from callbackCell->callbackState.runningObsSet on demand —
+       probes at different moments produce distinct compositional
+       Selectors per §7 of the callback model. For non-callback
+       applies (no innerWriter), falls back to a stable SelectorApply.
 
        The obsSet snapshot is inserted into the ObservationSet CAS
        (via decisionGraph) so walker's `resolveIdentity` can decode
@@ -284,25 +295,21 @@ OuterApplyResult OuterApply::run(
     std::function<ref<const trace::Selector>()> producerFn;
     if (innerWriter) {
         auto & dg = innerWriter->getDecisionGraph();
-        producerFn = [localCell, fnProducer, applySel, &dg]() -> ref<const trace::Selector> {
-            if (localCell->callbackState) {
-                auto obsSetHash = dg.insertObservationSet(
-                    localCell->callbackState->runningObsSet);
-                /* Look up cs.fnStateHashHex in pool; fallback to fnProducer. */
-                ref<const trace::Selector> fnRef = fnProducer;
-                try {
-                    auto fnHash = trace::parseTracingHex(
-                        localCell->callbackState->fnStateHashHex);
-                    if (auto found = dg.selectorPool.find(fnHash))
-                        fnRef = *found;
-                } catch (...) {}
-                auto qcaSel = dg.selectorPool.intern(trace::SelectorCallbackApply{
-                    obsSetHash, fnRef});
-                nlohmann::json qcaJson = trace::toJson(*qcaSel);
-                dg.insertRequest(qcaSel->cachedHash, jsonToCborString(qcaJson));
-                return qcaSel;
-            }
-            return applySel;
+        producerFn = [callbackCell, fnProducer, &dg]() -> ref<const trace::Selector> {
+            auto & cs = callbackCell->callbackState;
+            auto obsSetHash = dg.insertObservationSet(cs.runningObsSet);
+            /* Look up cs.fnStateHashHex in pool; fallback to fnProducer. */
+            ref<const trace::Selector> fnRef = fnProducer;
+            try {
+                auto fnHash = trace::parseTracingHex(cs.fnStateHashHex);
+                if (auto found = dg.selectorPool.find(fnHash))
+                    fnRef = *found;
+            } catch (...) {}
+            auto qcaSel = dg.selectorPool.intern(trace::SelectorCallbackApply{
+                obsSetHash, fnRef});
+            nlohmann::json qcaJson = trace::toJson(*qcaSel);
+            dg.insertRequest(qcaSel->cachedHash, jsonToCborString(qcaJson));
+            return qcaSel;
         };
     } else {
         producerFn = [applySel]() -> ref<const trace::Selector> { return applySel; };
@@ -353,9 +360,21 @@ static PrimOp * makeCachedFnPrimOp(
                            through depth 0, 1, ... naturally).
                            cell.liveObject is set to the OuterObject
                            we're about to construct (below) so chain
-                           navigation returns the proxy. */
+                           navigation returns the proxy.
+
+                           #261: this cell IS the callback firing's arg
+                           cell — inner->apply(fnObj, outerArgProxy)
+                           reaches TracingEvaluator::apply's non-fnIsTlo
+                           branch which requires arg's cell to be a
+                           CallbackArgCell. `fnStateHashHex` comes from
+                           fnObj's Selector, which must exist here (the
+                           primop is only synthesised when
+                           `obj->getSelector().has_value()`; see
+                           `ExprFromObject::eval` dispatch). */
                         auto parentCell = effectiveArgCell(*fnObj);
-                        auto seedCell = ArgCell::make(parentCell, /*liveObject set below*/ nullptr);
+                        auto fnSelHex = fnObj->getSelectorHashHex().value();
+                        auto seedCell = CallbackArgCell::make(
+                            parentCell, /*liveObject set below*/ nullptr, fnSelHex);
                         /* Selector-is-a-sequence: the arg is identified
                            by the apply that scoped it — SelectorApply
                            whose `fn` is fnObj's CURRENT selector hex.
@@ -403,9 +422,9 @@ static PrimOp * makeCachedFnPrimOp(
                             std::shared_ptr<Object> fnObj,
                             ref<const trace::Selector> fnProducer,
                             std::shared_ptr<Object> argObj,
-                            std::shared_ptr<const ArgCell> applyCell) -> OuterApplyResult {
+                            std::shared_ptr<const ArgCell> callerScope) -> OuterApplyResult {
                             return resolver->apply(std::move(fnObj), std::move(fnProducer),
-                                                    std::move(argObj), std::move(applyCell));
+                                                    std::move(argObj), std::move(callerScope));
                         };
                         auto outerArgProxy =
                             make_ref<OuterObject>(argProducerFn, outerArgObj, std::move(queryFn), state.rootFSRoot, pool, std::move(applyFn));

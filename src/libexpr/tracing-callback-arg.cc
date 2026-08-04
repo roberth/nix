@@ -26,18 +26,18 @@ TracingCallbackArg::TracingCallbackArg(
     ref<const trace::Selector> producer_,
     TracingWriter & writer,
     ref<SourceRoot> rootFSRoot,
-    std::shared_ptr<const ArgCell> argCell)
+    std::shared_ptr<const CallbackArgCell> argCell)
     : inner(std::move(inner))
     , producer(std::move(producer_))
     , writer(writer)
     , rootFSRoot(std::move(rootFSRoot))
     , argCell(std::move(argCell))
 {
-    /* argCell is unconditional: every TCA construction site
-       (OuterApply::run, this class's own maybeGetAttr/getListElem
-       nav children) supplies a real cell. Field stays shared_ptr
-       for now — moving to ref<const ArgCell> would ripple through
-       callers; the panic enforces the invariant at the boundary. */
+    /* argCell is unconditional and typed CallbackArgCell (#261): every
+       TCA construction site (OuterApply::run in the innerWriter branch,
+       this class's own nav children) supplies a real callback cell.
+       The type carries the invariant so callback-state access needs no
+       null-check. */
     if (!this->argCell)
         panic("TracingCallbackArg: constructed with null argCell");
 }
@@ -235,13 +235,8 @@ std::optional<std::vector<std::string>> TracingCallbackArg::getAttrPath()
 
 void TracingCallbackArg::recordObservation(ref<const trace::Selector> query, const trace::ResultVariant & result)
 {
-    /* argCell is guaranteed non-null by the constructor. callbackState
-       is genuinely per-cell: OuterApply::run populates it moments after
-       cell creation (expr-from-object.cc:191); nav children inherit the
-       populated cell. If callbackState is null at record time,
-       something set an unpopulated cell before this call. */
-    if (!argCell->callbackState)
-        panic("TracingCallbackArg::recordObservation: argCell has no callbackState");
+    /* #261: argCell is typed CallbackArgCell — its callbackState is
+       always present, no null-check needed. */
     auto qh = query->cachedHash;
     tracingCacheLog(
         "TracingCallbackArg::recordObservation: cell=%p appending q=%s",
@@ -254,7 +249,7 @@ void TracingCallbackArg::recordObservation(ref<const trace::Selector> query, con
     auto & dg = writer.getDecisionGraph();
     nlohmann::json qJson = trace::toJson(*query);
     dg.insertRequest(qh, jsonToCborString(qJson));
-    argCell->callbackState->runningObsSet.push_back({qh, rPayload});
+    argCell->callbackState.runningObsSet.push_back({qh, rPayload});
 }
 
 std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> argObj)
@@ -276,12 +271,10 @@ std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> a
        callback firing's cell). callbackState carries the runningObsSet
        where inner's probes on the outer-arg accumulate — same shape
        OuterApply::run uses for its localCell, mirrored for this
-       direction (outer applies inner-fn rather than inner→outer). */
-    auto layer2Cell = ArgCell::make(argCell, nullptr);
-    layer2Cell->callbackState = std::make_shared<CallbackState>();
-    layer2Cell->callbackState->fnStateHashHex =
-        producer->cachedHash.toHex();
-    layer2Cell->liveObject = argObj;
+       direction (outer applies inner-fn rather than inner→outer).
+       fnStateHashHex captured at construction (#261). */
+    auto layer2Cell = CallbackArgCell::make(
+        argCell, argObj, producer->cachedHash.toHex());
 
     /* Producer for the wrapped outer-arg — SelectorArg{depth} at the
        layer-2 firing cell's reverse-De-Bruijn depth. Global uniqueness
@@ -305,7 +298,7 @@ std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> a
             [](const auto & r) -> nlohmann::json { return r; }, qr.result);
         auto rPayload = jsonToCborString(rJson);
         dg.insertRequest(q->cachedHash, jsonToCborString(trace::toJson(*q)));
-        layer2Cell->callbackState->runningObsSet.push_back({q->cachedHash, rPayload});
+        layer2Cell->callbackState.runningObsSet.push_back({q->cachedHash, rPayload});
         return qr;
     };
 
@@ -329,16 +322,13 @@ std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> a
         std::shared_ptr<Object> fnObj,
         ref<const trace::Selector> fnProducer,
         std::shared_ptr<Object> argObj2,
-        std::shared_ptr<const ArgCell> applyCell) -> OuterApplyResult {
-        /* Cell for THIS nested apply. applyCell was created by
-           OuterObject::queryApply; treat it as writable via
-           mutable callbackState (see ArgCell). liveObject also
-           mutable-shaped in practice for OuterApply::run's pattern. */
-        auto nestedCell = std::const_pointer_cast<ArgCell>(applyCell);
-        nestedCell->callbackState = std::make_shared<CallbackState>();
-        nestedCell->callbackState->fnStateHashHex =
-            fnProducer->cachedHash.toHex();
-        nestedCell->liveObject = argObj2;
+        std::shared_ptr<const ArgCell> callerScope) -> OuterApplyResult {
+        /* #261: Cell for THIS nested apply — created directly as
+           CallbackArgCell (was previously a Regular cell created by
+           OuterObject::queryApply then mutated in-place with
+           callbackState). fnStateHashHex populated at construction. */
+        auto nestedCell = CallbackArgCell::make(
+            callerScope, argObj2, fnProducer->cachedHash.toHex());
 
         auto nestedArgProducerSel = dg.selectorPool.intern(trace::SelectorArg{nestedCell->depth});
 
@@ -352,7 +342,7 @@ std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> a
                 [](const auto & r) -> nlohmann::json { return r; }, qr.result);
             auto rPayload = jsonToCborString(rJson);
             dg.insertRequest(q->cachedHash, jsonToCborString(trace::toJson(*q)));
-            nestedCell->callbackState->runningObsSet.push_back({q->cachedHash, rPayload});
+            nestedCell->callbackState.runningObsSet.push_back({q->cachedHash, rPayload});
             return qr;
         };
 
@@ -377,7 +367,7 @@ std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> a
            producer Selectors when the obsSet has grown. */
         auto producerFn = [nestedCell, fnProducer, &dg]() -> ref<const trace::Selector> {
             auto obsSetHash = dg.insertObservationSet(
-                nestedCell->callbackState->runningObsSet);
+                nestedCell->callbackState.runningObsSet);
             return dg.selectorPool.intern(
                 trace::SelectorCallbackApply{obsSetHash, fnProducer});
         };
@@ -409,11 +399,11 @@ std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> a
        compositional SelectorCallbackApply for record on enclosing
        runningObsSet. */
     auto layer2ObsHash = dg.insertObservationSet(
-        layer2Cell->callbackState->runningObsSet);
+        layer2Cell->callbackState.runningObsSet);
     tracingCacheLog(
         "TCA::queryApply: layer-2 obsSet=%s (%zu probes)",
         layer2ObsHash.toHex().substr(0, 12).c_str(),
-        layer2Cell->callbackState->runningObsSet.size());
+        layer2Cell->callbackState.runningObsSet.size());
     auto scaSel = dg.selectorPool.intern(
         trace::SelectorCallbackApply{layer2ObsHash, producer});
     recordObservation(scaSel, applyResultWhnf);

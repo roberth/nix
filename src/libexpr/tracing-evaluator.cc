@@ -159,14 +159,14 @@ ref<Object> TracingEvaluator::evalFile(const RootedPath & path, const std::strin
     /* Cell-migration Phase C: root cell owns SelectorImport's qState.
        #177: parent = sessionRootCell so env facts (folded there) are
        visible via factSetHash() on this cell and its descendants. */
-    auto rootCell = ArgCell::make(writer.sessionRootCell, nullptr);
+    auto rootCell = RegularArgCell::make(writer.sessionRootCell, nullptr);
     trace::SelectorImport rootSel{displayPath};
     auto [v, qh] = writer.logRootSelectorOnCell(rootCell, rootSel);
     auto result = inner->evalFile(path, displayPath);
     auto whnf = computeWHNFFromObject(*result);
     auto triePos = writer.logResult(v, whnf, qh, rootCell);
     auto obj = TracingObject::create(result, writer, v, triePos);
-    const_cast<ArgCell &>(*rootCell).liveObject = obj.get_ptr();
+    rootCell->liveObject = obj.get_ptr();
     obj->withArgCell(std::move(rootCell));
     /* Bootstrap the SelectorPool: intern this evalFile's root Selector
        so descendants that build SelectorApplyStep{parent=this} etc.
@@ -182,14 +182,14 @@ ref<Object> TracingEvaluator::evalExpr(const std::string & expr, const RootedPat
     ensurePreloaded();
     tracingCacheLog("tracing: evalExpr %s", expr);
     /* #177: parent = sessionRootCell so env facts inherit. */
-    auto rootCell = ArgCell::make(writer.sessionRootCell, nullptr);
+    auto rootCell = RegularArgCell::make(writer.sessionRootCell, nullptr);
     trace::SelectorExpr rootSel{expr, basePath.path.abs()};
     auto [v, qh] = writer.logRootSelectorOnCell(rootCell, rootSel);
     auto result = inner->evalExpr(expr, basePath);
     auto whnf = computeWHNFFromObject(*result);
     auto triePos = writer.logResult(v, whnf, qh, rootCell);
     auto obj = TracingObject::create(result, writer, v, triePos);
-    const_cast<ArgCell &>(*rootCell).liveObject = obj.get_ptr();
+    rootCell->liveObject = obj.get_ptr();
     obj->withArgCell(std::move(rootCell));
     /* Bootstrap the SelectorPool with this evalExpr's root Selector. */
     obj->withProducer(writer.getDecisionGraph().selectorPool.intern(rootSel));
@@ -201,12 +201,12 @@ ref<Object> TracingEvaluator::evalExprLazy(const std::string & expr, const Roote
 {
     guardCacheRecording("evalExprLazy", expr);
     ensurePreloaded();
-    auto rootCell = ArgCell::make(writer.sessionRootCell, nullptr);
+    auto rootCell = RegularArgCell::make(writer.sessionRootCell, nullptr);
     auto [v, qh] = writer.logRootSelectorOnCell(rootCell, trace::SelectorExpr{expr, basePath.path.abs()});
     auto result = inner->evalExprLazy(expr, basePath);
     // Lazy: don't force type yet, just wrap
     auto obj = TracingObject::create(result, writer, v);
-    const_cast<ArgCell &>(*rootCell).liveObject = obj.get_ptr();
+    rootCell->liveObject = obj.get_ptr();
     obj->withArgCell(std::move(rootCell));
     return obj;
 }
@@ -346,7 +346,12 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
        state that the enclosing cell already covers, since the nested
        apply is itself an observation on the enclosing cell's
        contra-arg. */
-    bool fnIsTlo = dynamic_cast<TracingCallbackArg *>(fn.get_ptr().get()) != nullptr;
+    /* Capture the typed TCA pointer alongside fnIsTlo — the fnIsTlo
+       branch below needs its typed callback-cell handle to attach to
+       the wrapping TracingCallbackApplyResult (#261). Dynamic_cast is
+       unavoidable here: we're discriminating fn's runtime type. */
+    auto * fnTca = dynamic_cast<TracingCallbackArg *>(fn.get_ptr().get());
+    bool fnIsTlo = fnTca != nullptr;
 
     /* Build the apply-result producer Selector.
 
@@ -393,11 +398,14 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
         tracingCacheLog("createCallbackCell callsite=TracingEvaluator::apply fn=%s arg=%s",
                         fnStateHashStr.substr(0, 12), argStateHashStr.substr(0, 12));
         writer.createCallbackCell(applyQ);
-        /* #184: populate cell->callbackState so
-           emitCallbackApplyForApplyResult's primary (cell-based) path
-           finds it — mirrors what OuterApply::run does for its localCell. */
-        cell->callbackState = std::make_shared<CallbackState>();
-        cell->callbackState->fnStateHashHex = fnStateHashStr;
+        /* #261: arg's cell must be a CallbackArgCell — the primop impl
+           (makeCachedFnPrimOp) is the only path that reaches here in
+           !fnIsTlo mode, and it creates seedCell as CallbackArgCell
+           with fnStateHashHex populated at construction. Verify via
+           the virtual accessor. */
+        auto * cs = cell->getCallbackState();
+        if (!cs)
+            panic("TracingEvaluator::apply: !fnIsTlo but arg cell is not a CallbackArgCell");
     }
 
     auto qHash = applySel->cachedHash;
@@ -435,11 +443,11 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
         auto laro = std::make_shared<TracingCallbackApplyResult>(
             result, writer, applySel);
         laro->withArgCell(cell);
-        /* #184: the enclosing callback firing's cell is fn's cell — fn
-           is a TracingCallbackArg whose argCell IS the OuterApply::run
-           localCell (with callbackState populated). Route recordD2
-           observations there directly instead of via applyId lookup. */
-        laro->withCallbackCell(effectiveArgCell(*fn));
+        /* #184/#261: the enclosing callback firing's cell is fn's cell
+           — fn is a TracingCallbackArg whose argCell IS the
+           OuterApply::run localCell (a CallbackArgCell). Grab the
+           typed handle so recordD2 doesn't have to null-check. */
+        laro->withCallbackCell(fnTca->getCallbackArgCell());
         return ref<Object>(laro);
     }
 

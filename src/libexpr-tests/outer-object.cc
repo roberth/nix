@@ -128,7 +128,7 @@ TEST_F(OuterObjectTest, MaybeGetAttrChildProducer)
 {
     auto producer = makeProducer();
     auto stubChild = std::make_shared<StubObject>();
-    auto callerCell = ArgCell::make(nullptr, nullptr);
+    auto callerCell = RegularArgCell::make(nullptr, nullptr);
 
     OuterQueryFn queryFn = [stubChild](std::shared_ptr<Object>, ref<const trace::Selector>,
                                         ref<const trace::Selector>, std::shared_ptr<const ArgCell>) {
@@ -161,7 +161,7 @@ TEST_F(OuterObjectTest, GetListElemChildProducer)
 {
     auto producer = makeProducer();
     auto stubChild = std::make_shared<StubObject>();
-    auto callerCell = ArgCell::make(nullptr, nullptr);
+    auto callerCell = RegularArgCell::make(nullptr, nullptr);
 
     OuterQueryFn queryFn = [stubChild](std::shared_ptr<Object>, ref<const trace::Selector>,
                                         ref<const trace::Selector>, std::shared_ptr<const ArgCell>) {
@@ -259,20 +259,22 @@ TEST_F(OuterObjectTest, QueryApplyResultProducer)
 }
 
 /* 6. argCell propagation — nav children inherit parent's argCell;
-   applies open a fresh cell rooted at the caller's cell. */
+   OuterObject::queryApply hands applyFn the caller's scope so the
+   applyFn creates the concrete apply cell itself (#261: cell-kind
+   choice belongs with the applyFn, not the caller). */
 TEST_F(OuterObjectTest, ArgCellPropagation)
 {
     auto producer = makeProducer();
-    auto callerCell = ArgCell::make(nullptr, nullptr);
+    auto callerCell = RegularArgCell::make(nullptr, nullptr);
     auto argStub = std::make_shared<StubObject>();
 
-    // Capture the applyCell passed to applyFn to verify it's a fresh cell
-    // rooted at callerCell (parent=callerCell), distinct from callerCell.
-    std::shared_ptr<const ArgCell> capturedApplyCell;
-    OuterApplyFn applyFn = [&capturedApplyCell, producer](
+    // Capture the callerScope handed to applyFn — under the lift it is
+    // literally the caller's cell, not a fresh cell parented to it.
+    std::shared_ptr<const ArgCell> capturedCallerScope;
+    OuterApplyFn applyFn = [&capturedCallerScope, producer](
         std::shared_ptr<Object>, ref<const trace::Selector>,
-        std::shared_ptr<Object>, std::shared_ptr<const ArgCell> applyCell) {
-        capturedApplyCell = applyCell;
+        std::shared_ptr<Object>, std::shared_ptr<const ArgCell> callerScope) {
+        capturedCallerScope = callerScope;
         return OuterApplyResult{
             std::make_shared<StubObject>(),
             [producer]() { return producer; },
@@ -288,13 +290,10 @@ TEST_F(OuterObjectTest, ArgCellPropagation)
     outer->withArgCell(callerCell);
 
     auto result = outer->queryApply(argStub);
-    ASSERT_NE(capturedApplyCell.get(), nullptr);
-    // applyCell is a fresh cell (distinct from callerCell) whose parent
-    // is callerCell — "one cell per apply, rooted at caller scope".
-    EXPECT_NE(capturedApplyCell.get(), callerCell.get());
-    EXPECT_EQ(capturedApplyCell->parent.get(), callerCell.get());
-    // Apply-result wrapper carries the caller's scope, not the fresh applyCell —
-    // downstream navigation on the result attributes back into caller scope.
+    // applyFn receives callerCell directly — cell creation is its own job.
+    EXPECT_EQ(capturedCallerScope.get(), callerCell.get());
+    // Apply-result wrapper carries the caller's scope so downstream
+    // navigation on the result attributes into that scope.
     auto * resultOuter = dynamic_cast<OuterObject *>(result.get());
     ASSERT_NE(resultOuter, nullptr);
     EXPECT_EQ(resultOuter->getProxyArgCell().get(), callerCell.get());

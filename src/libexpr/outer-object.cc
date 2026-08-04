@@ -286,21 +286,22 @@ std::shared_ptr<Object> OuterObject::queryApply(std::shared_ptr<Object> argObj)
     if (!applyFn)
         throw Error("outer apply: no apply callback");
     auto callerScope = effectiveArgCell(*this);
-    /* #188: one cell per apply. Create the apply's cell here and thread
-       it into applyFn so OuterApply::run reuses it as its localCell. */
-    auto applyCell = ArgCell::make(callerScope, argObj);
-    auto ar = applyFn(outerObj, producer(), std::move(argObj), applyCell);
+    /* #261: apply cell creation is lifted into `applyFn` — that's the
+       site that knows whether the apply is a callback firing (needs a
+       CallbackArgCell) or a plain outer apply (RegularArgCell). We
+       just hand it the caller's scope as the parent. */
+    auto ar = applyFn(outerObj, producer(), std::move(argObj), callerScope);
     /* The wrapping OuterObject uses:
        - `ar.producerFn` as its producer — for callback applies this
          constructs `SelectorCallbackApply{fn, argObsSet=<snapshot>}` on
          demand, so probes on this apply-result yield compositional
          `SelectorGetAttr(name, from=SelectorCallbackApply(...))`.
-       - `callerScope` (parent of applyCell) as its argCell — probes
-         on this apply-result attribute to the caller's cell, so the
-         outer probes flow into the enclosing scope's factset (e.g.,
-         the primop's seedCell for a callback firing inside the primop's
-         body). applyCell itself carries the callback firing state
-         (its `callbackState`) — the producerFn captures it directly. */
+       - `callerScope` as its argCell — probes on this apply-result
+         attribute to the caller's cell, so the outer probes flow into
+         the enclosing scope's factset (e.g., the primop's seedCell for
+         a callback firing inside the primop's body). The apply cell
+         itself (created inside applyFn) carries the callback firing
+         state — the producerFn captures it directly. */
     auto result = std::make_shared<OuterObject>(
         std::move(ar.producerFn),
         std::move(ar.applyResult), queryFn, outerRootFSRoot, selectorPool, applyFn);

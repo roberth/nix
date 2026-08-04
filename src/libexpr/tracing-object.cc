@@ -102,24 +102,26 @@ std::optional<std::string> TracingObject::getProducerSelectorHex(TracingWriter &
        walker's resolveIdentity can decode `from` references at
        replay. Not folded as a Fact — the getAttr / apply Selector
        that references it becomes the Fact (callback-model §7). */
-    if (cbApplyOrigin && argCell && argCell->callbackState) {
-        auto & cs = *argCell->callbackState;
-        auto & dg = w.getDecisionGraph();
-        auto obsSetHash = dg.insertObservationSet(cs.runningObsSet);
-        /* fnStateHashHex captures fn's Q-space identity — set from the
-           hash of a Selector the writer just interned into the pool
-           (TCA::queryApply, OuterApply::run). The pool lookup must
-           succeed; a nullopt here means someone populated
-           fnStateHashHex without the corresponding Selector, which is
-           a bug in the setter. */
-        auto fnRef = dg.selectorPool.findByHex(cs.fnStateHashHex);
-        if (!fnRef)
-            panic("TracingObject::getProducerSelectorHex: fnStateHashHex not in selector pool");
-        auto qcaSel = dg.selectorPool.intern(trace::SelectorCallbackApply{
-            obsSetHash, *fnRef});
-        nlohmann::json qcaJson = trace::toJson(*qcaSel);
-        dg.insertRequest(qcaSel->cachedHash, jsonToCborString(qcaJson));
-        return qcaSel->cachedHash.toHex();
+    if (cbApplyOrigin && argCell) {
+        if (auto * cbState = argCell->getCallbackState()) {
+            auto & cs = *cbState;
+            auto & dg = w.getDecisionGraph();
+            auto obsSetHash = dg.insertObservationSet(cs.runningObsSet);
+            /* fnStateHashHex captures fn's Q-space identity — set from the
+               hash of a Selector the writer just interned into the pool
+               (TCA::queryApply, OuterApply::run). The pool lookup must
+               succeed; a nullopt here means someone populated
+               fnStateHashHex without the corresponding Selector, which is
+               a bug in the setter. */
+            auto fnRef = dg.selectorPool.findByHex(cs.fnStateHashHex);
+            if (!fnRef)
+                panic("TracingObject::getProducerSelectorHex: fnStateHashHex not in selector pool");
+            auto qcaSel = dg.selectorPool.intern(trace::SelectorCallbackApply{
+                obsSetHash, *fnRef});
+            nlohmann::json qcaJson = trace::toJson(*qcaSel);
+            dg.insertRequest(qcaSel->cachedHash, jsonToCborString(qcaJson));
+            return qcaSel->cachedHash.toHex();
+        }
     }
     /* Under the Selector-is-a-sequence model, the wrapper's producer
        (the SelectorApply value that scoped this apply-result) is a
@@ -468,7 +470,7 @@ std::shared_ptr<Object> TracingObject::queryApply(std::shared_ptr<Object> argObj
     };
     auto child = std::shared_ptr<TracingObject>(
         new TracingObject(ref<Object>(result), writer, v, applyTriePos));
-    auto cell = ArgCell::make(argCell, argObj);
+    auto cell = RegularArgCell::make(argCell, argObj);
     child->withArgCell(std::move(cell));
     child->withProducer(applySel);
     return child;

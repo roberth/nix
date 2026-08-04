@@ -69,17 +69,23 @@ struct OuterApplyResult
  * Object, the calling OuterObject's producer Selector (identifies
  * the fn for the SelectorApply payload — the outer Object itself
  * typically has no producer, so the wrapping OuterObject provides
- * it), the argument Object, and the ArgCell for this apply (created
- * once by the caller and reused as the apply-result wrapper's argCell
- * — one cell per apply, no fragmentation). Returns the outer's raw
- * apply-result Object plus a producer callable for the wrapping
- * OuterObject.
+ * it), the argument Object, and the caller's argCell (parent of
+ * the apply's cell). Returns the outer's raw apply-result Object
+ * plus a producer callable for the wrapping OuterObject.
+ *
+ * Cell-kind rule (#261): the implementation creates its own apply
+ * cell parented to `callerScope`. Callback-firing implementations
+ * create a `CallbackArgCell` (with `fnProducer->cachedHash` as
+ * `fnStateHashHex`); pure outer applies with no inner writer create
+ * a `RegularArgCell`. Lifting cell creation into the callee is what
+ * lets the concrete cell type be picked without post-construction
+ * mutation.
  */
 using OuterApplyFn = std::function<OuterApplyResult(
     std::shared_ptr<Object> fnObj,
     ref<const trace::Selector> fnProducer,
     std::shared_ptr<Object> argObj,
-    std::shared_ptr<const ArgCell> applyCell)>;
+    std::shared_ptr<const ArgCell> callerScope)>;
 
 /**
  * Object implementation backed by outer queries to the outer evaluator.

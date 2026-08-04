@@ -20,20 +20,18 @@ TracingCallbackApplyResult::TracingCallbackApplyResult(
 
 void TracingCallbackApplyResult::recordD2(ref<const trace::Selector> query, const trace::ResultVariant & result)
 {
-    /* Invariant: TracingCallbackApplyResult is constructed in
-       TE::apply's fnIsTlo branch (tracing-evaluator.cc:428) with
-       withCallbackCell called immediately after (line 435), and
-       that cell always has callbackState populated at that point
-       (fn is a TCA whose argCell has callbackState). If either is
-       null, the construction path is broken. */
-    if (!callbackCell || !callbackCell->callbackState)
-        panic("TracingCallbackApplyResult::recordD2: no callbackCell/callbackState");
+    /* Invariant (#261): callbackCell is typed CallbackArgCell —
+       withCallbackCell in TE::apply's fnIsTlo branch takes the
+       typed handle from the fn TCA's getCallbackArgCell(), so the
+       cell always has callbackState. Panic on null pointer only. */
+    if (!callbackCell)
+        panic("TracingCallbackApplyResult::recordD2: no callbackCell");
     auto qh = query->cachedHash;
     nlohmann::json rJson = std::visit(
         [](const auto & r) -> nlohmann::json { return r; },
         result);
     auto rPayload = jsonToCborString(rJson);
-    callbackCell->callbackState->runningObsSet.push_back({qh, rPayload});
+    callbackCell->callbackState.runningObsSet.push_back({qh, rPayload});
 }
 
 std::shared_ptr<Object> TracingCallbackApplyResult::maybeGetAttr(const std::string & name)

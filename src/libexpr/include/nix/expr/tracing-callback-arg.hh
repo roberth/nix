@@ -47,10 +47,13 @@ class TracingCallbackArg : public Object
     /** This local's Q hash. */
     OuterId localId() const { return producer->cachedHash; }
 
-    /* The argCell cell this local belongs to. Navigation children
-       share the parent's cell. Used for scope-graph topology only;
-       identity is derived from `producer`, not the cell. */
-    std::shared_ptr<const ArgCell> argCell;
+    /* The callback-firing cell this local belongs to. Navigation
+       children share the parent's cell. Typed as CallbackArgCell
+       (#261) so `recordObservation` reaches runningObsSet without a
+       null-check — TCA is only ever constructed by OuterApply::run in
+       the innerWriter branch, which by construction creates a
+       CallbackArgCell. */
+    std::shared_ptr<const CallbackArgCell> argCell;
 
     /* Memoized WHNF observation. First call to any of getType / getInt /
        getString / etc. fires `whnf()`, which records ONE observation
@@ -67,7 +70,14 @@ public:
         ref<const trace::Selector> producer,
         TracingWriter & writer,
         ref<SourceRoot> rootFSRoot,
-        std::shared_ptr<const ArgCell> argCell);
+        std::shared_ptr<const CallbackArgCell> argCell);
+
+    /** Typed accessor for the callback firing's cell — lets consumers
+        that hold a TCA propagate a `CallbackArgCell` handle without
+        going through the base-typed `getProxyArgCell()`. Used by
+        `TracingEvaluator::apply`'s fnIsTlo branch to attach the same
+        cell to the wrapping `TracingCallbackApplyResult`. */
+    std::shared_ptr<const CallbackArgCell> getCallbackArgCell() const { return argCell; }
 
     /** Set the memoized WHNF from a known value (e.g. the applyResult's
         WHNF captured by TCA::queryApply before wrapping). Suppresses the

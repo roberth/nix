@@ -138,6 +138,7 @@ foreach header : [ 'imported-drv-to-derivation.nix', 'fetchurl.nix' ]
 endforeach
 
 sources = files(
+  'arg-cell.cc',
   'outer-object.cc',
   'attr-path.cc',
   'attr-set.cc',

@@ -2,16 +2,34 @@
 /**
  * @file
  * ArgCell — scope-graph node for cache-boundary proxies.
- * Carries structural topology (depth, parent, liveObject), the cell's
- * own facts (req/resp pairs, XOR-composed with parent's for
- * `factSetHash()`), plus per-Selector-invocation `qState` and
- * per-callback-firing `callbackState` when applicable.
  *
- * `depth` provides the static positional handle used by
- * `SelectorArg{depth}` producers. Object identity is the content
- * hash of the producer Selector; per-cell factset composition is
- * what discriminates apply-result Terminals across sibling
- * callback firings.
+ * Abstract base carrying structural topology (depth, parent, liveObject),
+ * per-cell fact bookkeeping (req/resp pairs, XOR-composed with parent's
+ * for `factSetHash()`), and per-Selector-invocation `qState` when a
+ * Selector has been logged on the cell.
+ *
+ * Two concrete kinds:
+ *
+ *   - **RegularArgCell** — regular outside-in call arg state: evalFile /
+ *     evalExpr / apply roots, nested apply on TracingObject, boundary
+ *     topology (sessionRootCell). Never carries callback-firing state.
+ *
+ *   - **CallbackArgCell** — a callback firing's arg cell (including
+ *     higher-order and nested). Carries `callbackState` = `{fnStateHashHex,
+ *     runningObsSet}`; the contra-arg observations accumulate here and are
+ *     snapshotted into an ObservationSet CAS when a producer Selector is
+ *     queried.
+ *
+ * Consumers that only need the topology / fact interface work with
+ * `ArgCell` (base); consumers that specifically drive callback recording
+ * (TracingCallbackArg, TracingCallbackApplyResult, OuterApply::run)
+ * refer to `CallbackArgCell` directly so the type carries the invariant.
+ *
+ * The one mixed site — `TracingObject::getProducerSelectorHex` and
+ * `TracingWriter::emitCallbackApplyForApplyResult`, both branching on
+ * "is this a callback cell?" through a base pointer — go through the
+ * virtual `getCallbackState()` accessor that returns `nullptr` on
+ * `RegularArgCell` and `&callbackState` on `CallbackArgCell`.
  */
 
 #include "nix/expr/evaluator.hh"
@@ -19,7 +37,6 @@
 #include "nix/util/hash.hh"
 
 #include <memory>
-#include <optional>
 #include <string>
 #include <vector>
 
@@ -28,16 +45,16 @@ namespace nix {
 struct QState; // defined in q-state.hh; forward-declared here so
                // topology-only cells don't pull the heavy dependencies.
 
-/** Per-callback-firing accumulator, living on the ArgCell created for
-    the callback arg. Contra-arg observations append directly via the
-    callback-arg proxy's own cell chain; QCA emission at applyResult
-    WHNF force finds the cell via the applyResult's argCell chain.
+/** Per-callback-firing accumulator, carried inline on CallbackArgCell.
+    Contra-arg observations append directly via the callback-arg proxy's
+    own cell chain; QCA emission at applyResult WHNF force finds the cell
+    via the applyResult's argCell chain.
     Concurrency invariant: cell trees are per-active-evaluator, so
     callback state doesn't leak across trees. */
 struct CallbackState
 {
-    /** Fn's Q hash hex, captured at cell allocation from the
-        applyQuery's `fn` field. Emitted as the SelectorCallbackApply
+    /** Fn's Q hash hex, captured at cell allocation from the enclosing
+        SelectorApply's `fn`. Emitted as the SelectorCallbackApply
         payload's `fn` field at QCA time. */
     std::string fnStateHashHex;
 
@@ -80,11 +97,6 @@ struct ArgCell : std::enable_shared_from_this<ArgCell>
         See q-state.hh for the field breakdown and the concurrency
         rationale. */
     mutable std::shared_ptr<QState> qState;
-
-    /** Per-callback-firing accumulator. Non-null on cells created
-        for a callback arg (OuterApply::run's localCell). Null on all
-        other cells. See CallbackState above for field semantics. */
-    mutable std::shared_ptr<CallbackState> callbackState;
 
     /** Per-fact entry. `response` is the fact's response hash (identity
         contribution to factSetHash). `barrier` is a writer-side monotonic
@@ -169,6 +181,19 @@ struct ArgCell : std::enable_shared_from_this<ArgCell>
         that case; the ∅-chain fallback keeps correctness. */
     mutable uint64_t canonicalisationEpoch = 0;
 
+    /* Out-of-line dtor (defined in arg-cell.cc) so the base's vtable
+       is emitted in one TU — satisfies -Werror=weak-vtables. */
+    virtual ~ArgCell();
+
+    /** Return the callback-firing state for cells that carry one.
+        `RegularArgCell` returns `nullptr`; `CallbackArgCell` returns
+        a pointer to its inline `callbackState`. The two mixed
+        consumers — `TracingObject::getProducerSelectorHex` and
+        `TracingWriter::emitCallbackApplyForApplyResult` — use this
+        to branch on cell kind through a base pointer without
+        `dynamic_cast`. */
+    virtual CallbackState * getCallbackState() const = 0;
+
     /** Sum of canonicalisationEpoch over this cell + all ancestors.
         Cheap: O(depth) walk. Since delta chains fold facts from cell
         and ancestors, ANY ancestor removeFact invalidates the delta —
@@ -235,21 +260,78 @@ struct ArgCell : std::enable_shared_from_this<ArgCell>
         return acc;
     }
 
-    /** Construct a cell whose parent is `parent_`. depth is one
-        deeper than parent (or 0 if parent is null). `liveObject_`
+protected:
+    ArgCell(std::shared_ptr<const ArgCell> parent_,
+            std::shared_ptr<Object> liveObject_)
+        : depth(parent_ ? parent_->depth + 1 : 0)
+        , parent(std::move(parent_))
+        , liveObject(std::move(liveObject_))
+    {
+    }
+};
+
+/** Cell for a regular outside-in call: evalFile/evalExpr/apply root,
+    nested apply on a TracingObject, boundary topology (sessionRootCell,
+    seedCell). No callback-firing state — `getCallbackState()` returns
+    nullptr. */
+struct RegularArgCell : ArgCell
+{
+    RegularArgCell(std::shared_ptr<const ArgCell> parent_,
+                   std::shared_ptr<Object> liveObject_)
+        : ArgCell(std::move(parent_), std::move(liveObject_))
+    {
+    }
+
+    /* Defined out-of-line in arg-cell.cc so the vtable lands in one
+       TU (satisfies -Werror=weak-vtables). */
+    CallbackState * getCallbackState() const override;
+
+    /** Construct a Regular cell whose parent is `parent_`. depth is
+        one deeper than parent (or 0 if parent is null). `liveObject_`
         may be null at construction if the live proxy isn't yet
-        constructed; assign to the cell's `liveObject` field
-        afterwards. */
-    static std::shared_ptr<ArgCell> make(
+        constructed; assign to the cell's `liveObject` field afterwards. */
+    static std::shared_ptr<RegularArgCell> make(
         std::shared_ptr<const ArgCell> parent_,
         std::shared_ptr<Object> liveObject_)
     {
-        auto cell = std::make_shared<ArgCell>();
-        cell->parent = parent_;
-        cell->depth = parent_ ? parent_->depth + 1 : 0;
-        if (liveObject_)
-            cell->liveObject = std::move(liveObject_);
-        return cell;
+        return std::make_shared<RegularArgCell>(
+            std::move(parent_), std::move(liveObject_));
+    }
+};
+
+/** Cell for a callback firing (regular, higher-order, or nested).
+    Always carries `callbackState` — `getCallbackState()` returns
+    `&callbackState`. `fnStateHashHex` is captured at construction;
+    `runningObsSet` accumulates through the firing's lifetime. */
+struct CallbackArgCell : ArgCell
+{
+    /** Inline callback-firing state. `mutable` for the same
+        shared_ptr<const ArgCell> reason as the base's facts. */
+    mutable CallbackState callbackState;
+
+    CallbackArgCell(std::shared_ptr<const ArgCell> parent_,
+                    std::shared_ptr<Object> liveObject_,
+                    std::string fnStateHashHex)
+        : ArgCell(std::move(parent_), std::move(liveObject_))
+    {
+        callbackState.fnStateHashHex = std::move(fnStateHashHex);
+    }
+
+    /* Defined out-of-line in arg-cell.cc so the vtable lands in one
+       TU (satisfies -Werror=weak-vtables). */
+    CallbackState * getCallbackState() const override;
+
+    /** Construct a Callback cell. `fnStateHashHex` is the fn's Q hex
+        at firing time (populated into callbackState.fnStateHashHex at
+        construction; used by producer Selector construction). */
+    static std::shared_ptr<CallbackArgCell> make(
+        std::shared_ptr<const ArgCell> parent_,
+        std::shared_ptr<Object> liveObject_,
+        std::string fnStateHashHex)
+    {
+        return std::make_shared<CallbackArgCell>(
+            std::move(parent_), std::move(liveObject_),
+            std::move(fnStateHashHex));
     }
 };
 
