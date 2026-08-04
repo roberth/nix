@@ -105,7 +105,7 @@ public:
     RootValue toValueOrProxy(EvalState & state, std::shared_ptr<struct OuterResolver> resolver) override;
     /** Function-typed TCA materialises as a `<cb-apply>` primop —
         delegate to `toValueOrProxy` which already builds it. */
-    Value * maybeMaterialiseAsFunctionValue(
+    Value * materialiseAsFunctionValue(
         EvalState & state,
         std::shared_ptr<struct OuterResolver> resolver,
         std::shared_ptr<Evaluator> /* innerEvaluator */) override

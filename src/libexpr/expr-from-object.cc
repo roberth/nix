@@ -546,26 +546,9 @@ void ExprFromObject::eval(EvalState & state, Env & env, Value & v)
         break;
     }
 
-    case nFunction: {
-        /* Each Object subclass materialises itself as the right
-           boundary-shaped Function Value via
-           `maybeMaterialiseAsFunctionValue`:
-           - OuterObject → `<outer-fn>` primop
-           - TObject / TReplayObject → `<cached-fn>` primop (when
-             cache infrastructure is present)
-           - ReplayCallbackArg / TracingCallbackArg → their own
-             recording primops (via their `toValueOrProxy`)
-           Fallback for Objects that don't self-materialise (raw
-           InterpreterObject-of-lambda etc.): wrap with the generic
-           `<outer-fn>` primop whose impl dispatches through
-           `fnObj->queryApply`. */
-        if (auto * fnVal = obj->maybeMaterialiseAsFunctionValue(state, outerResolver, innerEvaluator)) {
-            v = *fnVal;
-        } else {
-            v.mkPrimOp(makeOuterFnPrimOp(obj, outerResolver));
-        }
+    case nFunction:
+        v = *obj->materialiseAsFunctionValue(state, outerResolver, innerEvaluator);
         break;
-    }
 
     case nExternal:
     case nThunk:

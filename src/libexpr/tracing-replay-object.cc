@@ -397,7 +397,7 @@ RootValue TracingReplayObject::defeatCache()
     return ensureInner()->defeatCache();
 }
 
-Value * TracingReplayObject::maybeMaterialiseAsFunctionValue(
+Value * TracingReplayObject::materialiseAsFunctionValue(
     EvalState & state,
     std::shared_ptr<OuterResolver> resolver,
     std::shared_ptr<Evaluator> innerEvaluator)
@@ -405,7 +405,7 @@ Value * TracingReplayObject::maybeMaterialiseAsFunctionValue(
     auto hasGraph = state.rootDecisionGraph
         || (innerEvaluator && innerEvaluator->getEvalState().rootDecisionGraph);
     if (!innerEvaluator || !hasGraph || !getSelector().has_value())
-        return nullptr;
+        return Object::materialiseAsFunctionValue(state, std::move(resolver), std::move(innerEvaluator));
     auto * v = state.allocValue();
     v->mkPrimOp(makeCachedFnPrimOp(
         shared_from_this(), std::move(innerEvaluator), std::move(resolver)));

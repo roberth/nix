@@ -2,6 +2,19 @@
 
 namespace nix {
 
+Value * Object::materialiseAsFunctionValue(
+    EvalState & /* state */,
+    std::shared_ptr<OuterResolver> /* resolver */,
+    std::shared_ptr<Evaluator> /* innerEvaluator */)
+{
+    /* Default: hand back the raw underlying Value. `mkApp` applies
+       it normally; `builtins.functionArgs` inspects it via its
+       isLambda branch. Subclasses whose apply must route through
+       a boundary primop (OuterObject, TracingObject, cb recorders)
+       override. */
+    return *defeatCache();
+}
+
 std::vector<std::string> Object::getListOfStringsNoCtx()
 {
     auto size = getListSize();

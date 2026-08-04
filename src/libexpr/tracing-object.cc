@@ -380,18 +380,19 @@ RootValue TracingObject::defeatCache()
     return inner->defeatCache();
 }
 
-Value * TracingObject::maybeMaterialiseAsFunctionValue(
+Value * TracingObject::materialiseAsFunctionValue(
     EvalState & state,
     std::shared_ptr<OuterResolver> resolver,
     std::shared_ptr<Evaluator> innerEvaluator)
 {
-    /* Need the cache infrastructure to wrap: an inner evaluator, a
-       decision graph, and a real producer Selector. Missing any → let
-       the caller fall back to the generic outer-fn wrap. */
+    /* Wrap as `<cached-fn>` when the cache infrastructure is present
+       (inner evaluator + decision graph + producer Selector).
+       Without it, fall through to the base default (raw inner Value)
+       — the outer's mkApp will apply the underlying lambda directly. */
     auto hasGraph = state.rootDecisionGraph
         || (innerEvaluator && innerEvaluator->getEvalState().rootDecisionGraph);
     if (!innerEvaluator || !hasGraph || !getSelector().has_value())
-        return nullptr;
+        return Object::materialiseAsFunctionValue(state, std::move(resolver), std::move(innerEvaluator));
     auto * v = state.allocValue();
     v->mkPrimOp(makeCachedFnPrimOp(
         shared_from_this(), std::move(innerEvaluator), std::move(resolver)));

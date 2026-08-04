@@ -165,7 +165,9 @@ public:
     ObjectType getType() override;
     RootValue defeatCache() override;
     RootValue toValueOrProxy(EvalState & state, std::shared_ptr<OuterResolver> resolver) override;
-    Value * maybeMaterialiseAsFunctionValue(
+    /** Outer function crosses the boundary via an `<outer-fn>`
+        primop that dispatches through `queryApply`. */
+    Value * materialiseAsFunctionValue(
         EvalState & state,
         std::shared_ptr<OuterResolver> resolver,
         std::shared_ptr<Evaluator> innerEvaluator) override;

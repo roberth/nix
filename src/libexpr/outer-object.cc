@@ -260,7 +260,7 @@ RootValue OuterObject::toValueOrProxy(EvalState & state, std::shared_ptr<OuterRe
     return allocRootValue(thunk);
 }
 
-Value * OuterObject::maybeMaterialiseAsFunctionValue(
+Value * OuterObject::materialiseAsFunctionValue(
     EvalState & state,
     std::shared_ptr<OuterResolver> resolver,
     std::shared_ptr<Evaluator> /* innerEvaluator */)

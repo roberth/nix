@@ -222,21 +222,36 @@ TEST_F(ExprFromObjectTest, Show)
     EXPECT_EQ(oss.str(), "<proxy>");
 }
 
-TEST_F(ExprFromObjectTest, FunctionBecomesPrimOp)
+TEST_F(ExprFromObjectTest, FunctionValueIsApplicable)
 {
+    /* Bridged function Value can be applied and produces the right
+       result. Structure (primop vs raw lambda) is intentionally
+       unspecified — types that need boundary routing override
+       `materialiseAsFunctionValue`; the raw-lambda base default
+       applies via mkApp directly. */
     auto obj = evalToObject("x: x + 1");
-    auto * v = evalFromObject(obj);
-    EXPECT_TRUE(v->isPrimOp());
+    auto * fnV = evalFromObject(obj);
+    auto * argV = state->allocValue();
+    argV->mkInt(41);
+    auto * resultV = state->allocValue();
+    resultV->mkApp(fnV, argV);
+    state->forceValue(*resultV, noPos);
+    EXPECT_EQ(resultV->type(), nInt);
+    EXPECT_EQ(resultV->integer().value, 42);
 }
 
-TEST_F(ExprFromObjectTest, FunctionWithFormalsHasGetFunctionInfo)
+TEST_F(ExprFromObjectTest, FunctionFormalsExposedViaObjectInterface)
 {
+    /* Bridged function's formals are accessible via the Object
+       interface — `obj->getFunctionInfo()` handles both raw-lambda
+       and primop wrappings (see `InterpreterObject::getFunctionInfo`),
+       so downstream callers see the same formals regardless of
+       whether the boundary crossing wrapped in a primop or not. */
     auto obj = evalToObject("{ a, b ? 1 }: a + b");
-    auto * v = evalFromObject(obj);
-    ASSERT_TRUE(v->isPrimOp());
-    auto * op = v->primOp();
-    ASSERT_TRUE(op->getFunctionInfo);
-    auto info = op->getFunctionInfo();
+    /* Force materialisation through ExprFromObject before probing
+       formals; the round-trip is what real callers see. */
+    (void) evalFromObject(obj);
+    auto info = obj->getFunctionInfo();
     ASSERT_TRUE(info.has_value());
     EXPECT_EQ(info->formals.size(), 2u);
     EXPECT_FALSE(info->formals.at("a"));

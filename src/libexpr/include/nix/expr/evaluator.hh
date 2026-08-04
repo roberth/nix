@@ -222,16 +222,12 @@ public:
      *
      * Each Object subclass that has a boundary-shaped function
      * materialisation returns the wrapped Value here:
-     * - `OuterObject` → `<outer-fn>` primop.
      * - `TracingObject` / `TracingReplayObject` → `<cached-fn>`
      *   primop when the cache infrastructure is available.
      * - `ReplayCallbackArg` / `TracingCallbackArg` → their own
      *   recording primops.
-     *
-     * Returns `nullptr` when the Object doesn't know how (base
-     * default). `ExprFromObject::eval` falls back to
-     * `makeOuterFnPrimOp` in that case, which handles raw
-     * `InterpreterObject`-of-lambda and similar unwrapped cases.
+     * - Everything else → base default: `<outer-fn>` primop
+     *   dispatching through `fnObj->queryApply`.
      *
      * Kept separate from `toValueOrProxy` because
      * `Interpreter::apply` also calls `toValueOrProxy` and needs the
@@ -239,13 +235,10 @@ public:
      * `mkApp` path — a shared method would recurse infinitely for
      * `TracingObject`.
      */
-    virtual Value * maybeMaterialiseAsFunctionValue(
-        EvalState & /* state */,
-        std::shared_ptr<struct OuterResolver> /* resolver */,
-        std::shared_ptr<class Evaluator> /* innerEvaluator */)
-    {
-        return nullptr;
-    }
+    virtual Value * materialiseAsFunctionValue(
+        EvalState & state,
+        std::shared_ptr<struct OuterResolver> resolver,
+        std::shared_ptr<class Evaluator> innerEvaluator);
 
     /**
      * Get information about a function's formal arguments.

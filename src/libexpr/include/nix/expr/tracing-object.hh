@@ -127,7 +127,7 @@ public:
     ObjectType getTypeLazy() override;
     ObjectType getType() override;
     RootValue defeatCache() override;
-    Value * maybeMaterialiseAsFunctionValue(
+    Value * materialiseAsFunctionValue(
         EvalState & state,
         std::shared_ptr<OuterResolver> resolver,
         std::shared_ptr<Evaluator> innerEvaluator) override;
