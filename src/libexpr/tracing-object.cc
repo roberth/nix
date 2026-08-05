@@ -41,6 +41,21 @@ trace::ResultWHNF computeWHNFFromObject(Object & obj, EvalState & state)
         }
         case nPath: {
             auto rp = obj.getPath();
+            /* Internal-kinded roots (corepkgs, derivation-internal.nix)
+               are helper-file mechanics with no user-visible identity.
+               They shouldn't be crossing the cache boundary via a path
+               Value — the raw string identity we could emit wouldn't
+               survive re-admission in another process, and any accidental
+               match would collapse distinct Internal roots. Refuse
+               here with a clear error rather than serialise an
+               unrecoverable payload that would fail later at getPath. */
+            if (rp.root->kind == SourceRootKind::Internal)
+                throw Error(
+                    "path value with Internal-kinded SourceRoot ('%s') is not "
+                    "representable in the tracing cache — Internal roots "
+                    "(corepkgs, derivation-internal.nix) have no cross-process "
+                    "identity and are not allowed across the cache boundary",
+                    rp.path.abs());
             r.payload = trace::WHNFPath{rp.path.abs(), state.stableRootIdentifier(*rp.root)};
             break;
         }
