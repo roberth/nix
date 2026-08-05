@@ -324,4 +324,83 @@ TEST_F(OuterObjectTest, ArgCellPropagation)
     EXPECT_EQ(resultOuter->getProxyArgCell().get(), callerCell.get());
 }
 
+/* SourceRoot round-trip through OuterObject::getPath. Pins Phase 1
+   of the SourceRoot integration: the wrap layer must not substitute
+   a stand-in SourceRoot for the path's actual admission.
+
+   Without the fix, `getPath` returned `RootedPath{outerRootFSRoot,
+   ...}` regardless of the payload's origin; two different
+   SourceRoots crossed via the wrap would collapse to the same
+   root on the far side. */
+TEST_F(OuterObjectTest, GetPathReconstructsStampedSourceRoot)
+{
+    /* Admit a Copyable-kinded SourceRoot with a stamped unpinnedId —
+       the shape a fetcher would produce (`<url>#<n>` identifier). */
+    auto accessor = make_ref<MemorySourceAccessor>().cast<SourceAccessor>();
+    auto stampedRoot = state->getOrCreateRoot(accessor, SourceRootKind::Copyable, "test://source-root-preservation");
+
+    auto producer = makeProducer();
+    /* queryFn returns a pre-stamped WHNFPath — same shape
+       `computeWHNFFromObject` would produce for a path Value whose
+       SourceRoot is `stampedRoot`. */
+    OuterQueryFn queryFn = [this, &stampedRoot](
+                               std::shared_ptr<Object>,
+                               ref<const trace::Selector>,
+                               ref<const trace::Selector>,
+                               std::shared_ptr<ArgCell>) -> OuterQueryResult {
+        return {trace::ResultWHNF{
+                    "path",
+                    trace::WHNFPath{"/", state->stableRootIdentifier(*stampedRoot)},
+                },
+                nullptr};
+    };
+
+    /* srcRoot in the fixture is a different, unrelated Internal
+       SourceRoot — passing it as `outerRootFSRoot` is what the pre-
+       fix substitution would have used. The test's point is that
+       Phase 1d ignores this pinned fallback in favour of the
+       identifier-driven lookup. */
+    auto outer = std::make_shared<OuterObject>(
+        [producer]() { return producer; },
+        std::make_shared<StubObject>(), queryFn,
+        srcRoot, *state, g->selectorPool, nullptr);
+
+    auto rp = outer->getPath();
+    EXPECT_EQ(rp.root.get(), stampedRoot.get());
+}
+
+/* Symmetric: an anonymous SourceRoot (unpinnedId=nullopt) gets an
+   `anon#<n>` identifier via stableRootIdentifier and round-trips
+   within-process. Cross-process is fragile (see the docstring on
+   EvalState::anonymousRootIds) but same-session cold+warm works. */
+TEST_F(OuterObjectTest, GetPathReconstructsAnonymousSourceRoot)
+{
+    auto accessor = make_ref<MemorySourceAccessor>().cast<SourceAccessor>();
+    auto anonRoot = state->getOrCreateRoot(accessor, SourceRootKind::Copyable);
+    /* Sanity: the identifier we're about to round-trip through the
+       wire really is an anon#<n>, not a URL-derived one. */
+    ASSERT_EQ(state->stableRootIdentifier(*anonRoot).value_or(""), "anon#0");
+
+    auto producer = makeProducer();
+    OuterQueryFn queryFn = [this, &anonRoot](
+                               std::shared_ptr<Object>,
+                               ref<const trace::Selector>,
+                               ref<const trace::Selector>,
+                               std::shared_ptr<ArgCell>) -> OuterQueryResult {
+        return {trace::ResultWHNF{
+                    "path",
+                    trace::WHNFPath{"/", state->stableRootIdentifier(*anonRoot)},
+                },
+                nullptr};
+    };
+
+    auto outer = std::make_shared<OuterObject>(
+        [producer]() { return producer; },
+        std::make_shared<StubObject>(), queryFn,
+        srcRoot, *state, g->selectorPool, nullptr);
+
+    auto rp = outer->getPath();
+    EXPECT_EQ(rp.root.get(), anonRoot.get());
+}
+
 } // namespace nix
