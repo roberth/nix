@@ -179,13 +179,26 @@ same identifier space.
   and anonymous roots. `tests/functional/tracing-eval-cache.sh`'s
   flake cases pass.
 
-Known Phase 1 limitation — **nested-cache state mismatch**. In the
-`builtins.cache` primop path, `OuterObject` holds the inner
-EvalState (that's what `wrapArgAsCallbackScope` receives), but the
-SourceRoots for outer-side values were admitted on the outer's
-state. Identifier lookup misses cleanly. Doesn't affect the flake
-test (single top-level state). Needs wrap-plumbing to thread the
-outer's state through — see task #174.
+**Nested-cache delegation.** `builtins.cache`'s inner EvalState
+sets `parentState = &outer`. Inner's `stableRootIdentifier` on a
+SourceRoot it doesn't own (which is the case for outer-side values
+crossing via `OuterObject`) delegates to `parentState` and prefixes
+the returned identifier with `"_outer_:"`. Inner's
+`getRootByIdentity` on an identifier starting with that prefix
+strips one level and delegates. Each layer's own identifier space
+stays disjoint from ancestors' — a wire `"anon#0"` unambiguously
+means "our own anon#0", `"_outer_:anon#0"` means outer's, and so on
+up the chain. Ownership is decided by `EvalState::ownsRoot`
+(pointer equality against our three EvalState-owned roots and our
+rootCache admission entry).
+
+Locked-fetchTree admission is left in parallel — inner's fetchTree
+in the cached body admits its own SourceRoot in inner's rootCache
+with inner's identifier; outer's separate fetch of the same URL
+admits its own. Content-equivalent (same locked URL → same tree),
+so parallel admission isn't a wrong hit; can be made transparent
+in a follow-up by deferring inner admission to outer via
+`parentState->getOrCreateRoot`.
 
 **Phase 2 — Selector Q-hash disambiguation.** `SelectorImport{std::string
 path}` and `SelectorExpr{expr, baseDir}` also lose SourceRoot info.
