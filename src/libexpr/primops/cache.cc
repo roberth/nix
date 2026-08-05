@@ -127,6 +127,13 @@ static void prim_cache(EvalState & state, const PosIdx pos, Value ** args, Value
     // this inner evaluator should share the same decisionGraph.
     innerState->rootDecisionGraph = decisionGraph;
 
+    // SourceRoot identifier delegation across the cache boundary.
+    // Outer's path Values crossing via OuterObject carry outer-side
+    // SourceRoots; inner's `stableRootIdentifier` on those delegates
+    // to outer via `parentState` and prefixes the identifier with
+    // `_outer_:` so wire-level identifiers stay disjoint per layer.
+    innerState->parentState = &state;
+
     auto interpreter = make_ref<Interpreter>(innerState);
 
     // Evaluator stack: TracingReplayEvaluator → TracingEvaluator →

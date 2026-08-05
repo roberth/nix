@@ -789,6 +789,29 @@ private:
     const ref<Sync<size_t>> anonymousRootIdCounter;
 
 private:
+    /* Predicate: is this SourceRoot one we admitted (or one of the
+       three EvalState-owned roots)? Used by stableRootIdentifier to
+       route between "mint locally" and "delegate up". O(1) via
+       rootCache's (accessor, kind) key plus pointer equality. */
+    bool ownsRoot(SourceRoot & root) const;
+
+public:
+
+    /**
+     * Parent EvalState for identifier delegation across a
+     * `builtins.cache` boundary. Set by the primop after the inner
+     * EvalState is constructed. `nullptr` at the top-level state.
+     *
+     * `stableRootIdentifier` on a SourceRoot we don't own delegates
+     * to `parentState` and prefixes the returned identifier with
+     * `"_outer_:"`. `getRootByIdentity` on an identifier with that
+     * prefix strips one level and delegates. Each layer's own
+     * identifier space stays disjoint from ancestors' — no wire-
+     * level ambiguity between "our `anon#0`" and "outer's `anon#0`".
+     */
+    EvalState * parentState = nullptr;
+
+private:
     // Helper to support the legacy EvalState constructor
     EvalState(
         const LookupPath & _lookupPath,
