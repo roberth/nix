@@ -15,6 +15,48 @@ namespace nix {
 
 class Environment;
 struct ArgCell;
+class ReplayCallbackArg;
+
+/**
+ * Outcome of a reuse lookup against the chain of prior callback
+ * applications. Three cases (see tryReuseLiveCallbackApplication):
+ *   - `cachedApplyResult` set: prior application's applyResult
+ *     is still alive; skip fresh queryApply.
+ *   - `reusedRCA` set (cachedApplyResult empty): compat cell
+ *     found but result expired; caller re-invokes queryApply
+ *     against the reused RCA.
+ *   - Both empty: no compat cell; caller starts fresh.
+ */
+struct ReuseHit
+{
+    std::shared_ptr<Object> cachedApplyResult;
+    std::shared_ptr<ReplayCallbackArg> reusedRCA;
+};
+
+/**
+ * Search the chain for a callback cell whose `runningObsSet`
+ * matches `incoming` under the current criterion. Exposed for
+ * property tests to pin down the reuse behavior in isolation
+ * from the walker and DG.
+ */
+ReuseHit tryReuseLiveCallbackApplication(
+    const std::map<TracingHash, std::string> & incoming,
+    std::shared_ptr<ArgCell> startCell);
+
+/**
+ * Reuse compatibility check: is a cell's recorded obs set
+ * `cellObs` compatible with the current call's `incoming` such
+ * that the cell's cachedApplyResult is safe to reuse?
+ *
+ * Returns nullopt when incompatible (reuse must not fire).
+ * Returns a match score (larger = more specific) when compatible.
+ *
+ * Exposed to make the criterion first-class testable, separate
+ * from the cell-graph plumbing.
+ */
+std::optional<size_t> reuseMatchScore(
+    const std::vector<TracingDecisionGraph::InlineFact> & cellObs,
+    const std::map<TracingHash, std::string> & incoming);
 
 /**
  * Evaluator that replays cached results from the decision graph.

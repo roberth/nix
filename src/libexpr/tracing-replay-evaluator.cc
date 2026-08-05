@@ -340,29 +340,25 @@ std::optional<std::string> TracingReplayEvaluator::computeLiveResponse(const tra
     return std::nullopt;
 }
 
-namespace {
+/* ReuseHit is declared in tracing-replay-evaluator.hh — exposed for
+   property tests to pin down reuse behavior in isolation. */
 
-/**
- * The reuse of a live callback application to satisfy a recorded
- * callback application (SCA dispatch). Two mutually exclusive cases,
- * decided in tryReuseLiveCallbackApplication:
- *
- *  - `cachedApplyResult` set: a prior live callback application has
- *    already produced its applyResult; skip the fresh `queryApply`
- *    and return this applyResult directly.
- *  - `reusedRCA` set (and `cachedApplyResult` empty): a compat cell
- *    exists but hasn't populated its applyResult yet (in-progress
- *    or lifetime-expired); the caller should invoke `queryApply`
- *    against the RCA to produce a fresh applyResult, which will
- *    populate the cell for subsequent reuses.
- *  - Both empty: no compat cell found; caller constructs a fresh RCA
- *    and invokes `queryApply` from scratch.
- */
-struct ReuseHit
+std::optional<size_t> reuseMatchScore(
+    const std::vector<TracingDecisionGraph::InlineFact> & cellObs,
+    const std::map<TracingHash, std::string> & incoming)
 {
-    std::shared_ptr<Object> cachedApplyResult;
-    std::shared_ptr<ReplayCallbackArg> reusedRCA;
-};
+    /* Current criterion: cellObs ⊆ incoming (every entry in cellObs
+       matches an entry in incoming on both reqHash and response).
+       Score = number of matching entries. */
+    size_t score = 0;
+    for (auto & fact : cellObs) {
+        auto it = incoming.find(fact.reqHash);
+        if (it == incoming.end() || it->second != fact.responsePayload)
+            return std::nullopt;
+        ++score;
+    }
+    return score;
+}
 
 /**
  * Look for a live callback application cell in the current chain
@@ -418,22 +414,13 @@ ReuseHit tryReuseLiveCallbackApplication(
         auto rca = std::dynamic_pointer_cast<ReplayCallbackArg>(cell->liveObject);
         if (!rca) return;
         ++seenRCA;
-        bool subset = true;
-        size_t score = 0;
-        for (auto & fact : cs->runningObsSet) {
-            auto it = incoming.find(fact.reqHash);
-            if (it == incoming.end() || it->second != fact.responsePayload) {
-                subset = false;
-                break;
-            }
-            ++score;
-        }
-        if (!subset) return;
+        auto score = reuseMatchScore(cs->runningObsSet, incoming);
+        if (!score) return;
         ++seenSubset;
-        if (!haveBest || score > bestScore) {
+        if (!haveBest || *score > bestScore) {
             bestCell = cell;
             bestRCA = rca;
-            bestScore = score;
+            bestScore = *score;
             haveBest = true;
         }
     };
@@ -496,8 +483,6 @@ ReuseHit tryReuseLiveCallbackApplication(
         .reusedRCA = bestRCA,
     };
 }
-
-} // namespace
 
 /* Resolve a recorded outer-value id (hex of a Hash) to a live Object.
    First check the per-history memo (ctx.memo) for already-resolved ids.
