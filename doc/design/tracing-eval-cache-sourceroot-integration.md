@@ -1,7 +1,7 @@
 # SourceRoot integration for OuterObject wrap
 
-Handoff for the SourceRoot piece the current tracing eval-cache
-work punts on. Design as of 2026-08-05.
+Design + landed-state notes for the SourceRoot integration.
+Phase 1 landed 2026-08-05. Phases 2–3 remain.
 
 ## Current failure
 
@@ -142,10 +142,12 @@ One identifier field on the wire, not `(kind, unpinnedId)`:
   never meant to reach a user; refusing keeps the identifier space
   from carrying a dead branch.
 - **Anonymous producer** (an ad-hoc `builtins.makePath` with no
-  Input) → `allocSourceUnpinnedId` returns `nullopt`. Two options:
-  fall through to the Selector-based imprinting path (when
-  implemented), or refuse the crossing until then. Concrete choice
-  depends on whether real workloads produce these.
+  Input) → gets `"anon#<n>"` from a per-EvalState counter (Phase 1,
+  landed). Same bounded-stability tradeoff as `<url>#<n>`: reproduces
+  within-process under matching-until-divergence, misroutes if
+  cross-process admission order shifts. Selector-based imprinting
+  (Phase 3) is the stronger direction; anon numbering unblocks the
+  interim.
 
 Folding `kind` into the identifier keeps the wire format single-
 field and moves the classification from a tag to a string prefix
@@ -155,27 +157,35 @@ same identifier space.
 
 ## Proposal — phased
 
-**Phase 1 — Wire-format extension for identifiable SourceRoots.**
-Enough to fix the failing flake test.
+**Phase 1 — Wire-format extension for identifiable SourceRoots (landed).**
 
-- Extend `WHNFPath` in `trace-types.hh` with a `std::optional<std::string>
-  sourceRootId`. Update JSON + CBOR codecs.
-- Update `computeWHNFFromObject` (`tracing-object.cc:43`) to capture
-  the SourceRoot's identifier via `state.allocSourceUnpinnedId(*rp.root)`
-  (with the System-root synthetic `"system"` handled at admission).
-- Add an identifier → SourceRoot reverse lookup, populated
-  alongside `rootCache` at `getOrCreateRoot`. No canonical owner:
-  each cache layer assigns or tracks identifiers on its own scope
-  (an inner and outer `builtins.cache` each admit their own
-  SourceRoots and don't share the mapping through a global).
-- Rewrite `OuterObject::getPath` to consult the wire payload's
-  `sourceRootId`: if present and lookup hits, use that SourceRoot;
-  else miss cleanly and let inner fall back (correct-or-miss
-  discipline — never substitute a stand-in SourceRoot). Mirror in
-  `TracingCallbackArg::getPath` and `ReplayCallbackArg::getPath`.
-- Refuse Internal-kinded paths at the wrap seam
-  (`wrapArgAsCallbackScope`, `TracingCallbackArg` construction) with
-  a clear error.
+- `WHNFPath` grows `std::optional<std::string> sourceRootId`. JSON
+  + CBOR codecs updated (CBOR piggybacks on JSON via
+  `nlohmann::json::to_cbor`).
+- `computeWHNFFromObject` stamps the identifier via
+  `state.stableRootIdentifier(*rp.root)`. Internal-kinded roots
+  throw here — a design invariant, not an ergonomic limitation.
+- `EvalState::stableRootIdentifier` returns `"system"` /
+  `"<url>#<n>"` / `"anon#<n>"` / nullopt (Internal only). Reverse
+  lookup (`getRootByIdentity`) populated at admission in
+  `getOrCreateRoot`. Per-EvalState — no canonical owner.
+- `OuterObject::getPath` / `TCA::getPath` / `RCA::getPath` route
+  through the shared `reconstructPathFromWHNF` helper: look up the
+  identifier, panic if absent (Internal was already refused at
+  record; nullopt here is a stamping-side bug), throw with a clear
+  error if the identifier isn't in this process's rootByIdentity.
+  Correct-or-miss — never substitute a stand-in root.
+- Two libexpr-tests pinning the wrap-layer round-trip for stamped
+  and anonymous roots. `tests/functional/tracing-eval-cache.sh`'s
+  flake cases pass.
+
+Known Phase 1 limitation — **nested-cache state mismatch**. In the
+`builtins.cache` primop path, `OuterObject` holds the inner
+EvalState (that's what `wrapArgAsCallbackScope` receives), but the
+SourceRoots for outer-side values were admitted on the outer's
+state. Identifier lookup misses cleanly. Doesn't affect the flake
+test (single top-level state). Needs wrap-plumbing to thread the
+outer's state through — see task #174.
 
 **Phase 2 — Selector Q-hash disambiguation.** `SelectorImport{std::string
 path}` and `SelectorExpr{expr, baseDir}` also lose SourceRoot info.
@@ -187,48 +197,38 @@ SourceRoot identity too. Not required for the cold failure;
 required to keep Foundational 1 (no wrong hits) under warm cross-flake
 reuse.
 
-**Phase 3 — Selector-based imprinting for anonymous SourceRoots
-and cross-session stability.** Replace the `allocSourceUnpinnedId`
-numbering with (or supplement it with) Selector-derived identifiers.
-Handles the `unpinnedId=nullopt` case at the same time. Groundwork
-lives on the arg's cell (`SourceRoot* → Selector` map). Deferrable
-until Phases 1–2 are green and we can see which anonymous roots
-actually leak through in real workloads.
+**Phase 3 — Selector-based imprinting for cross-session stability.**
+Phase 1's `<url>#<n>` and `"anon#<n>"` numbering is admission-order-
+dependent: a warm session with a different query shape than cold
+gets shuffled counters and misroutes identifiers. Selector-derived
+identifiers (imprinted at the arg's cell scope via a
+`SourceRoot* → Selector` map) reproduce whenever the arg's
+*structure* is stable — a stronger guarantee that matches the eval
+cache's overall identity philosophy: value identity from observation
+history, not live-side allocation. Deferrable until Phase 2 is
+green and workloads with observed cross-session drift make the
+cost/benefit concrete.
 
-**Phase 4 — Regression tests.**
+**Phase 4 — Additional regression tests.**
 
-- Unit in `src/libexpr-tests/`: construct a value with a path whose
-  SourceRoot isn't the system root (via `builtins.makePath` or a
-  `fetchTree`-derived value), wrap via `wrapArgAsCallbackScope`,
-  assert `getPath` round-trips the SourceRoot's identifier.
 - End-to-end in `tests/functional/`: `builtins.cache` + `fetchTree`
-  combo isolating the SourceRoot-preservation property.
-  Once wrap preserves SourceRoot, `tests/functional/tracing-eval-cache.sh`'s
-  flake cases should follow.
+  combo that would exhibit SourceRoot loss (needs the Phase 1
+  nested-cache limitation resolved to be constructable as a small
+  test — the flake case is currently the only end-to-end coverage).
+- Phase 1e (Internal refusal) has no direct test — the error
+  wording could regress silently. Cheap addition.
 
-## Starting points
+## Starting points (Phase 2+)
 
-- `src/libexpr/expr-from-object.cc` — `wrapArgAsCallbackScope`
-  (`:328`); OuterObject construction pins the SourceRoot
-  (`:385-387`).
-- `src/libexpr/outer-object.cc` — `getPath` (`:151-163`),
-  `outerRootFSRoot` member (`:118`).
-- `src/libexpr/tracing-callback-arg.cc` — TCA's parallel handling
-  (`getPath` at `:120-122`).
-- `src/libexpr/replay-callback-arg.cc` — RCA's `getPath` at `:145`.
-- `src/libexpr/tracing-object.cc` — `computeWHNFFromObject`'s
-  `nPath` arm (`:42-43`).
-- `src/libexpr/include/nix/expr/trace-types.hh` — `WHNFPath`
-  definition (`:227`), Selector alternatives (`:283`, `:293`).
-- `src/libexpr/paths.cc` — `allocSourceUnpinnedId` (`:45`),
-  `getOrCreateRoot` (`:75`).
-- Failing test: `tests/functional/tracing-eval-cache.sh` (flake
-  cases at end).
-
-## Open questions
-
-- **Interaction with #174 (untangle `outerRootFSRoot` from
-  `TracingCallbackArg` wrap gate).** #174 concerns the wrap-gate
-  mechanism using `outerRootFSRoot` as a signal. Phase 1 removes
-  the "wrap-time pinned SourceRoot" semantics that #174 pushes
-  against; may fall out for free or become moot.
+- `src/libexpr/include/nix/expr/trace-types.hh` — Selector
+  alternatives to extend with `sourceRootId` for Phase 2:
+  `SelectorExpr`, `SelectorImport`.
+- `src/libexpr/paths.cc` — `stableRootIdentifier` /
+  `allocSourceUnpinnedId` — the naming scheme both Phase 2 and
+  Phase 3 will build on.
+- `src/libexpr/tracing-object.cc` — `computeWHNFFromObject` +
+  `reconstructPathFromWHNF`. Phase 3's Selector-imprinting fits
+  as an alternate identifier source consulted before
+  `stableRootIdentifier`.
+- Phase 1e (Internal refusal) test — add cheap regression to
+  guard the error wording.

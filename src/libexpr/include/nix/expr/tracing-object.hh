@@ -24,6 +24,23 @@ namespace nix {
     the same stamp). */
 trace::ResultWHNF computeWHNFFromObject(Object & obj, EvalState & state);
 
+/** Reconstruct a RootedPath from a recorded WHNFPath payload —
+    inverse of computeWHNFFromObject's nPath arm. Shared by
+    OuterObject::getPath, TracingCallbackArg::getPath, and
+    ReplayCallbackArg::getPath.
+
+    Correct-or-miss: throws when `state.getRootByIdentity` doesn't
+    resolve the sourceRootId (a legitimate cross-process warm miss
+    against a SourceRoot admission that hasn't happened in this
+    process). Never substitutes a stand-in root — doing so would
+    silently misroute paths.
+
+    Panics on a missing sourceRootId. Internal-kinded roots are
+    refused at record (see computeWHNFFromObject); every other
+    admitted root produces some identifier, so a nullopt here
+    indicates a stamping-side bug rather than legitimate absence. */
+RootedPath reconstructPathFromWHNF(EvalState & state, const trace::WHNFPath & payload);
+
 /**
  * Object wrapper that logs all operations to a trace file and optionally
  * to a trie index via TracingWriter.

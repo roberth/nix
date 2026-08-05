@@ -119,17 +119,7 @@ RootedPath TracingCallbackArg::getPath()
     auto * p = std::get_if<trace::WHNFPath>(&w.payload);
     if (!p)
         throw Error("tlo getPath: WHNF payload not path (type %s)", w.type);
-    /* Same rationale as OuterObject::getPath — reconstruct via wire
-       identifier, miss cleanly rather than substitute. */
-    if (!p->sourceRootId)
-        throw Error("tlo getPath: WHNFPath has no sourceRootId — anonymous "
-                    "SourceRoots not yet supported across the cache boundary");
-    auto root = state.getRootByIdentity(*p->sourceRootId);
-    if (!root)
-        throw Error(
-            "tlo getPath: sourceRootId '%s' not admitted in this process",
-            *p->sourceRootId);
-    return RootedPath{*root, CanonPath{p->path}};
+    return reconstructPathFromWHNF(state, *p);
 }
 
 bool TracingCallbackArg::getBool(std::string_view)

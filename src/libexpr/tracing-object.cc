@@ -85,6 +85,25 @@ trace::ResultWHNF computeWHNFFromObject(Object & obj, EvalState & state)
     return r;
 }
 
+RootedPath reconstructPathFromWHNF(EvalState & state, const trace::WHNFPath & payload)
+{
+    /* Missing identifier is a stamping-side bug — Internal is refused
+       at record (computeWHNFFromObject above), every other admitted
+       root produces some identifier via stableRootIdentifier. */
+    if (!payload.sourceRootId)
+        panic("reconstructPathFromWHNF: WHNFPath without sourceRootId — "
+              "record-side didn't stamp (or Phase 1e refusal for Internal "
+              "didn't fire)");
+    auto root = state.getRootByIdentity(*payload.sourceRootId);
+    if (!root)
+        throw Error(
+            "cache boundary: sourceRootId '%s' not admitted in this process — "
+            "the SourceRoot's producer (fetchTree, mkPath, etc.) needs to have "
+            "run before this path can be reconstructed",
+            *payload.sourceRootId);
+    return RootedPath{*root, CanonPath(payload.path)};
+}
+
 TracingObject::TracingObject(
     ref<Object> inner,
     TracingWriter & writer,

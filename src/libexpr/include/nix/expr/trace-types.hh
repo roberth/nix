@@ -225,12 +225,19 @@ struct WHNFInt { int64_t value; };
 struct WHNFBool { bool value; };
 struct WHNFFloat { double value; };
 /** Path payload. `sourceRootId` is the SourceRoot's stable identifier
-    per that cache layer's admission history (e.g. `"system"` for the
-    singular System root, `"<url>#<n>"` for stamped roots via
-    `allocSourceUnpinnedId`). `nullopt` when the SourceRoot has no
-    stamped identity — the walker treats such payloads as
-    unrecoverable and misses cleanly rather than substituting a
-    stand-in SourceRoot. */
+    per that cache layer's admission history:
+    - `"system"` — the singular System root (bare, no `#n`).
+    - `"<url>#<n>"` — stamped roots via `allocSourceUnpinnedId`
+      (`fetchTree`, flake inputs).
+    - `"anon#<n>"` — anonymous roots without stamped `unpinnedId`
+      (`builtins.makePath`, ad-hoc mkPath calls). Reproduces within-
+      process under matching-until-divergence; cross-process is
+      fragile if admission order shifts.
+
+    `nullopt` should not occur in a well-formed recording — Internal-
+    kinded roots are refused at record time (`computeWHNFFromObject`),
+    every other admitted root gets some identifier. `reconstructPathFromWHNF`
+    panics if it sees a nullopt to surface stamping-side bugs. */
 struct WHNFPath { std::string path; std::optional<std::string> sourceRootId; };
 struct WHNFString { std::string value; std::vector<std::string> context; };
 struct WHNFAttrs { std::vector<std::string> names; };

@@ -142,20 +142,10 @@ RootedPath ReplayCallbackArg::getPath()
     auto * p = std::get_if<trace::WHNFPath>(&w.payload);
     if (!p)
         throw Error("rlo getPath: WHNF payload not path (type %s)", w.type);
-    /* Same rationale as OuterObject::getPath — reconstruct via wire
-       identifier, miss cleanly rather than substitute. `state` is a
-       pointer here (see rlaycallback-arg.hh's comment on the field's
-       origin story); the RCA that reaches getPath was constructed
-       with a live state, so dereferencing is sound. */
-    if (!p->sourceRootId)
-        throw Error("rlo getPath: WHNFPath has no sourceRootId — anonymous "
-                    "SourceRoots not yet supported across the cache boundary");
-    auto root = state->getRootByIdentity(*p->sourceRootId);
-    if (!root)
-        throw Error(
-            "rlo getPath: sourceRootId '%s' not admitted in this process",
-            *p->sourceRootId);
-    return RootedPath{*root, CanonPath{p->path}};
+    /* `state` is a pointer here (see replay-callback-arg.hh's
+       docstring on the field's origin); RCAs that reach getPath were
+       constructed with a live state, so dereferencing is sound. */
+    return reconstructPathFromWHNF(*state, *p);
 }
 
 bool ReplayCallbackArg::getBool(std::string_view)
