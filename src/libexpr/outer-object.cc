@@ -9,12 +9,13 @@
 namespace nix {
 
 OuterObject::OuterObject(
-    std::function<ref<const trace::Selector>()> producer_, std::shared_ptr<Object> outerObj_, OuterQueryFn queryFn, ref<SourceRoot> outerRootFSRoot, trace::SelectorPool & selectorPool_, std::shared_ptr<ArgCell> argCell_, OuterApplyFn applyFn)
+    std::function<ref<const trace::Selector>()> producer_, std::shared_ptr<Object> outerObj_, OuterQueryFn queryFn, ref<SourceRoot> outerRootFSRoot, EvalState & outerState, trace::SelectorPool & selectorPool_, std::shared_ptr<ArgCell> argCell_, OuterApplyFn applyFn)
     : producer(std::move(producer_))
     , outerObj(std::move(outerObj_))
     , queryFn(std::move(queryFn))
     , applyFn(std::move(applyFn))
     , outerRootFSRoot(std::move(outerRootFSRoot))
+    , outerState(outerState)
     , argCell(std::move(argCell_))
     , selectorPool(selectorPool_)
 {
@@ -45,7 +46,7 @@ std::shared_ptr<Object> OuterObject::maybeGetAttr(const std::string & name)
     if (!childProbe)
         return nullptr;
     auto preHex = getSelectorHashHex().value_or(std::string{});
-    (void) computeWHNFFromObject(*childProbe);
+    (void) computeWHNFFromObject(*childProbe, outerState);
     auto parentSel = producer();  // post-force snapshot
     auto parentQHex = parentSel->cachedHash.toHex();
     tracingCacheLog(
@@ -75,7 +76,7 @@ std::shared_ptr<Object> OuterObject::maybeGetAttr(const std::string & name)
     };
     auto child = std::make_shared<OuterObject>(
         std::move(childProducer),
-        qr.child, queryFn, outerRootFSRoot, selectorPool, argCell, applyFn);
+        qr.child, queryFn, outerRootFSRoot, outerState, selectorPool, argCell, applyFn);
     child->cachedWHNF = *r;
     return child;
     } catch (Error & e) {
@@ -103,7 +104,7 @@ trace::ResultWHNF & OuterObject::whnf()
        Forcing outerObj's WHNF is cheap on the second call: computeWHNF
        caches, and queryFn's identity dispatch (SelectorApply / CBApply
        cases in dispatchOuterQuery) just re-reads the cached WHNF. */
-    (void) computeWHNFFromObject(*outerObj);
+    (void) computeWHNFFromObject(*outerObj, outerState);
     auto p = producer();
     auto qr = queryFn(outerObj, p, p, argCell);
     auto * r = std::get_if<trace::ResultWHNF>(&qr.result);
@@ -227,7 +228,7 @@ std::shared_ptr<Object> OuterObject::getListElem(size_t index)
     };
     auto child = std::make_shared<OuterObject>(
         std::move(childProducer),
-        qr.child, queryFn, outerRootFSRoot, selectorPool, argCell, applyFn);
+        qr.child, queryFn, outerRootFSRoot, outerState, selectorPool, argCell, applyFn);
     child->cachedWHNF = *r;
     return child;
 }
@@ -313,7 +314,7 @@ std::shared_ptr<Object> OuterObject::queryApply(std::shared_ptr<Object> argObj)
          state — the producerFn captures it directly. */
     auto result = std::make_shared<OuterObject>(
         std::move(ar.producerFn),
-        std::move(ar.applyResult), queryFn, outerRootFSRoot, selectorPool, callerScope, applyFn);
+        std::move(ar.applyResult), queryFn, outerRootFSRoot, outerState, selectorPool, callerScope, applyFn);
     return result;
 }
 

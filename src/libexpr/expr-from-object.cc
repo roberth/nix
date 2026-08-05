@@ -21,13 +21,13 @@ namespace nix {
    response plus (for producer queries) the outer's child Object at
    the queried position. No lookup table, no id round-trip — the
    caller passes the outer Object it already holds. */
-OuterQueryResult dispatchOuterQuery(std::shared_ptr<Object> obj, const trace::SelectorNode & q)
+OuterQueryResult dispatchOuterQuery(std::shared_ptr<Object> obj, const trace::SelectorNode & q, EvalState & state)
 {
     /* Each Selector alternative gets its own handler — no field-presence
        shortcuts. A new alternative added to SelectorNode won't compile
        without an explicit case here. */
     auto identityWHNF = [&]() -> OuterQueryResult {
-        return {computeWHNFFromObject(*obj), nullptr};
+        return {computeWHNFFromObject(*obj, state), nullptr};
     };
     return std::visit(overloaded{
         [&](const trace::SelectorApply &)         -> OuterQueryResult { return identityWHNF(); },
@@ -42,11 +42,11 @@ OuterQueryResult dispatchOuterQuery(std::shared_ptr<Object> obj, const trace::Se
                    here is a contradiction between projection and
                    retrieval. */
                 panic("dispatchOuterQuery: SelectorGetAttr child missing after membership projection");
-            return {computeWHNFFromObject(*child), std::move(child)};
+            return {computeWHNFFromObject(*child, state), std::move(child)};
         },
         [&](const trace::SelectorGetListElem & query) -> OuterQueryResult {
             auto child = obj->getListElem(query.index);
-            return {computeWHNFFromObject(*child), std::move(child)};
+            return {computeWHNFFromObject(*child, state), std::move(child)};
         },
         [&](const trace::SelectorGetFunctionInfo &) -> OuterQueryResult {
             auto info = obj->getFunctionInfo();
@@ -241,6 +241,7 @@ OuterApplyResult OuterApply::run(
         ? std::shared_ptr<Object>(std::make_shared<TracingCallbackArg>(
               ref<Object>(argObj), argProducerSel, *innerWriter,
               ref<SourceRoot>(outerRootFSRoot),
+              *outerState,
               ref<RecordingCallbackArgCell>(recordingCell)))
         : argObj;
 
@@ -360,13 +361,13 @@ ref<OuterObject> wrapArgAsCallbackScope(
         return pool.intern(trace::SelectorApply{*fnSel});
     };
     auto & innerEnv = *innerEval->getEvalState().environment;
-    OuterQueryFn queryFn = [&innerEnv](
+    OuterQueryFn queryFn = [&innerEnv, &state](
         std::shared_ptr<Object> outerObj,
         ref<const trace::Selector> q,
         ref<const trace::Selector> producer,
         std::shared_ptr<ArgCell> callerCell) {
         std::shared_ptr<ArgCell> attributionCell = callerCell;
-        OuterQueryResult qr = dispatchOuterQuery(std::move(outerObj), q->node);
+        OuterQueryResult qr = dispatchOuterQuery(std::move(outerObj), q->node, state);
         innerEnv.outerQuery(
             q,
             [&](ref<const trace::Selector>) { return qr.result; },
@@ -384,7 +385,7 @@ ref<OuterObject> wrapArgAsCallbackScope(
     };
     auto outerArgProxy = make_ref<OuterObject>(
         argProducerFn, rawArg, std::move(queryFn),
-        state.rootFSRoot, pool, seedCell, std::move(applyFn));
+        state.rootFSRoot, state, pool, seedCell, std::move(applyFn));
     /* Wire seedCell.liveObject to outerArgProxy now that it exists.
        Deliberate shared_ptr cycle documented on ArgCell::liveObject. */
     seedCell->liveObject = outerArgProxy.get_ptr();

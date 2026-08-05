@@ -814,7 +814,7 @@ std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nl
                     return std::nullopt;
                 }
                 try {
-                    auto whnf = computeWHNFFromObject(*obj);
+                    auto whnf = computeWHNFFromObject(*obj, inner->getEvalState());
                     tracingCacheLog(
                         "apply: HIT self=%s whnf=%s",
                         selfHex.substr(0, 12).c_str(),
@@ -834,7 +834,7 @@ std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nl
                 if (!resultObj)
                     return std::nullopt;
                 try {
-                    auto whnf = computeWHNFFromObject(*resultObj);
+                    auto whnf = computeWHNFFromObject(*resultObj, inner->getEvalState());
                     return jsonToCborString(nlohmann::json(whnf));
                 } catch (const std::exception & e) { extern thread_local bool rcaBailFlag; if (rcaBailFlag) throw;
                     tracingCacheLog("callbackApply: applyResult WHNF failed: %s", e.what());
@@ -857,7 +857,7 @@ std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nl
                     return std::nullopt;
                 }
                 try {
-                    auto whnf = computeWHNFFromObject(*obj);
+                    auto whnf = computeWHNFFromObject(*obj, inner->getEvalState());
                     tracingCacheLog(
                         "arg: HIT self=%s whnf=%s",
                         selfHex.substr(0, 12).c_str(),
@@ -882,10 +882,10 @@ std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nl
                            membership from parent's WHNFAttrs. */
                         auto child = obj->maybeGetAttr(q.name);
                         if (!child) return std::nullopt;
-                        resultJson = computeWHNFFromObject(*child);
+                        resultJson = computeWHNFFromObject(*child, inner->getEvalState());
                     } else if constexpr (std::is_same_v<Q, trace::SelectorGetListElem>) {
                         auto child = obj->getListElem(q.index);
-                        resultJson = computeWHNFFromObject(*child);
+                        resultJson = computeWHNFFromObject(*child, inner->getEvalState());
                     } else if constexpr (std::is_same_v<Q, trace::SelectorGetFunctionInfo>) {
                         auto info = obj->getFunctionInfo();
                         if (!info)

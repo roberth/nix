@@ -43,6 +43,11 @@ class TracingCallbackArg : public Object
     ref<const trace::Selector> producer;  ///< Static structural identifier as a Selector
     TracingWriter & writer;
     ref<SourceRoot> rootFSRoot;
+    /* Outer's EvalState — passed at construction and used to stamp
+       WHNFPath::sourceRootId when computeWHNFFromObject is called on
+       the wrapped inner (or its children). Same state whose
+       rootFSRoot was passed above. */
+    EvalState & state;
 
     /** This local's Q hash. */
     OuterId localId() const { return producer->cachedHash; }
@@ -68,6 +73,7 @@ public:
         ref<const trace::Selector> producer,
         TracingWriter & writer,
         ref<SourceRoot> rootFSRoot,
+        EvalState & state,
         ref<RecordingCallbackArgCell> argCell,
         bool whnfAlreadyRecorded = false);
 

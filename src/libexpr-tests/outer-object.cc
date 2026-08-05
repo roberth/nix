@@ -3,8 +3,13 @@
 #include "nix/expr/outer-object.hh"
 #include "nix/expr/tracing-decision-graph.hh"
 #include "nix/expr/arg-cell.hh"
+#include "nix/expr/eval.hh"
+#include "nix/expr/eval-settings.hh"
+#include "nix/expr/eval-gc.hh"
 #include "nix/expr/object-type.hh"
 #include "nix/expr/source-root.hh"
+#include "nix/fetchers/fetch-settings.hh"
+#include "nix/store/tests/libstore.hh"
 #include "nix/util/memory-source-accessor.hh"
 #include "nix/util/file-system.hh"
 
@@ -71,25 +76,46 @@ public:
 
 } // namespace
 
-class OuterObjectTest : public ::testing::Test
+class OuterObjectTest : public LibStoreTest
 {
 protected:
     std::filesystem::path tempDir;
     std::filesystem::path dbPath;
     std::unique_ptr<TracingDecisionGraph> g;
+    /* EvalState is a required OuterObject ctor arg (for identifier
+       stamping via stableRootIdentifier). None of these tests reach
+       code that would call it, but the reference must be valid. */
+    fetchers::Settings fetchSettings{};
+    bool readOnlyMode = false;
+    EvalSettings evalSettings{readOnlyMode};
+    std::shared_ptr<EvalState> state;
     ref<SourceRoot> srcRoot = SourceRoot::make(
         make_ref<MemorySourceAccessor>().cast<SourceAccessor>(), SourceRootKind::Internal);
+
+    static void SetUpTestSuite()
+    {
+        LibStoreTest::SetUpTestSuite();
+        initGC();
+    }
+
+    OuterObjectTest()
+        : LibStoreTest(openStore("dummy://?read-only=false"))
+    {
+    }
 
     void SetUp() override
     {
         tempDir = createTempDir();
         dbPath = tempDir / "index.sqlite";
         g = std::make_unique<TracingDecisionGraph>(dbPath);
+        state = make_ref<EvalState>(
+            LookupPath{}, store, fetchSettings, evalSettings, nullptr).get_ptr();
     }
 
     void TearDown() override
     {
         g.reset();
+        state.reset();
         std::filesystem::remove_all(tempDir);
     }
 
@@ -113,6 +139,7 @@ TEST_F(OuterObjectTest, ProducerWiring)
            std::shared_ptr<ArgCell>) -> OuterQueryResult
         { throw std::runtime_error("queryFn should not fire"); },
         srcRoot,
+        *state,
         g->selectorPool,
         nullptr);
 
@@ -138,7 +165,7 @@ TEST_F(OuterObjectTest, MaybeGetAttrChildProducer)
 
     auto outer = std::make_shared<OuterObject>(
         [producer]() { return producer; },
-        std::make_shared<StubObject>(), queryFn, srcRoot, g->selectorPool, callerCell);
+        std::make_shared<StubObject>(), queryFn, srcRoot, *state, g->selectorPool, callerCell);
 
     auto child = outer->maybeGetAttr("x");
     ASSERT_NE(child, nullptr);
@@ -170,7 +197,7 @@ TEST_F(OuterObjectTest, GetListElemChildProducer)
 
     auto outer = std::make_shared<OuterObject>(
         [producer]() { return producer; },
-        std::make_shared<StubObject>(), queryFn, srcRoot, g->selectorPool, callerCell);
+        std::make_shared<StubObject>(), queryFn, srcRoot, *state, g->selectorPool, callerCell);
 
     auto child = outer->getListElem(1);
     ASSERT_NE(child, nullptr);
@@ -203,7 +230,7 @@ TEST_F(OuterObjectTest, GetFunctionInfoQuerySelector)
 
     auto outer = OuterObject(
         [producer]() { return producer; },
-        std::make_shared<StubObject>(), queryFn, srcRoot, g->selectorPool, nullptr);
+        std::make_shared<StubObject>(), queryFn, srcRoot, *state, g->selectorPool, nullptr);
 
     auto info = outer.getFunctionInfo();
     ASSERT_TRUE(info.has_value());
@@ -241,7 +268,7 @@ TEST_F(OuterObjectTest, QueryApplyResultProducer)
 
     auto outer = std::make_shared<OuterObject>(
         [fnProducer]() { return fnProducer; },
-        std::make_shared<StubObject>(), queryFn, srcRoot, g->selectorPool, nullptr, applyFn);
+        std::make_shared<StubObject>(), queryFn, srcRoot, *state, g->selectorPool, nullptr, applyFn);
 
     auto result = outer->queryApply(argStub);
     ASSERT_NE(result, nullptr);
@@ -285,7 +312,7 @@ TEST_F(OuterObjectTest, ArgCellPropagation)
 
     auto outer = std::make_shared<OuterObject>(
         [producer]() { return producer; },
-        std::make_shared<StubObject>(), queryFn, srcRoot, g->selectorPool, callerCell, applyFn);
+        std::make_shared<StubObject>(), queryFn, srcRoot, *state, g->selectorPool, callerCell, applyFn);
 
     auto result = outer->queryApply(argStub);
     // applyFn receives callerCell directly — cell creation is its own job.

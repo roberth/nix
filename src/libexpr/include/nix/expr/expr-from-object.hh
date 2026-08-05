@@ -22,7 +22,7 @@ namespace nix {
  * a probe on the wrapped outer Object. Exported so the higher-order
  * callback primop can reuse it for arg-obsSet accumulation.
  */
-OuterQueryResult dispatchOuterQuery(std::shared_ptr<Object> obj, const trace::SelectorNode & q);
+OuterQueryResult dispatchOuterQuery(std::shared_ptr<Object> obj, const trace::SelectorNode & q, EvalState & state);
 
 /**
  * Base class for pseudo-Exprs that delegate evaluation to external sources.

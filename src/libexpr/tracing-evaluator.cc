@@ -162,7 +162,7 @@ ref<Object> TracingEvaluator::evalFile(const RootedPath & path, const std::strin
     trace::SelectorImport rootSel{displayPath};
     auto [v, qh] = writer.logRootSelectorOnCell(rootCell, rootSel);
     auto result = inner->evalFile(path, displayPath);
-    auto whnf = computeWHNFFromObject(*result);
+    auto whnf = computeWHNFFromObject(*result, inner->getEvalState());
     auto triePos = writer.logResult(v, whnf, qh, rootCell);
     /* Bootstrap the SelectorPool: intern this evalFile's root Selector
        so descendants that build SelectorApplyStep{parent=this} etc.
@@ -185,7 +185,7 @@ ref<Object> TracingEvaluator::evalExpr(const std::string & expr, const RootedPat
     trace::SelectorExpr rootSel{expr, basePath.path.abs()};
     auto [v, qh] = writer.logRootSelectorOnCell(rootCell, rootSel);
     auto result = inner->evalExpr(expr, basePath);
-    auto whnf = computeWHNFFromObject(*result);
+    auto whnf = computeWHNFFromObject(*result, inner->getEvalState());
     auto triePos = writer.logResult(v, whnf, qh, rootCell);
     /* Bootstrap the SelectorPool with this evalExpr's root Selector. */
     auto obj = TracingObject::create(result, writer, v, triePos, rootCell,

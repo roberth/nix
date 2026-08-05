@@ -117,6 +117,12 @@ class OuterObject : public Object
        resolver from the outer EvalState's `rootFSRoot`. */
     ref<SourceRoot> outerRootFSRoot;
 
+    /* Outer's EvalState — used to stamp WHNFPath::sourceRootId in
+       computeWHNFFromObject calls on the wrapped outer Object, and
+       to reconstruct SourceRoots by identifier on cache-hit
+       getPath. Same state whose rootFSRoot was passed above. */
+    EvalState & outerState;
+
     /* Nearest enclosing apply's cell. Navigation children carry the
        same cell as their parent; apply-result proxies open a fresh
        cell rooted at the fn's cell. Ancestor chain reached via the
@@ -138,7 +144,7 @@ class OuterObject : public Object
     trace::ResultWHNF & whnf();
 
 public:
-    OuterObject(std::function<ref<const trace::Selector>()> producer, std::shared_ptr<Object> outerObj, OuterQueryFn queryFn, ref<SourceRoot> outerRootFSRoot, trace::SelectorPool & selectorPool, std::shared_ptr<ArgCell> argCell, OuterApplyFn applyFn = {});
+    OuterObject(std::function<ref<const trace::Selector>()> producer, std::shared_ptr<Object> outerObj, OuterQueryFn queryFn, ref<SourceRoot> outerRootFSRoot, EvalState & outerState, trace::SelectorPool & selectorPool, std::shared_ptr<ArgCell> argCell, OuterApplyFn applyFn = {});
 
     std::shared_ptr<ArgCell> getProxyArgCell() const override { return argCell; }
 

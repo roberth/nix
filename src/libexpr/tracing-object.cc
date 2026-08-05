@@ -16,7 +16,7 @@ namespace nix {
    per-type getters. Used by wrappers' whnf() when they need to
    materialise a ResultWHNF payload, and by the walker's live
    dispatch to compare against recorded responses. */
-trace::ResultWHNF computeWHNFFromObject(Object & obj)
+trace::ResultWHNF computeWHNFFromObject(Object & obj, EvalState & state)
 {
     auto type = obj.getType();
     trace::ResultWHNF r;
@@ -39,9 +39,11 @@ trace::ResultWHNF computeWHNFFromObject(Object & obj)
             r.payload = trace::WHNFString{std::move(pair.first), std::move(ctxStrs)};
             break;
         }
-        case nPath:
-            r.payload = trace::WHNFPath{obj.getPath().path.abs()};
+        case nPath: {
+            auto rp = obj.getPath();
+            r.payload = trace::WHNFPath{rp.path.abs(), state.stableRootIdentifier(*rp.root)};
             break;
+        }
         case nAttrs:
             r.payload = trace::WHNFAttrs{obj.getAttrNames()};
             break;
@@ -179,7 +181,7 @@ std::shared_ptr<Object> TracingObject::maybeGetAttr(const std::string & name)
     /* Force child WHNF first — for a callback-produced wrapper, this
        runs the callback body's attribute expression, firing contra-arg
        probes that grow the callback cell's runningObsSet. */
-    auto childWHNF = computeWHNFFromObject(*innerChild);
+    auto childWHNF = computeWHNFFromObject(*innerChild, innerEvaluator->getEvalState());
     /* Now build SelectorGetAttr with `from` = our producer at the
        post-force moment. For cbApplyOrigin wrappers this snapshots the
        grown runningObsSet into a SelectorCallbackApply (§7's per-probe
@@ -223,7 +225,7 @@ trace::ResultWHNF & TracingObject::whnf()
 {
     if (cachedWHNF)
         return *cachedWHNF;
-    auto whnfResult = computeWHNFFromObject(*inner);
+    auto whnfResult = computeWHNFFromObject(*inner, innerEvaluator->getEvalState());
     /* Cell-migration Phase B moved QCA emission from here to
        TracingEvaluator::apply. But TE::apply fires only for the
        OUTER-side apply; the callback firing itself goes through
@@ -353,7 +355,7 @@ std::shared_ptr<Object> TracingObject::getListElem(size_t index)
     auto & query = std::get<trace::SelectorGetListElem>(querySel->node);
     auto [valueId, qh] = writer.logQuery(query);
     auto result = inner->getListElem(index);
-    trace::ResultWHNF childWHNF = computeWHNFFromObject(*result);
+    trace::ResultWHNF childWHNF = computeWHNFFromObject(*result, innerEvaluator->getEvalState());
     auto anchorCur = triePos ? triePos->factSetHash : TracingDecisionGraph::emptySetHash();
     auto childTriePos = writer.logQueryResult(valueId, childWHNF, qh, anchorCur, argCell);
     /* Mirror maybeGetAttr: the nav child's producer identity IS
@@ -501,7 +503,7 @@ std::shared_ptr<Object> TracingObject::queryApply(std::shared_ptr<Object> argObj
        InterpreterObject whose queryApply constructs a lazy thunk). */
     auto result = inner->queryApply(argObj);
 
-    auto whnfResult = computeWHNFFromObject(*result);
+    auto whnfResult = computeWHNFFromObject(*result, innerEvaluator->getEvalState());
     writer.emitCallbackApplyForApplyResult(cell, applySel, whnfResult);
     auto tp = writer.logResult(v, whnfResult, qh, cell);
 

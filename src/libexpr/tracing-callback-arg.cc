@@ -26,12 +26,14 @@ TracingCallbackArg::TracingCallbackArg(
     ref<const trace::Selector> producer_,
     TracingWriter & writer,
     ref<SourceRoot> rootFSRoot,
+    EvalState & state,
     ref<RecordingCallbackArgCell> argCell,
     bool whnfAlreadyRecorded)
     : inner(std::move(inner))
     , producer(std::move(producer_))
     , writer(writer)
     , rootFSRoot(std::move(rootFSRoot))
+    , state(state)
     , argCell(std::move(argCell))
     , whnfRecorded(whnfAlreadyRecorded)
 {
@@ -57,14 +59,14 @@ std::shared_ptr<Object> TracingCallbackArg::maybeGetAttr(const std::string & nam
         panic("TracingCallbackArg::maybeGetAttr: WHNF says attr present, inner says missing");
     auto & dg = writer.getDecisionGraph();
     auto querySel = dg.selectorPool.intern(trace::SelectorGetAttr{name, producer});
-    recordObservation(querySel, computeWHNFFromObject(*child));
+    recordObservation(querySel, computeWHNFFromObject(*child, state));
     return std::make_shared<TracingCallbackArg>(
-        ref<Object>(std::move(child)), querySel, writer, rootFSRoot, argCell);
+        ref<Object>(std::move(child)), querySel, writer, rootFSRoot, state, argCell);
 }
 
 trace::ResultWHNF TracingCallbackArg::whnf()
 {
-    auto whnfResult = computeWHNFFromObject(*inner);
+    auto whnfResult = computeWHNFFromObject(*inner, state);
     if (!whnfRecorded) {
         /* #186: obsSet entry uses the value's own Selector — SelectorArg
            for a positional callback arg, SelectorGetAttr for a nav
@@ -171,9 +173,9 @@ std::shared_ptr<Object> TracingCallbackArg::getListElem(size_t index)
     auto child = inner->getListElem(index);
     auto & dg = writer.getDecisionGraph();
     auto querySel = dg.selectorPool.intern(trace::SelectorGetListElem{index, producer});
-    recordObservation(querySel, computeWHNFFromObject(*child));
+    recordObservation(querySel, computeWHNFFromObject(*child, state));
     return std::make_shared<TracingCallbackArg>(
-        ref<Object>(std::move(child)), querySel, writer, rootFSRoot, argCell);
+        ref<Object>(std::move(child)), querySel, writer, rootFSRoot, state, argCell);
 }
 
 ObjectType TracingCallbackArg::getTypeLazy()
@@ -281,12 +283,12 @@ std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> a
        writer.logOuterObservation — that routes to cell.facts for
        factSet composition; we want the snapshot-into-ObservationSet-CAS
        path used by callback firings. */
-    OuterQueryFn queryFn = [layer2Cell, &dg](
+    OuterQueryFn queryFn = [layer2Cell, &dg, &state = state](
         std::shared_ptr<Object> outerObj,
         ref<const trace::Selector> q,
         ref<const trace::Selector> /*producer*/,
         std::shared_ptr<ArgCell> /*callerCell*/) {
-        auto qr = dispatchOuterQuery(std::move(outerObj), q->node);
+        auto qr = dispatchOuterQuery(std::move(outerObj), q->node, state);
         nlohmann::json rJson = std::visit(
             [](const auto & r) -> nlohmann::json { return r; }, qr.result);
         auto rPayload = jsonToCborString(rJson);
@@ -311,7 +313,8 @@ std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> a
        captured `applyFn` shared_ptr so deeper nestings work too. */
     auto applyFn = std::make_shared<OuterApplyFn>();
     auto rootFSRootCopy = rootFSRoot;
-    *applyFn = [applyFn, &dg, rootFSRootCopy](
+    auto & outerStateRef = state;
+    *applyFn = [applyFn, &dg, rootFSRootCopy, &outerStateRef](
         std::shared_ptr<Object> fnObj,
         ref<const trace::Selector> fnProducer,
         std::shared_ptr<Object> argObj2,
@@ -325,12 +328,12 @@ std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> a
 
         auto nestedArgProducerSel = dg.selectorPool.intern(trace::SelectorArg{nestedCell->depth});
 
-        OuterQueryFn nestedQueryFn = [nestedCell, &dg](
+        OuterQueryFn nestedQueryFn = [nestedCell, &dg, &outerStateRef](
             std::shared_ptr<Object> outerObj,
             ref<const trace::Selector> q,
             ref<const trace::Selector> /*producer*/,
             std::shared_ptr<ArgCell> /*callerCell*/) {
-            auto qr = dispatchOuterQuery(std::move(outerObj), q->node);
+            auto qr = dispatchOuterQuery(std::move(outerObj), q->node, outerStateRef);
             nlohmann::json rJson = std::visit(
                 [](const auto & r) -> nlohmann::json { return r; }, qr.result);
             auto rPayload = jsonToCborString(rJson);
@@ -344,6 +347,7 @@ std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> a
             argObj2,
             nestedQueryFn,
             rootFSRootCopy,
+            outerStateRef,
             dg.selectorPool,
             nestedCell,
             *applyFn);
@@ -375,6 +379,7 @@ std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> a
         argObj,
         queryFn,
         rootFSRoot,
+        state,
         dg.selectorPool,
         layer2Cell,
         *applyFn);
@@ -386,7 +391,7 @@ std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> a
     if (!resultObj)
         /* Object::queryApply contract: non-null return or throw. */
         panic("TracingCallbackArg::queryApply: inner returned null");
-    auto applyResultWhnf = computeWHNFFromObject(*resultObj);
+    auto applyResultWhnf = computeWHNFFromObject(*resultObj, state);
 
     /* Snapshot layer-2 obs into ObservationSet CAS and construct the
        compositional SelectorCallbackApply for record on enclosing
@@ -422,7 +427,7 @@ std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> a
        (typically getType() via toValueOrProxy) would re-fire the
        same fact as a duplicate. */
     return std::make_shared<TracingCallbackArg>(
-        ref<Object>(std::move(resultObj)), scaSel, writer, rootFSRoot, argCell, /*whnfAlreadyRecorded=*/true);
+        ref<Object>(std::move(resultObj)), scaSel, writer, rootFSRoot, state, argCell, /*whnfAlreadyRecorded=*/true);
 }
 
 RootValue TracingCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_ptr<struct OuterResolver> resolver)

@@ -15,8 +15,14 @@ namespace nix {
 /** Compute a value's WHNF in one pass by calling the Object's
     per-type getters. Used by wrappers' whnf() to materialise a
     ResultWHNF payload, and by the walker's live dispatch to compare
-    against recorded responses. */
-trace::ResultWHNF computeWHNFFromObject(Object & obj);
+    against recorded responses.
+
+    `state` supplies the cache-identity stamp for `nPath` values via
+    `state.stableRootIdentifier(*rp.root)`. Matters both for
+    recording (WHNFPath payload persists the identifier) and for
+    live-dispatch comparison (hash equality with recorded requires
+    the same stamp). */
+trace::ResultWHNF computeWHNFFromObject(Object & obj, EvalState & state);
 
 /**
  * Object wrapper that logs all operations to a trace file and optionally

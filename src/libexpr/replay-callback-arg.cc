@@ -346,9 +346,9 @@ std::shared_ptr<Object> ReplayCallbackArg::queryApply(std::shared_ptr<Object> ar
                         argSel, decisionGraph, rootFSRoot, state, nullptr, nestedObsMap);
                     auto nestedResultObj = argObj->queryApply(nestedRca);
                     if (!nestedResultObj) { allMatch = false; break; }
-                    liveResult = computeWHNFFromObject(*nestedResultObj);
+                    liveResult = computeWHNFFromObject(*nestedResultObj, *state);
                 } else {
-                    auto qr = dispatchOuterQuery(argObj, (*probeSelOpt)->node);
+                    auto qr = dispatchOuterQuery(argObj, (*probeSelOpt)->node, *state);
                     liveResult = qr.result;
                 }
             } catch (const std::exception &) { extern thread_local bool rcaBailFlag; if (rcaBailFlag) throw; /* rca-bail-diagnostic */ allMatch = false; break; }
