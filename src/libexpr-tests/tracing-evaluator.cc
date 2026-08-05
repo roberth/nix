@@ -7,6 +7,7 @@
 #include "nix/expr/tracing-object.hh"
 #include "nix/expr/tracing-writer.hh"
 #include "nix/expr/interpreter.hh"
+#include "nix/expr/expr-from-object.hh"
 #include "nix/expr/eval.hh"
 #include "nix/expr/eval-settings.hh"
 #include "nix/expr/eval-gc.hh"
@@ -69,6 +70,13 @@ protected:
         decisionGraph = std::make_unique<TracingDecisionGraph>(tempDir / "index.sqlite");
         writer = std::make_unique<TracingWriter>(*sink, *decisionGraph);
         auto interpreter = make_ref<Interpreter>(stateRef);
+        /* Under the wrapping stack, TracingEvaluator's evalFile/evalExpr
+           construct a TracingObject that carries `ref<OuterResolver>`;
+           TE reads it via `inner->getOuterResolver()`. That's nullptr by
+           default on Interpreter — the CLI sets one via makeOuterResolver.
+           Wire one up here so the ref<> cast doesn't throw. */
+        interpreter->outerResolver =
+            makeOuterResolver(stateRef.get(), interpreter.get_ptr(), writer.get());
         evaluator = std::make_shared<TracingEvaluator>(*writer, interpreter);
     }
 
