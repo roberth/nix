@@ -155,12 +155,23 @@ RootedPath OuterObject::getPath()
     auto * p = std::get_if<trace::WHNFPath>(&w.payload);
     if (!p)
         throw Error("outer getPath: WHNF payload not path (type %s)", w.type);
-    /* lazy-paths: reuse the outer EvalState's `rootFSRoot` so the
-       SourceRoot outlives the Value the outer evaluator constructs
-       from this path. A one-off `SourceRoot::make` here would be
-       freed when the returned RootedPath drops, leaving Value's raw
-       SourceRoot pointer dangling. */
-    return RootedPath{outerRootFSRoot, CanonPath(p->path)};
+    /* Reconstruct the SourceRoot from the wire's sourceRootId (stamped
+       at record time by stableRootIdentifier). Correct-or-miss: an
+       identifier absent from the wire, or a lookup that misses this
+       process's rootByIdentity, means we can't honestly serve the
+       path — the caller must fall back to live inner rather than
+       substitute a stand-in root. */
+    if (!p->sourceRootId)
+        throw Error("outer getPath: WHNFPath has no sourceRootId — anonymous "
+                    "SourceRoots not yet supported across the cache boundary");
+    auto root = outerState.getRootByIdentity(*p->sourceRootId);
+    if (!root)
+        throw Error(
+            "outer getPath: sourceRootId '%s' not admitted in this process — "
+            "the SourceRoot's producer (fetchTree, mkPath, etc.) needs to have "
+            "run before this path can be reconstructed",
+            *p->sourceRootId);
+    return RootedPath{*root, CanonPath(p->path)};
 }
 
 bool OuterObject::getBool(std::string_view)
