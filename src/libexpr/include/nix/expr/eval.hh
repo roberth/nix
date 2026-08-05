@@ -767,6 +767,27 @@ private:
      */
     const ref<boost::concurrent_flat_map<std::string, ref<SourceRoot>>> rootByIdentity;
 
+    /**
+     * Backing map for anonymous-root identifiers. When a SourceRoot
+     * has no stamped `unpinnedId` (an ad-hoc `builtins.makePath` etc.)
+     * and isn't Internal-kinded, `stableRootIdentifier` mints
+     * `anon#<n>` from a per-EvalState counter and memoises it against
+     * the SourceRoot pointer here so repeated calls on the same root
+     * return the same identifier.
+     *
+     * Same reasoning as `sourceUnpinnedIds` for pointer safety: the
+     * SourceRoot the key points at is pinned in `rootCache` for the
+     * EvalState's lifetime, so the raw pointer stays dereferenceable.
+     *
+     * Not stable across processes: admission order can shift between
+     * runs; a warm session with different query shape than cold may
+     * misroute anonymous identifiers. Within a matching-until-
+     * divergence run cold and warm admit in the same order, so
+     * identifiers reproduce.
+     */
+    const ref<boost::concurrent_flat_map<SourceRoot *, std::string>> anonymousRootIds;
+    const ref<Sync<size_t>> anonymousRootIdCounter;
+
 private:
     // Helper to support the legacy EvalState constructor
     EvalState(

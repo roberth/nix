@@ -318,6 +318,8 @@ EvalState::EvalState(
     , sourceUnpinnedIds(make_ref<decltype(sourceUnpinnedIds)::element_type>())
     , sourceUnpinnedIdCounters(make_ref<decltype(sourceUnpinnedIdCounters)::element_type>())
     , rootByIdentity(make_ref<decltype(rootByIdentity)::element_type>())
+    , anonymousRootIds(make_ref<decltype(anonymousRootIds)::element_type>())
+    , anonymousRootIdCounter(make_ref<decltype(anonymousRootIdCounter)::element_type>(0))
 #if NIX_USE_BOEHMGC
     , baseEnvP(std::allocate_shared<Env *>(traceable_allocator<Env *>(), &mem.allocEnv(BASE_ENV_SIZE)))
     , baseEnv(**baseEnvP)

@@ -88,7 +88,28 @@ std::optional<std::string> EvalState::stableRootIdentifier(SourceRoot & root)
     if (root.kind == SourceRootKind::Internal)
         return std::nullopt;
 
-    return allocSourceUnpinnedId(root);
+    /* Stamped: `<url>#<n>`. */
+    if (auto id = allocSourceUnpinnedId(root))
+        return id;
+
+    /* Anonymous producer (`builtins.makePath`, ad-hoc mkPath calls
+       with no Input claim): mint `anon#<n>` from a per-EvalState
+       counter, memoised on the SourceRoot pointer so repeated calls
+       on the same root are stable within-process. Cross-process is
+       fragile — see anonymousRootIds's docstring. */
+    auto key = &root;
+    std::optional<std::string> hit;
+    anonymousRootIds->cvisit(key, [&](const auto & kv) { hit = kv.second; });
+    if (hit)
+        return hit;
+    size_t n;
+    {
+        auto counter(anonymousRootIdCounter->lock());
+        n = (*counter)++;
+    }
+    std::string id = "anon#" + std::to_string(n);
+    anonymousRootIds->emplace_or_visit(key, id, [&](const auto & kv) { id = kv.second; });
+    return id;
 }
 
 std::optional<ref<SourceRoot>> EvalState::getRootByIdentity(std::string_view id)
@@ -122,12 +143,10 @@ EvalState::getOrCreateRoot(ref<SourceAccessor> accessor, SourceRootKind kind, st
        stableRootIdentifier) so the map is ready when a cache-hit
        serves a WHNFPath payload straight from cachedWHNF without
        going live through queryFn — see OuterObject::getPath under
-       Phase 1. Internal roots have no identity (see
-       stableRootIdentifier); skip them. */
-    if (kind != SourceRootKind::Internal) {
-        if (auto id = allocSourceUnpinnedId(*result))
-            rootByIdentity->emplace_or_visit(*id, result, [](const auto &) {});
-    }
+       Phase 1. Route through stableRootIdentifier so anonymous
+       roots also register (via anon#<n>), not just stamped ones. */
+    if (auto id = stableRootIdentifier(*result))
+        rootByIdentity->emplace_or_visit(*id, result, [](const auto &) {});
     return result;
 }
 
