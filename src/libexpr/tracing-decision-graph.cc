@@ -500,6 +500,12 @@ struct TracingDecisionGraph::State
        (queryHash, factSetHash) — the same key SQLite uses. */
     std::map<std::pair<TracingHash, TracingHash>, std::vector<AskEdge>> askEdgesCache;
     std::map<std::pair<TracingHash, TracingHash>, std::optional<ResultHash>> terminalCache;
+
+    /* Same async-hiding contract as terminalCache: insertObservationSet
+       populates this cache under the lock; getObservationSet reads it
+       first. Otherwise walker reads race the async writer's SQL flush
+       and miss legitimately-inserted sets. */
+    std::map<TracingHash, std::vector<InlineFact>> obsSetPayloadCache;
 };
 
 /* ─────────────────────────────────────────────────────────────────────
@@ -879,6 +885,7 @@ TracingHash TracingDecisionGraph::insertObservationSet(
         auto state(_state->lock());
         state->writeQueue->enqueue(WriteInsertObservationSet{th, payload});
         state->obsSetDepthMemo[th] = depth;
+        state->obsSetPayloadCache.try_emplace(th, sorted);
     }
 
     auto & stats = tracingCacheStats();
@@ -894,6 +901,14 @@ TracingDecisionGraph::getObservationSet(const TracingHash & th)
     std::optional<std::string> payload;
     {
         auto state(_state->lock());
+        /* In-memory cache first — hides async-writer race between
+           insertObservationSet's enqueue and the writer thread's SQL
+           flush. Without this, walker reads on the same-session
+           just-recorded set miss and dispatchLiveCallbackApplication
+           returns null (breaks cross-walk callback dedup). */
+        auto cacheIt = state->obsSetPayloadCache.find(th);
+        if (cacheIt != state->obsSetPayloadCache.end())
+            return cacheIt->second;
         auto query = state->selectObservationSet.use();
         dg_bindBlob(query, dg_hashToBlob(th));
         if (query.next())
