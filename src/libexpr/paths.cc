@@ -72,43 +72,8 @@ std::optional<std::string> EvalState::allocSourceUnpinnedId(SourceRoot & root)
     return id;
 }
 
-/* Prefix on identifiers that come from a parent EvalState via
-   `stableRootIdentifier`'s delegation path. Each additional
-   `builtins.cache` boundary adds another layer. Wire-level
-   distinguishing between "our `anon#0`" and "outer's `anon#0`" is
-   the whole reason for the prefix — same string bytes could mean
-   two different SourceRoots without it. */
-static constexpr std::string_view outerIdPrefix = "_outer_:";
-
-bool EvalState::ownsRoot(SourceRoot & root) const
-{
-    if (&root == rootFSRoot.get()
-        || &root == corepkgsRoot.get()
-        || &root == internalFSRoot.get())
-        return true;
-    bool owned = false;
-    rootCache->cvisit(
-        std::pair{root.accessor.get(), root.kind},
-        [&](const auto & kv) { owned = (kv.second.get() == &root); });
-    return owned;
-}
-
 std::optional<std::string> EvalState::stableRootIdentifier(SourceRoot & root)
 {
-    /* Not ours — delegate to parent and prefix. A SourceRoot that
-       crossed from outer via OuterObject is admitted in outer's
-       rootCache, not ours; outer's identifier space is the one that
-       resolves it. Prefix keeps wire-level identifiers disjoint per
-       layer so `getRootByIdentity` unambiguously routes back. */
-    if (!ownsRoot(root)) {
-        if (!parentState)
-            return std::nullopt;
-        auto parentId = parentState->stableRootIdentifier(root);
-        if (!parentId)
-            return std::nullopt;
-        return std::string{outerIdPrefix} + *parentId;
-    }
-
     /* Bare "system" for the singular System root — no #n so it
        can't collide with an anonymous producer that happens to
        claim the raw string "system" as its unpinnedId (which would
@@ -149,11 +114,6 @@ std::optional<std::string> EvalState::stableRootIdentifier(SourceRoot & root)
 
 std::optional<ref<SourceRoot>> EvalState::getRootByIdentity(std::string_view id)
 {
-    if (id.substr(0, outerIdPrefix.size()) == outerIdPrefix) {
-        if (!parentState)
-            return std::nullopt;
-        return parentState->getRootByIdentity(id.substr(outerIdPrefix.size()));
-    }
     std::optional<ref<SourceRoot>> hit;
     rootByIdentity->cvisit(std::string{id}, [&](const auto & kv) { hit = kv.second; });
     return hit;
