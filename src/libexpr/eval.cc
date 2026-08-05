@@ -317,6 +317,7 @@ EvalState::EvalState(
     , rootCache(make_ref<decltype(rootCache)::element_type>())
     , sourceUnpinnedIds(make_ref<decltype(sourceUnpinnedIds)::element_type>())
     , sourceUnpinnedIdCounters(make_ref<decltype(sourceUnpinnedIdCounters)::element_type>())
+    , rootByIdentity(make_ref<decltype(rootByIdentity)::element_type>())
 #if NIX_USE_BOEHMGC
     , baseEnvP(std::allocate_shared<Env *>(traceable_allocator<Env *>(), &mem.allocEnv(BASE_ENV_SIZE)))
     , baseEnv(**baseEnvP)
@@ -338,6 +339,14 @@ EvalState::EvalState(
 
     corepkgsFS->setPathDisplay("<nix", ">");
     internalFS->setPathDisplay("«nix-internal»", "");
+
+    /* Pre-populate the reverse map for the singular System root.
+       `stableRootIdentifier` returns bare `"system"` for this
+       specific SourceRoot (see paths.cc); the entry needs to be
+       there when a warm replay serves a WHNFPath payload
+       stamped with `"system"` at cold time. */
+    rootByIdentity->emplace_or_visit(
+        std::string{"system"}, rootFSRoot, [](const auto &) {});
 
     countCalls = getEnv("NIX_COUNT_CALLS").value_or("0") != "0";
 

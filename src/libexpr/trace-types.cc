@@ -142,6 +142,8 @@ void to_json(nlohmann::json & j, const ResultWHNF & r)
             j["value"] = p.value;
         } else if constexpr (std::is_same_v<T, WHNFPath>) {
             j["path"] = p.path;
+            if (p.sourceRootId)
+                j["sourceRootId"] = *p.sourceRootId;
         } else if constexpr (std::is_same_v<T, WHNFString>) {
             j["value"] = p.value;
             j["context"] = p.context;
@@ -164,7 +166,10 @@ void from_json(const nlohmann::json & j, ResultWHNF & r)
     } else if (r.type == "float") {
         r.payload = WHNFFloat{j.at("value").get<double>()};
     } else if (r.type == "path") {
-        r.payload = WHNFPath{j.at("path").get<std::string>()};
+        WHNFPath p{j.at("path").get<std::string>(), std::nullopt};
+        if (j.contains("sourceRootId"))
+            p.sourceRootId = j.at("sourceRootId").get<std::string>();
+        r.payload = std::move(p);
     } else if (r.type == "string") {
         WHNFString s;
         j.at("value").get_to(s.value);

@@ -756,6 +756,17 @@ private:
     const ref<boost::concurrent_flat_map<std::pair<std::string, SourceAccessor *>, std::string>> sourceUnpinnedIds;
     const ref<Sync<std::map<std::string, size_t>>> sourceUnpinnedIdCounters;
 
+    /**
+     * Reverse of `stableRootIdentifier`: identifier → SourceRoot.
+     * Populated lazily on `stableRootIdentifier` calls, plus one
+     * pre-populated entry `"system" → rootFSRoot` at construction.
+     *
+     * Each `EvalState` maintains its own mapping — no canonical
+     * owner across cache layers (an inner and outer `builtins.cache`
+     * each admit their own SourceRoots and don't share).
+     */
+    const ref<boost::concurrent_flat_map<std::string, ref<SourceRoot>>> rootByIdentity;
+
 private:
     // Helper to support the legacy EvalState constructor
     EvalState(
@@ -775,6 +786,31 @@ public:
      * EvalState; the `#<n>` is always emitted.
      */
     std::optional<std::string> allocSourceUnpinnedId(SourceRoot & root);
+
+    /**
+     * Cache-identity of a `SourceRoot` for use as the trace-layer
+     * `sourceRootId`. Registers the identifier in the reverse-lookup
+     * map so `getRootByIdentity` can recover the SourceRoot.
+     *
+     * - `"system"` (bare, no `#n`) for the singular `rootFSRoot`.
+     *   Distinct from any anonymous producer that happens to claim
+     *   `"system"` and gets `"system#n"` through the general path.
+     * - `nullopt` for `SourceRootKind::Internal` — those helpers
+     *   have no identity and are refused across the cache boundary
+     *   at the wrap seam.
+     * - `allocSourceUnpinnedId(root)` otherwise (`"<url>#<n>"` or
+     *   `nullopt` for unstamped producer roots).
+     */
+    std::optional<std::string> stableRootIdentifier(SourceRoot & root);
+
+    /**
+     * Look up a `SourceRoot` by its `stableRootIdentifier`. Returns
+     * `nullopt` if no root with that identifier has been admitted
+     * in this EvalState. Legitimate miss under correct-or-miss
+     * discipline: callers must fall back to the inner evaluator
+     * rather than substituting a stand-in root.
+     */
+    std::optional<ref<SourceRoot>> getRootByIdentity(std::string_view id);
 
     /**
      * @param lookupPath     Only used during construction.

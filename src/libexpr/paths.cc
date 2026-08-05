@@ -72,6 +72,32 @@ std::optional<std::string> EvalState::allocSourceUnpinnedId(SourceRoot & root)
     return id;
 }
 
+std::optional<std::string> EvalState::stableRootIdentifier(SourceRoot & root)
+{
+    /* Bare "system" for the singular System root — no #n so it
+       can't collide with an anonymous producer that happens to
+       claim the raw string "system" as its unpinnedId (which would
+       route through allocSourceUnpinnedId and get "system#n"). */
+    if (&root == rootFSRoot.get())
+        return "system";
+
+    /* Internal-kinded helpers (corepkgs, derivation-internal.nix)
+       have no identity — refused across the cache boundary at the
+       wrap seam. Return nullopt so callers that reach here can
+       propagate the refusal / miss cleanly. */
+    if (root.kind == SourceRootKind::Internal)
+        return std::nullopt;
+
+    return allocSourceUnpinnedId(root);
+}
+
+std::optional<ref<SourceRoot>> EvalState::getRootByIdentity(std::string_view id)
+{
+    std::optional<ref<SourceRoot>> hit;
+    rootByIdentity->cvisit(std::string{id}, [&](const auto & kv) { hit = kv.second; });
+    return hit;
+}
+
 ref<SourceRoot>
 EvalState::getOrCreateRoot(ref<SourceAccessor> accessor, SourceRootKind kind, std::optional<std::string> unpinnedId)
 {
@@ -92,6 +118,16 @@ EvalState::getOrCreateRoot(ref<SourceAccessor> accessor, SourceRootKind kind, st
        practice) is silently ignored. */
     ref<SourceRoot> result = SourceRoot::make(accessor, kind, std::move(unpinnedId));
     rootCache->emplace_or_visit(key, result, [&](const auto & kv) { result = kv.second; });
+    /* Reverse-lookup population happens at admission (not lazily on
+       stableRootIdentifier) so the map is ready when a cache-hit
+       serves a WHNFPath payload straight from cachedWHNF without
+       going live through queryFn — see OuterObject::getPath under
+       Phase 1. Internal roots have no identity (see
+       stableRootIdentifier); skip them. */
+    if (kind != SourceRootKind::Internal) {
+        if (auto id = allocSourceUnpinnedId(*result))
+            rootByIdentity->emplace_or_visit(*id, result, [](const auto &) {});
+    }
     return result;
 }
 

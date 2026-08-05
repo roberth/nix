@@ -224,7 +224,14 @@ void from_json(const nlohmann::json & j, Result<T> & r)
 struct WHNFInt { int64_t value; };
 struct WHNFBool { bool value; };
 struct WHNFFloat { double value; };
-struct WHNFPath { std::string path; };
+/** Path payload. `sourceRootId` is the SourceRoot's stable identifier
+    per that cache layer's admission history (e.g. `"system"` for the
+    singular System root, `"<url>#<n>"` for stamped roots via
+    `allocSourceUnpinnedId`). `nullopt` when the SourceRoot has no
+    stamped identity — the walker treats such payloads as
+    unrecoverable and misses cleanly rather than substituting a
+    stand-in SourceRoot. */
+struct WHNFPath { std::string path; std::optional<std::string> sourceRootId; };
 struct WHNFString { std::string value; std::vector<std::string> context; };
 struct WHNFAttrs { std::vector<std::string> names; };
 struct WHNFList { size_t size; };
