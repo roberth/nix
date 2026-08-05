@@ -921,24 +921,32 @@ ref<Object> TracingReplayEvaluator::evalFile(const RootedPath & path, const std:
        after the TracingReplayObject wrapper is constructed. */
     auto rootCell = RegularArgCell::make(writer.sessionRootCell, nullptr);
     trace::SelectorImport rootSel{displayPath};
+    auto rootSelInterned = decisionGraph.selectorPool.intern(rootSel);
+    std::optional<trace::ResultWHNF> cachedWHNF;
+    TriePosition triePos{TracingDecisionGraph::emptySetHash(), rootSelInterned->cachedHash.toHex()};
     if (auto result = lookup(rootSel, nullptr, rootCell)) {
         tracingCacheLog("replay hit: evalFile %s", displayPath);
-        std::optional<trace::ResultWHNF> cachedWHNF;
         try {
             auto whnfJson = cborStringToJson(result->first);
             trace::ResultWHNF parsed;
             from_json(whnfJson, parsed);
             cachedWHNF = std::move(parsed);
-        } catch (const std::exception &) { extern thread_local bool rcaBailFlag; if (rcaBailFlag) throw; /* rca-bail-diagnostic */ /* fall through */ }
-        /* Bootstrap the pool with this root Selector. */
-        auto obj = make_ref<TracingReplayObject>(
-            *this, result->second, [this, path, displayPath]() { return inner->evalFile(path, displayPath); }, rootCell,
-            decisionGraph.selectorPool.intern(rootSel), std::move(cachedWHNF));
-        rootCell->liveObject = obj.get_ptr();
-        return obj;
+        } catch (const std::exception &) { extern thread_local bool rcaBailFlag; if (rcaBailFlag) throw; /* fall through */ }
+        triePos = result->second;
+    } else {
+        tracingCacheLog("replay miss: evalFile %s (wrapping lazy inner in TRO)", displayPath);
     }
-    tracingCacheLog("replay miss: evalFile %s", displayPath);
-    return inner->evalFile(path, displayPath);
+    /* Wrapping stack: always return a TRO. On hit, cachedWHNF is set;
+       on miss, the lazy inner activates via ensureInner() when needed.
+       This routes subsequent applies through TRO::queryApply's walker
+       probe first — enabling replay's dispatch machinery to serve
+       cross-apply repeats via its own OVR memoization mechanism
+       (which needs a separate extension to actually memoize OVR). */
+    auto obj = make_ref<TracingReplayObject>(
+        *this, triePos, [this, path, displayPath]() { return inner->evalFile(path, displayPath); }, rootCell,
+        rootSelInterned, std::move(cachedWHNF), /*cbApplyOrigin=*/false, /*walkerMissed=*/!cachedWHNF.has_value());
+    rootCell->liveObject = obj.get_ptr();
+    return obj;
 }
 
 ref<Object> TracingReplayEvaluator::evalExpr(const std::string & expr, const RootedPath & basePath)
@@ -947,23 +955,27 @@ ref<Object> TracingReplayEvaluator::evalExpr(const std::string & expr, const Roo
        after wrapping. */
     auto rootCell = RegularArgCell::make(writer.sessionRootCell, nullptr);
     trace::SelectorExpr rootSel{expr, basePath.path.abs()};
+    auto rootSelInterned = decisionGraph.selectorPool.intern(rootSel);
+    std::optional<trace::ResultWHNF> cachedWHNF;
+    TriePosition triePos{TracingDecisionGraph::emptySetHash(), rootSelInterned->cachedHash.toHex()};
     if (auto result = lookup(rootSel, nullptr, rootCell)) {
         tracingCacheLog("replay hit: evalExpr");
-        std::optional<trace::ResultWHNF> cachedWHNF;
         try {
             auto whnfJson = cborStringToJson(result->first);
             trace::ResultWHNF parsed;
             from_json(whnfJson, parsed);
             cachedWHNF = std::move(parsed);
-        } catch (const std::exception &) { extern thread_local bool rcaBailFlag; if (rcaBailFlag) throw; /* rca-bail-diagnostic */ /* fall through */ }
-        auto obj = make_ref<TracingReplayObject>(
-            *this, result->second, [this, expr, basePath]() { return inner->evalExpr(expr, basePath); }, rootCell,
-            decisionGraph.selectorPool.intern(rootSel), std::move(cachedWHNF));
-        rootCell->liveObject = obj.get_ptr();
-        return obj;
+        } catch (const std::exception &) { extern thread_local bool rcaBailFlag; if (rcaBailFlag) throw; /* fall through */ }
+        triePos = result->second;
+    } else {
+        tracingCacheLog("replay miss: evalExpr (wrapping lazy inner in TRO)");
     }
-    tracingCacheLog("replay miss: evalExpr");
-    return inner->evalExpr(expr, basePath);
+    /* Wrapping stack: see evalFile for rationale. */
+    auto obj = make_ref<TracingReplayObject>(
+        *this, triePos, [this, expr, basePath]() { return inner->evalExpr(expr, basePath); }, rootCell,
+        rootSelInterned, std::move(cachedWHNF), /*cbApplyOrigin=*/false, /*walkerMissed=*/!cachedWHNF.has_value());
+    rootCell->liveObject = obj.get_ptr();
+    return obj;
 }
 
 ref<Object> TracingReplayEvaluator::evalExprLazy(const std::string & expr, const RootedPath & basePath)
