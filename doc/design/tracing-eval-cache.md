@@ -129,7 +129,8 @@ present design.
    callback-produced value (getting an attribute on a callback's
    applyResult, applying a callback-returned function further, …)
    is one value request under this principle: one Ask edge on the
-   enclosing chain, one live callback invocation at dispatch. A
+   enclosing chain, one live callback invocation per unique probe
+   at dispatch. A
    callback application takes input from the inner evaluator —
    the contra-arg observations characterizing what inner caused
    outer to see during the callback body — and that input belongs
