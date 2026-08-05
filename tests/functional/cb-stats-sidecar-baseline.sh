@@ -28,7 +28,7 @@ clearCache
 echo '{ f, x }: f x' > "$TEST_ROOT/call.nix"
 
 echo "=== cold (no hits, but misses, fallbacks) ==="
-assertCacheStats 0 2 1 -- \
+assertCacheStats 0 3 2 -- \
     nix eval --impure --expr \
         '(builtins.cache { import = '"$TEST_ROOT"'/call.nix; }) { f = x: x + 100; x = 7; }'
 

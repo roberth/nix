@@ -35,7 +35,7 @@ echo '{ x, ... }: x + 100' > "$TEST_ROOT/fn.nix"
 
 clearCache
 echo "=== variant A cold ==="
-assertCacheStats 0 2 1 -- \
+assertCacheStats 0 3 2 -- \
     nix eval --impure --expr \
         '(builtins.cache { import = '"$TEST_ROOT"'/fn.nix; }) { x = 13; unused = "literal"; }'
 
@@ -48,7 +48,7 @@ assertCacheStats 2 0 0 -- \
 
 clearCache
 echo "=== variant B cold (throw in unused field — must not fire) ==="
-assertCacheStats 0 2 1 -- \
+assertCacheStats 0 3 2 -- \
     nix eval --impure --expr \
         '(builtins.cache { import = '"$TEST_ROOT"'/fn.nix; }) { x = 13; unused = throw "evaluated unused"; }'
 

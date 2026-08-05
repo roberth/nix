@@ -28,7 +28,11 @@ echo '{ x }: x + 100' > "$TEST_ROOT/fn.nix"
 # Expected: first invocation records, second invocation hits the
 # recorded trace via CDI collapse. (Exact counts calibrated.)
 echo "=== cold record: c{x=1} + c{x=1} ==="
-assertCacheStats 1 2 1 -- \
+# Wrapping-stack update (2026-08-05): TRE::evalFile now always
+# returns a TRO wrapping the lazy inner. Cold's walker probe misses
+# on empty DB (+1 miss) and the ensureInner activation ticks the
+# fallback stat (+1 fallback). Hit unchanged.
+assertCacheStats 1 3 2 -- \
     nix eval --impure --expr \
         'let c = builtins.cache { import = '"$TEST_ROOT"'/fn.nix; }; in c { x = 1; } + c { x = 1; }'
 
@@ -42,6 +46,7 @@ assertCacheStats 3 0 0 -- \
 # same shape. The 2nd and 3rd should both hit the 1st's trace.
 clearCache
 echo "=== cold record: c{x=1} + c{x=1} + c{x=1} (expect more hits via further collapse) ==="
-assertCacheStats 2 2 1 -- \
+# +1 miss, +1 fallback for wrapping-stack (see above).
+assertCacheStats 2 3 2 -- \
     nix eval --impure --expr \
         'let c = builtins.cache { import = '"$TEST_ROOT"'/fn.nix; }; in c { x = 1; } + c { x = 1; } + c { x = 1; }'

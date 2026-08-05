@@ -21,10 +21,12 @@ clearCache
 echo '{ x = 1; y = 2; }' > "$TEST_ROOT/simple.nix"
 
 # Cold record: no recorded trace yet → first lookup misses, primop
-# falls through to inner evaluator. No TracingReplayObject means no
-# ensureInner fallback path.
-echo "=== cold record (no hits, but a miss, no fallbacks) ==="
-assertCacheStats 0 1 0 -- \
+# falls through to inner evaluator. Under the wrapping stack
+# (2026-08-05), TRE::evalFile always returns a TRO wrapping the
+# lazy inner; the walker probe misses on the empty DB and
+# ensureInner() ticks the fallback stat. Miss count unchanged.
+echo "=== cold record (no hits, but a miss, one fallback) ==="
+assertCacheStats 0 1 1 -- \
     nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/simple.nix; }).x'
 
 # Warm replay: cache hit on evalFile → TracingReplayObject wraps the

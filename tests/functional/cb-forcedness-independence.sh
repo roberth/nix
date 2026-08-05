@@ -29,7 +29,7 @@ echo '{ f, x }: f x' > "$TEST_ROOT/call.nix"
 clearCache
 
 echo "=== variant A cold (= unforced arg) ==="
-assertCacheStats 0 2 1 -- \
+assertCacheStats 0 3 2 -- \
     nix eval --impure --expr \
         '(builtins.cache { import = '"$TEST_ROOT"'/call.nix; }) { f = n: n + 100; x = 13; }'
 
@@ -53,7 +53,7 @@ resultA=$(_NIX_DISALLOW_PARSE=1 nix eval --impure --expr \
 clearCache
 
 echo "=== variant B cold (= pre-forced arg via seq) ==="
-assertCacheStats 0 2 1 -- \
+assertCacheStats 0 3 2 -- \
     nix eval --impure --expr \
         'let arg = { f = n: n + 100; x = 13; };
          in builtins.seq arg.x ((builtins.cache { import = '"$TEST_ROOT"'/call.nix; }) arg)'
