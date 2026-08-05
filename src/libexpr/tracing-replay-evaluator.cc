@@ -104,6 +104,7 @@ TracingReplayEvaluator::walk(
             return trace::tracingZeroHash();
         bool isQueryRequest = std::holds_alternative<trace::OuterValueRequest>(*req);
         bool willMoveStateHash = false;
+        bool ovrIsSelfIdentifying = false;
         std::string queryDescription = std::visit(overloaded{
             [](const trace::FileReadRequest & r) {
                 return "env-file " + r.absPath;
@@ -113,12 +114,41 @@ TracingReplayEvaluator::walk(
             },
             [&](const trace::OuterValueRequest & r) {
                 willMoveStateHash = trace::willMoveStateHash(*r.query);
+                /* Only SelectorCallbackApply encodes enough context
+                   in its identity (argObsSet) to safely cross-context
+                   memoize. Other OVR selectors (GetAttr, GetListElem,
+                   Apply, GetFunctionInfo) can share request hashes
+                   across contexts with different responses (e.g.
+                   `.n` on cachedFib{n=10} vs cachedFib{n=9} — same
+                   Selector, different response). */
+                ovrIsSelfIdentifying =
+                    std::holds_alternative<trace::SelectorCallbackApply>(r.query->node);
                 return trace::describe(*r.query);
             },
         }, *req);
         if (!willMoveStateHash) {
             if (auto it = responseFor.find(requestHash); it != responseFor.end())
                 return it->second;
+        }
+        /* Cell-scoped OVR memo consult: for OuterValueRequests, look
+           up the request hash in the chain's per-cell outerResponseMemo.
+           On hit, return the memoized response hash directly — no
+           live dispatch, no payload materialisation. This is what
+           enables cold's Nth (N≥3) invocation of the same cached fn
+           to skip re-dispatching an OVR that the 2nd walker validation
+           already computed. */
+        if (ovrIsSelfIdentifying) {
+            for (auto c = ctx.walkCell.get(); c; c = c->parent.get()) {
+                auto it = c->outerResponseMemo.find(requestHash);
+                if (it != c->outerResponseMemo.end()) {
+                    tracingCacheLog(
+                        "dispatch OVR memo hit: req=%s resp=%s cellDepth=%d",
+                        requestHash.toHex().substr(0, 12),
+                        it->second.toHex().substr(0, 12),
+                        c->depth);
+                    return it->second;
+                }
+            }
         }
         /* Cell-migration Phase B: SelectorApply is now walkable (its
            Terminal is inserted by TracingEvaluator::apply after
@@ -147,6 +177,18 @@ TracingReplayEvaluator::walk(
            on mismatch. */
         if (!willMoveStateHash)
             responseFor.emplace(requestHash, h);
+        /* Cell-scoped OVR memo populate: after a fresh live dispatch of
+           an OuterValueRequest, remember the response payload on the
+           parent of the current walk cell (`ctx.walkCell->parent`).
+           That's the shared cell across applies of the same cached fn
+           (seedCell.parent = fn.rootCell in the primop-apply case);
+           storing there lets subsequent walker calls from other
+           per-apply cells find the memo by walking up. Only populate
+           on FRESH dispatch — don't re-store when we ourselves hit
+           the memo. */
+        if (ovrIsSelfIdentifying && ctx.walkCell && ctx.walkCell->parent) {
+            ctx.walkCell->parent->outerResponseMemo.try_emplace(requestHash, h);
+        }
         /* Walker-side dispatch is validation, not new recording.
            The observation being validated was already emitted by the
            original interpreter run (via logResponse or

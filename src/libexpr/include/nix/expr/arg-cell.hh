@@ -38,6 +38,7 @@
 
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace nix {
@@ -205,6 +206,34 @@ struct ArgCell : std::enable_shared_from_this<ArgCell>
         to be in the parent chain. Expired entries are lazily skipped
         (no aggressive compaction). */
     mutable std::vector<std::weak_ptr<ArgCell>> liveCallbackChildren;
+
+    /** Session-scoped OuterValueRequest response memo. Populated by
+        the walker after its OVR dispatch produces a live response;
+        consulted by subsequent walker dispatches walking up the cell
+        chain. Same in-memory memo pattern as
+        TracingReplayEvaluator::envResponseMemo (session-scoped for
+        env requests) but at cell scope for cell-scoped requests.
+
+        Scope choice matters for correctness:
+        - Memoize on the current apply's cell (per-apply seedCell):
+          doesn't span applies, useless for repeated invocations.
+        - Memoize on the fn's cell (seedCell.parent for our test):
+          spans applies of the same cached fn. This is where the
+          memo lives.
+
+        Key = request hash. Value = response hash. Storing hash
+        (16 bytes) rather than the full response payload keeps this
+        bounded: recursive callback patterns like cb-fib produce
+        many unique probes with potentially large payloads (attrsets,
+        nested applyResults); memoizing payloads would OOM. The
+        walker only needs the response hash for its fold — the
+        payload is regenerated on live dispatch if needed elsewhere.
+
+        Different SCA requests (different fn or different argObsSet)
+        hash differently, so sibling SCAs naturally coexist without
+        conflict. Never cleared during the session — grows with
+        unique requests. */
+    mutable std::unordered_map<TracingHash, TracingHash> outerResponseMemo;
 
     /** Sum of canonicalisationEpoch over this cell + all ancestors.
         Cheap: O(depth) walk. Since delta chains fold facts from cell
