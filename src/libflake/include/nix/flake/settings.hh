@@ -52,22 +52,22 @@ struct Settings : public Config
 
     Setting<bool> defaultCopyToStore{
         this,
-        false,
+        true,
         "flake-default-copy-to-store",
         R"(
           The default value for `inputs.<name>.copyToStore` (and
           `inputs.self.copyToStore`) when a flake doesn't set it
-          explicitly. When `true`, every flake input's `flake.nix` is
-          imported as a store-path string rather than as a path
-          Value, so structural primops (`dirOf`, `baseNameOf`,
-          anything routing through `lib.path.deconstructPath`) walk
-          through the storepath the way they did before lazy-paths.
+          explicitly. When `true` (the default), every flake input's
+          `flake.nix` is imported as a store-path string rather than
+          as a path Value, so structural primops (`dirOf`,
+          `baseNameOf`, anything routing through
+          `lib.path.deconstructPath`) walk through the storepath the
+          way they did before lazy-paths — matching the behaviour
+          existing flakes rely on.
 
-          Provided so users of flakes that target older Nix versions
-          (which don't recognise the `copyToStore` attribute) can opt
-          into the eager shape without modifying those flakes. The
-          per-input `copyToStore` setting on a flake input always
-          wins over this default.
+          Set to `false` to opt into lazy-paths shape globally; a
+          per-input `inputs.<name>.copyToStore` on a flake input
+          always wins over this default.
         )",
         {},
         true,
