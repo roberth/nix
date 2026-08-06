@@ -193,7 +193,7 @@ struct LockedFlake
      * doesn't need to take a `Settings` parameter just for one bit
      * of state.
      */
-    bool defaultCopyToStore = false;
+    bool defaultCopyToStore = true;
 
     std::optional<Fingerprint> getFingerprint(Store & store, const fetchers::Settings & fetchSettings) const;
 };
