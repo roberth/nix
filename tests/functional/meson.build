@@ -175,6 +175,7 @@ suites = [
       'cb-reuse-trace-once.sh',
       'cb-cache-consult-trace-once.sh',
       'cb-source-root-preservation.sh',
+      'cb-system-path-through-callback.sh',
       'cb-deep-indep-orders.sh',
       'cb-deep-indep-singles.sh',
       'cb-apply-cli.sh',
