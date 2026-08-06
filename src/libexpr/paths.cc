@@ -95,6 +95,16 @@ bool EvalState::ownsRoot(SourceRoot & root) const
 
 std::optional<std::string> EvalState::stableRootIdentifier(SourceRoot & root)
 {
+    /* System is a singleton — the real filesystem — regardless of
+       which state's `rootFSRoot` wraps it. Every EvalState creates
+       its own `rootFSRoot` (`SourceRoot::make(rootFS, System, "path:")`)
+       and any downstream `getOrCreateRoot(other_accessor, System, …)`
+       admissions are semantically the same filesystem. Short-circuit
+       before ownership / delegation so a cross-state System-kinded
+       root always resolves without touching parentState. */
+    if (root.kind == SourceRootKind::System)
+        return "system";
+
     /* Not ours — delegate to parent and prefix. A SourceRoot that
        crossed from outer via OuterObject is admitted in outer's
        rootCache, not ours; outer's identifier space is the one that
@@ -108,13 +118,6 @@ std::optional<std::string> EvalState::stableRootIdentifier(SourceRoot & root)
             return std::nullopt;
         return std::string{outerIdPrefix} + *parentId;
     }
-
-    /* Bare "system" for the singular System root — no #n so it
-       can't collide with an anonymous producer that happens to
-       claim the raw string "system" as its unpinnedId (which would
-       route through allocSourceUnpinnedId and get "system#n"). */
-    if (&root == rootFSRoot.get())
-        return "system";
 
     /* Internal-kinded helpers (corepkgs, derivation-internal.nix)
        have no identity — refused across the cache boundary at the
@@ -149,6 +152,12 @@ std::optional<std::string> EvalState::stableRootIdentifier(SourceRoot & root)
 
 std::optional<ref<SourceRoot>> EvalState::getRootByIdentity(std::string_view id)
 {
+    /* "system" resolves to *our own* rootFSRoot — matching the
+       singleton behaviour in `stableRootIdentifier`. Even under
+       delegation (`_outer_:system`), any layer's rootFSRoot is
+       equivalent, so short-circuit here. */
+    if (id == "system")
+        return rootFSRoot;
     if (id.substr(0, outerIdPrefix.size()) == outerIdPrefix) {
         if (!parentState)
             return std::nullopt;
