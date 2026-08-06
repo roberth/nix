@@ -1332,25 +1332,39 @@ static void addFetchTreeMetadataAttrsViaEvaluator(
     (void) state;
 }
 
-/* Mirror `emitTreeAttrs(..., lazy=true)` at the Object level. */
+/* Mirror `emitTreeAttrs` at the Object level. `lazy` selects between
+   the path-Value shape (fetcher-accessor-rooted, `emitTreeAttrs(lazy=true)`
+   equivalent) and the store-path-string shape with a matching
+   NixStringContext (`emitTreeAttrs(lazy=false)` equivalent, requires
+   `tree.storePath`). Caller (`callFlakeViaEvaluator`) decides based
+   on the same copyToStore logic as the Value-level `callFlake`. */
 static ref<Object> emitTreeAttrsViaEvaluator(
     Evaluator & evaluator,
     EvalState & state,
     const fetchers::MountableTree & tree,
     const fetchers::Input & input,
     bool emptyRevFallback,
-    bool forceDirty)
+    bool forceDirty,
+    bool lazy)
 {
     std::map<std::string, ref<Object>> attrs;
-    /* `lazy = true`: outPath is rooted at the fetcher's accessor with
-       the input's unpinned URL as identity, exactly like
-       `emitTreeAttrs(lazy=true)`. No mountInput, no store walk. */
-    attrs.emplace(
-        "outPath",
-        evaluator.mkPath(
-            RootedPath{
-                state.getOrCreateRoot(tree.accessor(), SourceRootKind::Copyable, input.toUnpinnedURL()),
-                CanonPath::root}));
+    if (lazy) {
+        attrs.emplace(
+            "outPath",
+            evaluator.mkPath(
+                RootedPath{
+                    state.getOrCreateRoot(tree.accessor(), SourceRootKind::Copyable, input.toUnpinnedURL()),
+                    CanonPath::root}));
+    } else {
+        /* Value-level `mkStorePathString` gives the string an
+           `Opaque` NixStringContext element so downstream coercions
+           track the store-path dependency. `Evaluator::mkString`
+           has no context overload, so allocate the Value directly
+           and lift via `toObjectCompat`. */
+        auto v = state.allocValue();
+        state.mkStorePathString(tree.storePath.value(), *v);
+        attrs.emplace("outPath", state.toObjectCompat(*v));
+    }
     addFetchTreeMetadataAttrsViaEvaluator(evaluator, state, input, emptyRevFallback, forceDirty, attrs);
     return evaluator.mkAttrs(attrs);
 }
@@ -1365,25 +1379,56 @@ ref<Object> callFlakeViaEvaluator(Evaluator & evaluator, EvalState & state, cons
     for (auto & [node, info] : lockedFlake.nodePaths) {
         auto lockedNode = node.dynamic_pointer_cast<const LockedNode>();
         const auto & lockedRef = lockedNode ? lockedNode->lockedRef : lockedFlake.flake.lockedRef;
-        /* As in `callFlake`: `lazy` mirrors whether `mountInput` ran;
-           with lazy-paths that's tied to whether we know the
-           storePath. We're using `mkPath` keyed on unpinned URL
-           either way — the Object-level call doesn't itself care
-           about lazy vs eager, but we keep the semantics aligned with
-           the Value-level path so the produced trees are
-           interchangeable on a cache fall-through. */
-        auto sourceInfo = emitTreeAttrsViaEvaluator(
-            evaluator,
-            state,
-            info.tree,
-            lockedRef.input,
-            /*emptyRevFallback=*/false,
-            /*forceDirty=*/!lockedNode && lockedFlake.flake.forceDirty);
-
-        auto override = evaluator.mkAttrs({{"sourceInfo", sourceInfo}, {"dir", evaluator.mkString(info.subdir)}});
 
         auto key = keyMap.find(node);
         assert(key != keyMap.end());
+
+        /* Mirror `callFlake`'s copyToStore resolution: per-input
+           `inputs.<name>.copyToStore` and `inputs.self.copyToStore`
+           win over `lockedFlake.defaultCopyToStore`. When on, the
+           input's outPath is a store-path string with context so
+           structural primops (`dirOf`, `baseNameOf`,
+           `lib.path.deconstructPath`, `lib.fileset`) walk through
+           the storepath the way they did before lazy-paths. */
+        bool copyToStoreOutPath = lockedFlake.defaultCopyToStore;
+        if (auto inputIt = lockedFlake.flake.inputs.find(key->second);
+            inputIt != lockedFlake.flake.inputs.end() && inputIt->second.copyToStore)
+            copyToStoreOutPath = *inputIt->second.copyToStore;
+        if (node == ref<Node>(lockedFlake.lockFile.root) && lockedFlake.flake.selfCopyToStore)
+            copyToStoreOutPath = *lockedFlake.flake.selfCopyToStore;
+
+        /* `lazy` follows whether the storePath is known: nodePaths
+           from getFlake went through lockInput (no mountInput, no
+           storePath) so we emit as a path Value. Entries from
+           `lockFlake(SourcePath)` come with a known storePath — those
+           render eagerly. Materialise up front when copyToStore
+           demands the eager shape but the storePath isn't known
+           yet — same pattern as the Value-level path. */
+        bool lazy = !info.tree.storePath.has_value();
+        std::optional<fetchers::MountableTree> eagerTree;
+        if (copyToStoreOutPath && !info.tree.storePath.has_value()) {
+            NixStringContext discardContext;
+            auto storePath = state.copyPathToStore(
+                discardContext,
+                RootedPath{
+                    state.getOrCreateRoot(
+                        info.tree.accessor(), SourceRootKind::Copyable, lockedRef.input.toUnpinnedURL()),
+                    CanonPath::root});
+            eagerTree = fetchers::MountableTree{.storePath = storePath, .accessor = info.tree.accessor};
+            lazy = false;
+        }
+
+        auto sourceInfo = emitTreeAttrsViaEvaluator(
+            evaluator,
+            state,
+            eagerTree ? *eagerTree : info.tree,
+            lockedRef.input,
+            /*emptyRevFallback=*/false,
+            /*forceDirty=*/!lockedNode && lockedFlake.flake.forceDirty,
+            lazy);
+
+        auto override = evaluator.mkAttrs({{"sourceInfo", sourceInfo}, {"dir", evaluator.mkString(info.subdir)}});
+
         overrideAttrs.emplace(key->second, override);
     }
 
