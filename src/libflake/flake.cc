@@ -323,6 +323,14 @@ static Flake readFlake(
         .path = flakePath,
     };
 
+    /* Author's cross-Nix opt-in to lazy-paths shape: a flat marker
+       file at flake root. Flat filename (not `.nix/foo`) so detection
+       piggybacks on the readdir Nix already performs to find
+       flake.nix/flake.lock — no extra directory reads. Older Nix
+       has no idea the file exists; newer Nix reads its presence
+       silently. */
+    flake.lazyPathsSupported = (flakeDir / ".nix-flake-lazy-paths-supported").pathExists();
+
     if (auto description = vInfo.attrs()->get(state.s.description)) {
         expectType(state, nString, *description->value, description->pos);
         flake.description = description->value->string_view();
@@ -1187,12 +1195,20 @@ void callFlake(EvalState & state, const LockedFlake & lockedFlake, Value & vRes)
            no path prefix. */
         /* Determine whether this node opts into the eager shape
            (flake.nix imported as a store-path string, structural
-           primops walk through the storepath). Per-input flags
-           (`inputs.<name>.copyToStore` for child inputs,
-           `inputs.self.copyToStore` for the root) win over the
-           global default (`flake-default-copy-to-store`, snapshotted
-           on `lockedFlake.defaultCopyToStore` at lock time). */
-        bool copyToStoreOutPath = lockedFlake.defaultCopyToStore;
+           primops walk through the storepath). Resolution order
+           (finest to coarsest):
+             1. `inputs.<name>.copyToStore` — root flake's per-input
+                declaration about this specific input.
+             2. `inputs.self.copyToStore` — root flake's declaration
+                about its own shape when it's the root.
+             3. `/.nix-flake-lazy-paths-supported` marker at root —
+                root flake author's whole-flake opt into lazy shape
+                for all inputs that don't say otherwise.
+             4. `flake-default-copy-to-store` setting — user's
+                ambient preference (snapshotted on
+                `lockedFlake.defaultCopyToStore` at lock time). */
+        bool copyToStoreOutPath =
+            lockedFlake.flake.lazyPathsSupported ? false : lockedFlake.defaultCopyToStore;
         if (auto inputIt = lockedFlake.flake.inputs.find(key->second);
             inputIt != lockedFlake.flake.inputs.end() && inputIt->second.copyToStore)
             copyToStoreOutPath = *inputIt->second.copyToStore;
@@ -1383,14 +1399,11 @@ ref<Object> callFlakeViaEvaluator(Evaluator & evaluator, EvalState & state, cons
         auto key = keyMap.find(node);
         assert(key != keyMap.end());
 
-        /* Mirror `callFlake`'s copyToStore resolution: per-input
-           `inputs.<name>.copyToStore` and `inputs.self.copyToStore`
-           win over `lockedFlake.defaultCopyToStore`. When on, the
-           input's outPath is a store-path string with context so
-           structural primops (`dirOf`, `baseNameOf`,
-           `lib.path.deconstructPath`, `lib.fileset`) walk through
-           the storepath the way they did before lazy-paths. */
-        bool copyToStoreOutPath = lockedFlake.defaultCopyToStore;
+        /* Mirror `callFlake`'s copyToStore resolution. See the sibling
+           comment there for the four-tier ordering; short version:
+           per-input > per-self > marker file > setting. */
+        bool copyToStoreOutPath =
+            lockedFlake.flake.lazyPathsSupported ? false : lockedFlake.defaultCopyToStore;
         if (auto inputIt = lockedFlake.flake.inputs.find(key->second);
             inputIt != lockedFlake.flake.inputs.end() && inputIt->second.copyToStore)
             copyToStoreOutPath = *inputIt->second.copyToStore;
@@ -1484,6 +1497,11 @@ std::optional<Fingerprint> LockedFlake::getFingerprint(Store & store, const fetc
        first invocation's cached drvPath leaks back to a later
        invocation under the opposite setting. */
     *fingerprint += fmt(";defaultCopyToStore=%d", defaultCopyToStore);
+    /* Marker file's presence changes the effective per-input
+       copyToStore default, which changes what `outPath` shape
+       structural primops see — same fingerprint concern as the
+       setting above. */
+    *fingerprint += fmt(";lazyPathsSupported=%d", flake.lazyPathsSupported);
 
     // FIXME: as an optimization, if the flake contains a lock file
     // and we haven't changed it, then it's sufficient to use

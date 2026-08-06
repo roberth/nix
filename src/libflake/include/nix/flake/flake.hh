@@ -154,6 +154,26 @@ struct Flake
     std::optional<bool> selfCopyToStore;
 
     /**
+     * Presence of the `/.nix-flake-lazy-paths-supported` marker file
+     * at the flake root, declaring that the flake author has tested
+     * their outputs against the lazy-paths shape (fetched inputs'
+     * `outPath` as a path Value at fetcher accessor root, structural
+     * primops saturating there). Absence means "assume pre-lazy-paths
+     * semantics" — the safe default for flakes that don't know about
+     * lazy-paths and whose downstream consumers (`lib.fileset`,
+     * regex-based path filters, etc.) walk `outPath` structurally.
+     *
+     * Chosen as a flat top-level filename so the readdir Nix already
+     * performs to find `flake.nix`/`flake.lock` covers detection at
+     * no extra I/O.
+     *
+     * Older Nix versions ignore the file (they neither read it nor
+     * error on its presence) — this is the quiet cross-version
+     * opt-in for lazy-paths.
+     */
+    bool lazyPathsSupported = false;
+
+    /**
      * 'nixConfig' attribute
      */
     ConfigFile config;
