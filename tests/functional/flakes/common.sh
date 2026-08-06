@@ -4,6 +4,17 @@ source ../common.sh
 
 export _NIX_TEST_BARF_ON_UNCACHEABLE=1
 
+# The suite was written when `flake-default-copy-to-store` defaulted to
+# `false` (lazy-paths shape for flake inputs). It flipped to `true`
+# alongside the marker-file opt-in so existing real-world flakes work
+# without changes; the tests here still exercise lazy shape by default
+# because they pair with `_NIX_TEST_BARF_ON_UNCACHEABLE=1` above and
+# would otherwise trip on the eager materialisation the flip introduces.
+# Tests that specifically exercise the eager path still set
+# `flake-default-copy-to-store = true` or use per-input `copyToStore`
+# explicitly, so they override this back.
+echo 'flake-default-copy-to-store = false' >> "$NIX_CONF_DIR"/nix.conf.extra
+
 # shellcheck disable=SC2034 # this variable is used by tests that source this file
 registry=$TEST_ROOT/registry.json
 
