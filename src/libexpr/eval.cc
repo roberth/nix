@@ -417,21 +417,26 @@ ref<Object> EvalState::toObjectCompat(Value & v)
 
 void EvalState::allowPathLegacy(const std::string & path)
 {
-    if (auto rootFS2 = rootFS.dynamic_pointer_cast<AllowListSourceAccessor>())
+    /* Reach through systemEnvironment->rootFSAccessor rather than the
+       state's rootFS: under tracing, rootFS is a TracingSourceAccessor
+       wrapping the real accessor, and dynamic_pointer_cast to
+       AllowListSourceAccessor would silently no-op. The AllowList lives
+       one layer down. */
+    if (auto rootFS2 = systemEnvironment->rootFSAccessor.dynamic_pointer_cast<AllowListSourceAccessor>())
         rootFS2->allowPrefix(CanonPath(path));
 }
 
 void EvalState::allowPath(const StorePath & storePath)
 {
     // FIXME: this should generally be handled within SystemEnvironment as a consequence of other operations only.
-    if (auto rootFS2 = rootFS.dynamic_pointer_cast<AllowListSourceAccessor>())
+    if (auto rootFS2 = systemEnvironment->rootFSAccessor.dynamic_pointer_cast<AllowListSourceAccessor>())
         rootFS2->allowPrefix(CanonPath(systemEnvironment->store->printStorePath(storePath)));
 }
 
 void EvalState::allowClosure(const StorePath & storePath)
 {
     // FIXME: this should generally be handled within SystemEnvironment as a consequence of other operations only.
-    if (!rootFS.dynamic_pointer_cast<AllowListSourceAccessor>())
+    if (!systemEnvironment->rootFSAccessor.dynamic_pointer_cast<AllowListSourceAccessor>())
         return;
 
     StorePathSet closure;
