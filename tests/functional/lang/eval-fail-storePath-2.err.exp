@@ -1,0 +1,10 @@
+error:
+       … while calling the 'storePath' builtin
+         at /pwd/lang/eval-fail-storePath-2.nix:1:1:
+            1| builtins.storePath "foo"
+             | ^
+            2|
+
+       … while evaluating the first argument passed to 'builtins.storePath'
+
+       error: string 'foo' doesn't represent an absolute path
