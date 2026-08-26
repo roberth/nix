@@ -2279,8 +2279,28 @@ static void prim_storePath(EvalState & state, CallSite callSite, Value * const *
             .debugThrow();
 
     NixStringContext context;
-    SourcePath sourcePath = state.coerceToPath(
-        noPos, *args[0], context, "while evaluating the first argument passed to 'builtins.storePath'");
+    /* Deliberately the *string* coercion, not `coerceToPath`: the latter returns a bare path Value
+       verbatim, and a `Copyable`-rooted one (`fetchTree { lazy = true; }.outPath`) is rooted at the
+       fetcher's accessor, where `.abs()` is "/" and no store path is in sight. Rendering it as a
+       string is what names the `<storePath>` this primop is about, and it is the very rewrap
+       `coerceToPath` already applies to every other shape that reaches here. */
+    auto pathStr = state
+                       .coerceToString(
+                           noPos,
+                           *args[0],
+                           context,
+                           "while evaluating the first argument passed to 'builtins.storePath'",
+                           /*coerceMore=*/false,
+                           /*copyToStore=*/false,
+                           /*canonicalizePath=*/true)
+                       .toOwned();
+    /* `coerceToPath` rejected a string that names no absolute path; keep doing so, or
+       `CanonPath` would quietly reroot a relative one and accept it. */
+    if (pathStr == "" || pathStr[0] != '/')
+        state.error<EvalError>("string '%1%' doesn't represent an absolute path", pathStr)
+            .withTrace(noPos, "while evaluating the first argument passed to 'builtins.storePath'")
+            .debugThrow();
+    SourcePath sourcePath = state.rootPath(CanonPath(pathStr));
 
     /* Resolve symlinks in ‘path’, unless ‘path’ itself is a symlink
        directly in the store.  The latter condition is necessary so

@@ -48,6 +48,34 @@ echo "{ value = 42; }" > "$src/expr.nix"
     --expr "toString (import ((builtins.fetchTree { type = \"path\"; path = \"$src\"; lazy = true; }).outPath + \"/expr.nix\")).value")" \
     = 42 ]]
 
+# `builtins.storePath` accepts the lazy form's `outPath`. That value is
+# a path rooted at the fetcher's accessor, where the store path only
+# shows up once the path is rendered as a string; the result must be
+# indistinguishable from the eager form's, string context included.
+lazyStorePath=$(nix eval --impure --extra-experimental-features "$xpFlags" --raw \
+    --expr "builtins.storePath (builtins.fetchTree { type = \"path\"; path = \"$src\"; lazy = true; }).outPath")
+eagerStorePath=$(nix eval --impure --extra-experimental-features "$xpFlags" --raw \
+    --expr "builtins.storePath (builtins.fetchTree { type = \"path\"; path = \"$src\"; }).outPath")
+[[ "$lazyStorePath" = "$eagerStorePath" ]]
+
+lazyContext=$(nix eval --impure --extra-experimental-features "$xpFlags" --json \
+    --expr "builtins.getContext (builtins.storePath (builtins.fetchTree { type = \"path\"; path = \"$src\"; lazy = true; }).outPath)")
+eagerContext=$(nix eval --impure --extra-experimental-features "$xpFlags" --json \
+    --expr "builtins.getContext (builtins.storePath (builtins.fetchTree { type = \"path\"; path = \"$src\"; }).outPath)")
+[[ "$lazyContext" = "$eagerContext" ]]
+
+# `storePath` promises a store path that is actually there, so the
+# deferred copy must have happened by the end of evaluation.
+nix path-info --extra-experimental-features "$xpFlags" "$lazyStorePath"
+
+# Coercing the argument to a string must not make a relative path
+# absolute. `CanonPath` reroots one at `/`, which would let `storePath`
+# accept a path the caller never named -- and this one would land in the
+# store.
+expectStderr 1 nix eval --impure --extra-experimental-features "$xpFlags" --raw \
+    --expr "builtins.storePath \"${lazyStorePath#/}\"" \
+    | grepQuiet "doesn't represent an absolute path"
+
 # `lazy` must be a Boolean.
 expectStderr 1 nix eval --impure --extra-experimental-features "$xpFlags" \
     --expr "builtins.fetchTree { type = \"path\"; path = \"$src\"; lazy = \"yes\"; }" \
