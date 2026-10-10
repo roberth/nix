@@ -156,6 +156,7 @@
   - [Data Modeling Guidelines](development/data-modeling.md)
   - [C++ style guide](development/cxx.md)
   - [Asynchronous code](development/async.md)
+  - [Rust](development/rust.md)
   - [Static Analysis](development/static-analysis.md)
   - [Experimental Features](development/experimental-features.md)
   - [Contributing](development/contributing.md)
