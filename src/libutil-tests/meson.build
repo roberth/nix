@@ -18,6 +18,7 @@ build_unit_tests = get_option('unit-tests')
 subdir('nix-meson-build-support/deps-lists')
 
 deps_private_maybe_subproject = [
+  dependency('nix-rust'),
   dependency('nix-util'),
 ]
 deps_public_maybe_subproject = []
@@ -68,6 +69,7 @@ sources = files(
   'position.cc',
   'processes.cc',
   'ref.cc',
+  'rust.cc',
   'serialise.cc',
   'sort.cc',
   'source-accessor.cc',
