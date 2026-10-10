@@ -127,6 +127,7 @@ cargo_build = custom_target(
 
 install_headers(
   'include/nix/rust/boundary.hh',
+  'include/nix/rust/future-abi.h',
   subdir : 'nix/rust',
 )
 

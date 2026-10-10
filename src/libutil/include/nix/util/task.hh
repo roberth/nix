@@ -27,7 +27,7 @@
  * operation that the chain is suspended on.
  */
 
-#include "nix/util/future-abi.h"
+#include "nix/rust/future-abi.h"
 
 #include <atomic>
 #include <cassert>

@@ -47,7 +47,6 @@ mkMesonLibrary (finalAttrs: {
     ./windows/include/nix/util/meson.build
     (fileset.fileFilter (file: file.hasExt "cc") ./.)
     (fileset.fileFilter (file: file.hasExt "hh") ./.)
-    ./include/nix/util/future-abi.h
   ];
 
   buildInputs = [
@@ -59,8 +58,8 @@ mkMesonLibrary (finalAttrs: {
   ]
   ++ lib.optional stdenv.hostPlatform.isx86_64 libcpuid;
 
-  # `nix-util.pc` names `nix-rust` in `Requires.private`, and pkg-config
-  # resolves that for every consumer of `nix-util`.
+  # `nix-util.pc` names `nix-rust` in `Requires`, because the public header
+  # `nix/util/task.hh` includes `nix/rust/future-abi.h`.
   propagatedBuildInputs = [
     nix-rust
     boost

@@ -19,10 +19,11 @@ subdir('nix-meson-build-support/deps-lists')
 configdata_pub = configuration_data()
 configdata_priv = configuration_data()
 
-deps_private_maybe_subproject = [
+deps_private_maybe_subproject = []
+# Public, because `nix/util/task.hh` includes `nix/rust/future-abi.h`.
+deps_public_maybe_subproject = [
   dependency('nix-rust'),
 ]
-deps_public_maybe_subproject = []
 subdir('nix-meson-build-support/subprojects')
 
 # Check for each of these functions, and create a define like `#define
