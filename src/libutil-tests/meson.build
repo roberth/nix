@@ -69,6 +69,7 @@ sources = files(
   'position.cc',
   'processes.cc',
   'ref.cc',
+  'rust-future.cc',
   'rust.cc',
   'serialise.cc',
   'sort.cc',

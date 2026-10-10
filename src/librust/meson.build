@@ -91,6 +91,7 @@ message('Rust native static libraries: ' + ' '.join(native_static_libs))
 bridge_headers = [
   'lib.rs.h',
   'probe.rs.h',
+  'future_probe.rs.h',
 ]
 
 # The installation directory of each output of `cargo_build`. The staticlib
@@ -129,6 +130,7 @@ install_headers(
   'include/nix/rust/boundary.hh',
   'include/nix/rust/future-abi.h',
   'include/nix/rust/future-abi.hh',
+  'include/nix/rust/future-probe.hh',
   subdir : 'nix/rust',
 )
 

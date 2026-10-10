@@ -9,6 +9,7 @@
 //! `nix/rust/<module>.rs.h`. The headers are listed in `meson.build`.
 
 pub mod future;
+pub mod future_probe;
 pub mod probe;
 
 #[cxx::bridge(namespace = "nix::rs")]
