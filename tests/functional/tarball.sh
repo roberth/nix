@@ -124,3 +124,17 @@ wait "$pid2"
 [[ $(cat "$TEST_ROOT/log1" "$TEST_ROOT/log2" | grep -c "Download.*to") -eq 2 ]]
 [[ $(cat "$TEST_ROOT/log1" "$TEST_ROOT/log2" | grep -c "downloading.*tar.tar") -eq 1 ]]
 [[ $(cat "$TEST_ROOT/log1" "$TEST_ROOT/log2" | grep -c "waiting for another Nix process to finish fetching input") -eq 1 ]]
+
+# The tarball cache has two implementations, on gitoxide (the default) and on
+# libgit2. Both unpack a tarball to the same tree, and the cache that each
+# writes is a valid Git repository.
+tarballCache="$TEST_HOME/.cache/nix/tarball-cache-v2"
+for backend in gix libgit2; do
+    rm -rf "$TEST_HOME/.cache"
+    narHash=$(_NIX_TARBALL_CACHE_BACKEND=$backend nix flake prefetch --json "tarball+file://$(pwd)/tree.tar.gz" | jq -r .hash)
+    [[ $narHash = "$(jq -r .hash <<< "$json")" ]]
+    git --git-dir="$tarballCache" fsck --full --no-dangling
+    for index in "$tarballCache"/objects/pack/*.idx; do
+        git verify-pack "$index"
+    done
+done
