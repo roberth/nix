@@ -3,6 +3,7 @@
   stdenv,
   mkMesonLibrary,
 
+  nix-rust,
   boost,
   brotli,
   libarchive,
@@ -57,7 +58,10 @@ mkMesonLibrary (finalAttrs: {
   ]
   ++ lib.optional stdenv.hostPlatform.isx86_64 libcpuid;
 
+  # `nix-util.pc` names `nix-rust` in `Requires.private`, and pkg-config
+  # resolves that for every consumer of `nix-util`.
   propagatedBuildInputs = [
+    nix-rust
     boost
     libarchive
     nlohmann_json
