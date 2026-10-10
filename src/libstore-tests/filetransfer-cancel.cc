@@ -6,6 +6,7 @@
 #  include "nix/store/tests/https-store.hh"
 #  include "nix/util/file-descriptor.hh"
 #  include "nix/util/fmt.hh"
+#  include "nix/rust/future_probe.rs.h"
 
 #  include <arpa/inet.h>
 #  include <netinet/in.h>
@@ -172,6 +173,46 @@ TEST(FileTransferCancel, droppingTheTaskClosesTheConnection)
 
     /* The transfer failed with `Cancelled` on the worker thread, but the
        task was gone, so nothing was woken. */
+    EXPECT_EQ(target->count, 0);
+}
+
+/**
+ * The transfer is a C++ task, which a Rust future awaits, which a C++
+ * task awaits. Dropping the outer C++ task drops the Rust future, which
+ * drops the transfer task, which removes the transfer from curl.
+ */
+TEST(FileTransferCancel, droppingARustFutureThatAwaitsTheTransferClosesTheConnection)
+{
+    StallingServer server;
+    auto fileTransfer = makeFileTransfer();
+
+    FileTransferRequest request(VerbatimURL(fmt("http://127.0.0.1:%d/stall", server.port)));
+    auto transfer = [](Task<FileTransferResult> transfer) -> Task<rust::String> {
+        auto result = co_await std::move(transfer);
+        co_return rust::String(result.data);
+    }(fileTransfer->transfer(std::move(request)));
+
+    struct Log : rs::ProbeLog
+    {
+        mutable std::vector<std::string> events;
+
+        void push(rust::Str event) const override
+        {
+            events.emplace_back(event);
+        }
+    } log;
+
+    auto task = awaitCFuture<rust::String>(rs::probe_future_forward(toCFuture(std::move(transfer)), log));
+
+    auto target = makeWakeTarget<CountingTarget>();
+    EXPECT_EQ(task.poll(target->waker()), NIX_POLL_PENDING);
+
+    ASSERT_EQ(server.stalled.get_future().wait_for(std::chrono::seconds(10)), std::future_status::ready);
+
+    task.reset();
+
+    EXPECT_EQ(server.result(), "closed by client");
+    EXPECT_EQ(log.events, std::vector<std::string>{"rust: dropped"});
     EXPECT_EQ(target->count, 0);
 }
 

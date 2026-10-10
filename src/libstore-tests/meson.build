@@ -82,6 +82,8 @@ include_dirs = [ include_directories('.') ]
 
 if build_unit_tests
   unit_dependencies = fuzz_dependencies + [
+    # For the probe futures in `nix/rust/future_probe.rs.h`.
+    dependency('nix-rust'),
     dependency('nix-store-c'),
     dependency('nix-store-test-support'),
     dependency('sqlite3', 'sqlite', version : '>=3.6.19'),
