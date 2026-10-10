@@ -11,6 +11,7 @@
 #include "nix/util/ref.hh"
 #include "nix/util/configuration.hh"
 #include "nix/util/serialise.hh"
+#include "nix/util/task.hh"
 #include "nix/util/url.hh"
 
 #include "nix/store/config.hh"
@@ -445,6 +446,23 @@ public:
      * Unpause a transfer that has been previously paused by a dataCallback.
      */
     virtual void unpauseTransfer(ItemHandle handle) = 0;
+
+    /**
+     * Cancel a transfer. The transfer stops and its connection is
+     * released. If the transfer has not completed yet, its callback
+     * receives a `Cancelled` error. Thread-safe; does nothing if the
+     * transfer has already completed.
+     */
+    virtual void cancelTransfer(ItemHandle handle) = 0;
+
+    /**
+     * A data transfer as a task. The transfer starts when the task is
+     * first polled. Destroying the task before it completes cancels the
+     * transfer (`cancelTransfer`).
+     *
+     * This `FileTransfer` must outlive the task.
+     */
+    Task<FileTransferResult> transfer(FileTransferRequest request);
 
     std::future<FileTransferResult> enqueueFileTransfer(const FileTransferRequest & request);
 

@@ -225,6 +225,12 @@ struct curlFileTransfer : public FileTransfer
         bool hasContentEncoding:1 = false;
 
         /**
+         * Whether `cancelTransfer` was called for this transfer. Only
+         * accessed on the worker thread.
+         */
+        bool cancelled:1 = false;
+
+        /**
          * Server-provided minimum retry delay, parsed from the `Retry-After`
          * response header. Reset on each new HTTP status line, and consumed
          * (cleared) by maybeRetry() so it applies to at most one retry attempt.
@@ -343,12 +349,15 @@ struct curlFileTransfer : public FileTransfer
         {
             HintFmt fmt("%s of '%s' was interrupted", Uncolored(request.noun()), request.displayUri());
 
-            /* Technically, we don't really have per-transfer cancellation currently,
-               but it's nice to distinguish between the two in the future. */
             if (getInterrupted())
                 fail(nix::Interrupted(std::move(fmt)));
             else
                 fail(nix::Cancelled(std::move(fmt)));
+        }
+
+        void failCancelled() noexcept
+        {
+            fail(nix::Cancelled("%s of '%s' was cancelled", Uncolored(request.noun()), request.displayUri()));
         }
 
         LambdaSink finalSink;
@@ -1003,6 +1012,7 @@ struct curlFileTransfer : public FileTransfer
 
         std::priority_queue<ref<TransferItem>, std::vector<ref<TransferItem>>, EmbargoComparator> incoming;
         std::vector<std::weak_ptr<Item>> unpause;
+        std::vector<std::weak_ptr<Item>> cancel;
     private:
         bool quitting = false;
     public:
@@ -1015,6 +1025,7 @@ struct curlFileTransfer : public FileTransfer
             while (!incoming.empty())
                 incoming.pop();
             unpause.clear();
+            cancel.clear();
         }
 
         bool isQuitting()
@@ -1116,11 +1127,28 @@ struct curlFileTransfer : public FileTransfer
 
             std::vector<std::shared_ptr<TransferItem>> incoming;
             std::vector<std::weak_ptr<Item>> unpause;
+            std::vector<std::shared_ptr<TransferItem>> cancelled;
             auto now = std::chrono::steady_clock::now();
             bool haveWork;
 
             {
                 auto state(state_.lock());
+
+                /* Cancel before starting new transfers, so that a
+                   cancelled transfer that is still queued never starts. */
+                for (auto & weak : std::exchange(state->cancel, {}))
+                    if (auto item = std::static_pointer_cast<TransferItem>(weak.lock())) {
+                        item->cancelled = true;
+                        cancelled.push_back(std::move(item));
+                    }
+                if (!cancelled.empty()) {
+                    decltype(state->incoming) kept;
+                    for (; !state->incoming.empty(); state->incoming.pop())
+                        if (!state->incoming.top()->cancelled)
+                            kept.push(state->incoming.top());
+                    state->incoming = std::move(kept);
+                }
+
                 while (!state->incoming.empty()) {
                     /* Limit the number of active curl handles, since curl doesn't scale well. */
                     if (items.size() + incoming.size() >= maxQueueSize) {
@@ -1142,6 +1170,17 @@ struct curlFileTransfer : public FileTransfer
                 unpause = std::exchange(state->unpause, {});
                 quit = state->isQuitting();
                 haveWork = std::exchange(state->work, false);
+            }
+
+            for (auto & item : cancelled) {
+                if (item->active) {
+                    debug("cancelling %s of '%s'", Uncolored(item->request.noun()), item->request.displayUri());
+                    curl_multi_remove_handle(curlm.get(), item->req);
+                    item->active = false;
+                    items.erase(item->req);
+                }
+                if (!item->done)
+                    item->failCancelled();
             }
 
             for (auto & item : incoming) {
@@ -1252,6 +1291,17 @@ struct curlFileTransfer : public FileTransfer
            to wake it up. That's why we must use a weak_ptr throughout. */
         unpauseTransfer(handle.item);
     }
+
+    void cancelTransfer(ItemHandle handle) override
+    {
+        /* The curl handles belong to the worker thread, so it does the
+           actual cancellation. */
+        auto state(state_.lock());
+        if (state->isQuitting())
+            return;
+        state->cancel.push_back(std::move(handle.item));
+        wakeupMulti(*state);
+    }
 };
 
 curlFileTransfer::~curlFileTransfer()
@@ -1341,6 +1391,15 @@ std::future<FileTransferResult> FileTransfer::enqueueFileTransfer(const FileTran
                             }
                         }});
     return promise->get_future();
+}
+
+Task<FileTransferResult> FileTransfer::transfer(FileTransferRequest request)
+{
+    co_return co_await callbackToTask<FileTransferResult>(
+        [this, request = std::move(request)](Callback<FileTransferResult> callback) {
+            auto handle = enqueueFileTransfer(request, std::move(callback));
+            return [this, handle]() { cancelTransfer(handle); };
+        });
 }
 
 FileTransferResult FileTransfer::download(const FileTransferRequest & request)
