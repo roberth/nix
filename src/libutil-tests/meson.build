@@ -74,6 +74,7 @@ sources = files(
   'spawn.cc',
   'strings.cc',
   'suggestions.cc',
+  'task-asio.cc',
   'task.cc',
   'terminal.cc',
   'topo-sort.cc',
