@@ -155,6 +155,7 @@
   - [CLI guideline](development/cli-guideline.md)
   - [Data Modeling Guidelines](development/data-modeling.md)
   - [C++ style guide](development/cxx.md)
+  - [Asynchronous code](development/async.md)
   - [Static Analysis](development/static-analysis.md)
   - [Experimental Features](development/experimental-features.md)
   - [Contributing](development/contributing.md)
