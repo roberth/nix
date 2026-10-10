@@ -63,6 +63,27 @@ foreach line : native_static_libs_probe.stderr().split('\n')
     endforeach
   endif
 endforeach
+
+# The Rust standard library for musl asks for LLVM's libunwind. A GCC
+# toolchain has no libunwind; it unwinds C++ with libgcc_eh, which provides
+# the same `_Unwind_*` interface. The C++ runtime then unwinds the Rust frames
+# too, so that one unwinder handles both languages. Two unwinders in one
+# program would each see only the frames that they registered.
+if '-lunwind' in native_static_libs and not cxx.find_library(
+  'unwind',
+  required : false,
+).found()
+  message(
+    'No libunwind for the host; the unwinder of the C++ runtime unwinds Rust frames too.',
+  )
+  native_static_libs_without_unwind = []
+  foreach lib : native_static_libs
+    if lib != '-lunwind'
+      native_static_libs_without_unwind += lib
+    endif
+  endforeach
+  native_static_libs = native_static_libs_without_unwind
+endif
 message('Rust native static libraries: ' + ' '.join(native_static_libs))
 
 # The generated C++ headers, one per `#[cxx::bridge]` module, and the cxx
