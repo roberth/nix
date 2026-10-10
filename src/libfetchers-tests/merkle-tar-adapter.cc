@@ -1,5 +1,6 @@
 #include "nix/fetchers/git-utils.hh"
 #include "nix/fetchers/merkle-tar-adapter.hh"
+#include "nix/fetchers/tarball-cache-gix.hh"
 #include "nix/util/file-system.hh"
 #include "nix/util/memory-source-accessor.hh"
 #include "nix/util/serialise.hh"
@@ -12,7 +13,18 @@
 
 namespace nix {
 
-class MerkleTarAdapterTest : public ::testing::Test
+/**
+ * The implementation of the Git store under test.
+ */
+enum class GitBackend {
+    /** `GitRepoPool` and `GitRepo`, on libgit2. */
+    libgit2,
+    /** The tarball cache on gitoxide. */
+    gix,
+};
+
+/* TODO: Add a mock in-memory content addressed store other than Git. */
+class MerkleTarAdapterTest : public ::testing::TestWithParam<GitBackend>
 {
     AutoDelete delTmpDir;
     std::shared_ptr<GitRepo> repo;
@@ -20,11 +32,25 @@ class MerkleTarAdapterTest : public ::testing::Test
 protected:
     std::filesystem::path tmpDir;
 
+    virtual GitBackend backend() const
+    {
+        return GetParam();
+    }
+
 public:
     void SetUp() override
     {
         tmpDir = createTempDir() / "test-git-repo";
-        repo = GitRepo::openRepo(tmpDir, {.create = true});
+        switch (backend()) {
+        case GitBackend::libgit2:
+            repo = GitRepo::openRepo(tmpDir, {.create = true});
+            break;
+        case GitBackend::gix:
+            /* The tarball cache is a bare repository. */
+            GitRepo::openRepo(tmpDir, {.create = true, .bare = true});
+            repo = fetchers::gix::openTarballCache(tmpDir);
+            break;
+        }
         delTmpDir = AutoDelete(tmpDir, true);
     }
 
@@ -36,9 +62,13 @@ public:
 
     ref<merkle::FileSinkBuilder> openWriterPool()
     {
-        /* TODO: Make this a parametrised test and have a mock in-memory content
-           addressed store othen than git. */
-        return GitRepoPool::create(tmpDir, {.create = false});
+        switch (backend()) {
+        case GitBackend::libgit2:
+            return GitRepoPool::create(tmpDir, {.create = false});
+        case GitBackend::gix:
+            return fetchers::gix::openTarballWriter(tmpDir);
+        }
+        unreachable();
     }
 
     ref<SourceAccessor> getAccessor(const Hash & hash) const
@@ -47,7 +77,15 @@ public:
     }
 };
 
-TEST_F(MerkleTarAdapterTest, empty_archive)
+INSTANTIATE_TEST_SUITE_P(
+    Backends,
+    MerkleTarAdapterTest,
+    ::testing::Values(GitBackend::libgit2, GitBackend::gix),
+    [](const ::testing::TestParamInfo<GitBackend> & info) {
+        return info.param == GitBackend::libgit2 ? "libgit2" : "gix";
+    });
+
+TEST_P(MerkleTarAdapterTest, empty_archive)
 {
     auto pool = openWriterPool();
     auto tarSink = merkle::makeTarSink(*pool);
@@ -68,7 +106,7 @@ TEST_F(MerkleTarAdapterTest, empty_archive)
     ASSERT_THAT(accessor, testing::HasDirectory(CanonPath::root, std::set<std::string>{}));
 }
 
-TEST_F(MerkleTarAdapterTest, single_file_at_root)
+TEST_P(MerkleTarAdapterTest, single_file_at_root)
 {
     auto pool = openWriterPool();
     auto tarSink = merkle::makeTarSink(*pool);
@@ -88,7 +126,7 @@ TEST_F(MerkleTarAdapterTest, single_file_at_root)
     ASSERT_THAT(accessor, testing::HasContents(CanonPath("file"), "hello world"));
 }
 
-TEST_F(MerkleTarAdapterTest, single_executable_file)
+TEST_P(MerkleTarAdapterTest, single_executable_file)
 {
     auto pool = openWriterPool();
     auto tarSink = merkle::makeTarSink(*pool);
@@ -102,7 +140,7 @@ TEST_F(MerkleTarAdapterTest, single_executable_file)
     ASSERT_TRUE(accessor->lstat(CanonPath("script.sh")).isExecutable);
 }
 
-TEST_F(MerkleTarAdapterTest, single_symlink)
+TEST_P(MerkleTarAdapterTest, single_symlink)
 {
     auto pool = openWriterPool();
     auto tarSink = merkle::makeTarSink(*pool);
@@ -122,7 +160,7 @@ TEST_F(MerkleTarAdapterTest, single_symlink)
     ASSERT_THAT(accessor, testing::HasSymlink(CanonPath("link"), "target"));
 }
 
-TEST_F(MerkleTarAdapterTest, empty_directory)
+TEST_P(MerkleTarAdapterTest, empty_directory)
 {
     auto pool = openWriterPool();
     auto tarSink = merkle::makeTarSink(*pool);
@@ -136,7 +174,7 @@ TEST_F(MerkleTarAdapterTest, empty_directory)
     ASSERT_THAT(accessor, testing::HasDirectory(CanonPath::root, std::set<std::string>{}));
 }
 
-TEST_F(MerkleTarAdapterTest, nested_empty_directories)
+TEST_P(MerkleTarAdapterTest, nested_empty_directories)
 {
     auto pool = openWriterPool();
     auto tarSink = merkle::makeTarSink(*pool);
@@ -151,7 +189,7 @@ TEST_F(MerkleTarAdapterTest, nested_empty_directories)
     ASSERT_THAT(accessor, testing::HasDirectory(CanonPath("a/b/c"), std::set<std::string>{}));
 }
 
-TEST_F(MerkleTarAdapterTest, directory_with_files)
+TEST_P(MerkleTarAdapterTest, directory_with_files)
 {
     auto pool = openWriterPool();
     auto tarSink = merkle::makeTarSink(*pool);
@@ -167,7 +205,7 @@ TEST_F(MerkleTarAdapterTest, directory_with_files)
     ASSERT_THAT(accessor, testing::HasContents(CanonPath("bye.txt"), "goodbye"));
 }
 
-TEST_F(MerkleTarAdapterTest, nested_directory_with_files)
+TEST_P(MerkleTarAdapterTest, nested_directory_with_files)
 {
     auto pool = openWriterPool();
     auto tarSink = merkle::makeTarSink(*pool);
@@ -180,7 +218,7 @@ TEST_F(MerkleTarAdapterTest, nested_directory_with_files)
     ASSERT_THAT(accessor, testing::HasContents(CanonPath("a/b/file.txt"), "nested content"));
 }
 
-TEST_F(MerkleTarAdapterTest, mixed_content)
+TEST_P(MerkleTarAdapterTest, mixed_content)
 {
     auto pool = openWriterPool();
     auto tarSink = merkle::makeTarSink(*pool);
@@ -205,7 +243,7 @@ TEST_F(MerkleTarAdapterTest, mixed_content)
     ASSERT_THAT(accessor, testing::HasContents(CanonPath("subdir/nested.txt"), "nested"));
 }
 
-TEST_F(MerkleTarAdapterTest, hardlink_target_not_found)
+TEST_P(MerkleTarAdapterTest, hardlink_target_not_found)
 {
     auto pool = openWriterPool();
     auto tarSink = merkle::makeTarSink(*pool);
@@ -215,7 +253,7 @@ TEST_F(MerkleTarAdapterTest, hardlink_target_not_found)
         ::testing::ThrowsMessage<Error>(testing::HasSubstrIgnoreANSIMatcher("target does not exist")));
 }
 
-TEST_F(MerkleTarAdapterTest, hardlink_to_file)
+TEST_P(MerkleTarAdapterTest, hardlink_to_file)
 {
     auto pool = openWriterPool();
     auto tarSink = merkle::makeTarSink(*pool);
@@ -230,7 +268,7 @@ TEST_F(MerkleTarAdapterTest, hardlink_to_file)
     ASSERT_THAT(accessor, testing::HasContents(CanonPath("link.txt"), "shared content"));
 }
 
-TEST_F(MerkleTarAdapterTest, hardlink_to_executable)
+TEST_P(MerkleTarAdapterTest, hardlink_to_executable)
 {
     auto pool = openWriterPool();
     auto tarSink = merkle::makeTarSink(*pool);
@@ -245,7 +283,7 @@ TEST_F(MerkleTarAdapterTest, hardlink_to_executable)
     ASSERT_THAT(accessor, testing::HasContents(CanonPath("script-link.sh"), "#!/bin/bash"));
 }
 
-TEST_F(MerkleTarAdapterTest, hardlink_to_symlink)
+TEST_P(MerkleTarAdapterTest, hardlink_to_symlink)
 {
     auto pool = openWriterPool();
     auto tarSink = merkle::makeTarSink(*pool);
@@ -261,7 +299,7 @@ TEST_F(MerkleTarAdapterTest, hardlink_to_symlink)
     ASSERT_THAT(accessor, testing::HasSymlink(CanonPath("h"), "some-target"));
 }
 
-TEST_F(MerkleTarAdapterTest, hardlink_to_symlink_replaced_by_a_file)
+TEST_P(MerkleTarAdapterTest, hardlink_to_symlink_replaced_by_a_file)
 {
     auto pool = openWriterPool();
     auto tarSink = merkle::makeTarSink(*pool);
@@ -284,7 +322,7 @@ TEST_F(MerkleTarAdapterTest, hardlink_to_symlink_replaced_by_a_file)
     ASSERT_THAT(accessor, testing::HasSymlink(CanonPath("h"), "some-target"));
 }
 
-TEST_F(MerkleTarAdapterTest, multiple_hardlinks_same_target)
+TEST_P(MerkleTarAdapterTest, multiple_hardlinks_same_target)
 {
     auto pool = openWriterPool();
     auto tarSink = merkle::makeTarSink(*pool);
@@ -303,7 +341,7 @@ TEST_F(MerkleTarAdapterTest, multiple_hardlinks_same_target)
     ASSERT_THAT(accessor, testing::HasContents(CanonPath("link3"), "content"));
 }
 
-TEST_F(MerkleTarAdapterTest, hardlink_chain)
+TEST_P(MerkleTarAdapterTest, hardlink_chain)
 {
     auto pool = openWriterPool();
     auto tarSink = merkle::makeTarSink(*pool);
@@ -328,7 +366,7 @@ TEST_F(MerkleTarAdapterTest, hardlink_chain)
     ASSERT_THAT(accessor, testing::HasContents(CanonPath("link" + std::to_string(chainLength - 1)), "chained content"));
 }
 
-TEST_F(MerkleTarAdapterTest, hardlink_to_directory_fails)
+TEST_P(MerkleTarAdapterTest, hardlink_to_directory_fails)
 {
     auto pool = openWriterPool();
     auto tarSink = merkle::makeTarSink(*pool);
@@ -340,7 +378,7 @@ TEST_F(MerkleTarAdapterTest, hardlink_to_directory_fails)
         ::testing::ThrowsMessage<Error>(testing::HasSubstrIgnoreANSIMatcher("target is a directory")));
 }
 
-TEST_F(MerkleTarAdapterTest, hardlink_to_root_fails)
+TEST_P(MerkleTarAdapterTest, hardlink_to_root_fails)
 {
     auto pool = openWriterPool();
     auto tarSink = merkle::makeTarSink(*pool);
@@ -352,7 +390,7 @@ TEST_F(MerkleTarAdapterTest, hardlink_to_root_fails)
         ::testing::ThrowsMessage<Error>(testing::HasSubstrIgnoreANSIMatcher("target is a directory")));
 }
 
-TEST_F(MerkleTarAdapterTest, hardlink_to_later_path_fails)
+TEST_P(MerkleTarAdapterTest, hardlink_to_later_path_fails)
 {
     auto pool = openWriterPool();
     auto tarSink = merkle::makeTarSink(*pool);
@@ -365,7 +403,7 @@ TEST_F(MerkleTarAdapterTest, hardlink_to_later_path_fails)
         ::testing::ThrowsMessage<Error>(testing::HasSubstrIgnoreANSIMatcher("does not exist")));
 }
 
-TEST_F(MerkleTarAdapterTest, hardlink_keeps_the_file_it_was_made_from)
+TEST_P(MerkleTarAdapterTest, hardlink_keeps_the_file_it_was_made_from)
 {
     auto pool = openWriterPool();
     auto tarSink = merkle::makeTarSink(*pool);
@@ -391,7 +429,7 @@ TEST_F(MerkleTarAdapterTest, hardlink_keeps_the_file_it_was_made_from)
     ASSERT_THAT(accessor, testing::HasContents(CanonPath("link"), "old"));
 }
 
-TEST_F(MerkleTarAdapterTest, hardlink_replaced_itself_keeps_the_target)
+TEST_P(MerkleTarAdapterTest, hardlink_replaced_itself_keeps_the_target)
 {
     auto pool = openWriterPool();
     auto tarSink = merkle::makeTarSink(*pool);
@@ -415,7 +453,7 @@ TEST_F(MerkleTarAdapterTest, hardlink_replaced_itself_keeps_the_target)
     ASSERT_THAT(accessor, testing::HasContents(CanonPath("link"), "replacement"));
 }
 
-TEST_F(MerkleTarAdapterTest, hardlink_replaced_names_all_the_other_paths)
+TEST_P(MerkleTarAdapterTest, hardlink_replaced_names_all_the_other_paths)
 {
     auto pool = openWriterPool();
     auto tarSink = merkle::makeTarSink(*pool);
@@ -439,7 +477,7 @@ TEST_F(MerkleTarAdapterTest, hardlink_replaced_names_all_the_other_paths)
     ASSERT_THAT(accessor, testing::HasContents(CanonPath("c"), "shared"));
 }
 
-TEST_F(MerkleTarAdapterTest, hardlink_warns_only_while_paths_are_still_shared)
+TEST_P(MerkleTarAdapterTest, hardlink_warns_only_while_paths_are_still_shared)
 {
     auto pool = openWriterPool();
     auto tarSink = merkle::makeTarSink(*pool);
@@ -467,7 +505,7 @@ TEST_F(MerkleTarAdapterTest, hardlink_warns_only_while_paths_are_still_shared)
     ASSERT_THAT(accessor, testing::HasContents(CanonPath("b"), "second"));
 }
 
-TEST_F(MerkleTarAdapterTest, hardlink_failure_says_what_it_was_doing)
+TEST_P(MerkleTarAdapterTest, hardlink_failure_says_what_it_was_doing)
 {
     auto pool = openWriterPool();
     auto tarSink = merkle::makeTarSink(*pool);
@@ -483,7 +521,7 @@ TEST_F(MerkleTarAdapterTest, hardlink_failure_says_what_it_was_doing)
             testing::HasSubstrIgnoreANSIMatcher("while creating a hard link from '/foo/bar' to '/foo'"))));
 }
 
-TEST_F(MerkleTarAdapterTest, child_of_file_fails)
+TEST_P(MerkleTarAdapterTest, child_of_file_fails)
 {
     auto pool = openWriterPool();
     auto tarSink = merkle::makeTarSink(*pool);
@@ -495,7 +533,7 @@ TEST_F(MerkleTarAdapterTest, child_of_file_fails)
         ::testing::ThrowsMessage<Error>(testing::HasSubstrIgnoreANSIMatcher("not a directory")));
 }
 
-TEST_F(MerkleTarAdapterTest, symlink_child_of_file_fails)
+TEST_P(MerkleTarAdapterTest, symlink_child_of_file_fails)
 {
     auto pool = openWriterPool();
     auto tarSink = merkle::makeTarSink(*pool);
@@ -507,7 +545,7 @@ TEST_F(MerkleTarAdapterTest, symlink_child_of_file_fails)
         ::testing::ThrowsMessage<Error>(testing::HasSubstrIgnoreANSIMatcher("not a directory")));
 }
 
-TEST_F(MerkleTarAdapterTest, hardlink_child_of_file_fails)
+TEST_P(MerkleTarAdapterTest, hardlink_child_of_file_fails)
 {
     auto pool = openWriterPool();
     auto tarSink = merkle::makeTarSink(*pool);
@@ -519,7 +557,7 @@ TEST_F(MerkleTarAdapterTest, hardlink_child_of_file_fails)
         ::testing::ThrowsMessage<Error>(testing::HasSubstrIgnoreANSIMatcher("not a directory")));
 }
 
-TEST_F(MerkleTarAdapterTest, child_of_symlink_fails)
+TEST_P(MerkleTarAdapterTest, child_of_symlink_fails)
 {
     auto pool = openWriterPool();
     auto tarSink = merkle::makeTarSink(*pool);
@@ -533,7 +571,7 @@ TEST_F(MerkleTarAdapterTest, child_of_symlink_fails)
         ::testing::ThrowsMessage<Error>(testing::HasSubstrIgnoreANSIMatcher("not a directory")));
 }
 
-TEST_F(MerkleTarAdapterTest, explicit_directory_replaces_file)
+TEST_P(MerkleTarAdapterTest, explicit_directory_replaces_file)
 {
     auto pool = openWriterPool();
     auto tarSink = merkle::makeTarSink(*pool);
@@ -551,7 +589,7 @@ TEST_F(MerkleTarAdapterTest, explicit_directory_replaces_file)
     ASSERT_THAT(accessor, testing::HasContents(CanonPath("foo/bar"), "child content"));
 }
 
-TEST_F(MerkleTarAdapterTest, large_file)
+TEST_P(MerkleTarAdapterTest, large_file)
 {
     auto pool = openWriterPool();
     auto tarSink = merkle::makeTarSink(*pool);
@@ -567,7 +605,7 @@ TEST_F(MerkleTarAdapterTest, large_file)
     ASSERT_THAT(accessor, testing::HasContents(CanonPath("large.bin"), largeContent));
 }
 
-TEST_F(MerkleTarAdapterTest, large_file_in_chunks)
+TEST_P(MerkleTarAdapterTest, large_file_in_chunks)
 {
     auto pool = openWriterPool();
     auto tarSink = merkle::makeTarSink(*pool);
@@ -586,7 +624,7 @@ TEST_F(MerkleTarAdapterTest, large_file_in_chunks)
     ASSERT_THAT(accessor, testing::HasContents(CanonPath("large.bin"), largeContent + largeContent));
 }
 
-TEST_F(MerkleTarAdapterTest, replacing_empty_directory)
+TEST_P(MerkleTarAdapterTest, replacing_empty_directory)
 {
     auto pool = openWriterPool();
     auto tarSink = merkle::makeTarSink(*pool);
@@ -607,7 +645,7 @@ TEST_F(MerkleTarAdapterTest, replacing_empty_directory)
     ASSERT_THAT(accessor, testing::HasContents(CanonPath("foo/bar"), "test"));
 }
 
-TEST_F(MerkleTarAdapterTest, replacing_non_empty_directory_fails)
+TEST_P(MerkleTarAdapterTest, replacing_non_empty_directory_fails)
 {
     auto pool = openWriterPool();
     auto tarSink = merkle::makeTarSink(*pool);
@@ -624,7 +662,7 @@ TEST_F(MerkleTarAdapterTest, replacing_non_empty_directory_fails)
         ::testing::ThrowsMessage<Error>(testing::HasSubstrIgnoreANSIMatcher("conflicting non-empty directory")));
 }
 
-TEST_F(MerkleTarAdapterTest, replacing_non_empty_directory_with_symlink_fails)
+TEST_P(MerkleTarAdapterTest, replacing_non_empty_directory_with_symlink_fails)
 {
     auto pool = openWriterPool();
     auto tarSink = merkle::makeTarSink(*pool);
@@ -637,7 +675,7 @@ TEST_F(MerkleTarAdapterTest, replacing_non_empty_directory_with_symlink_fails)
         ::testing::ThrowsMessage<Error>(testing::HasSubstrIgnoreANSIMatcher("conflicting non-empty directory")));
 }
 
-TEST_F(MerkleTarAdapterTest, child_of_hardlink_fails)
+TEST_P(MerkleTarAdapterTest, child_of_hardlink_fails)
 {
     auto pool = openWriterPool();
     auto tarSink = merkle::makeTarSink(*pool);
@@ -650,7 +688,7 @@ TEST_F(MerkleTarAdapterTest, child_of_hardlink_fails)
         ::testing::ThrowsMessage<Error>(testing::HasSubstrIgnoreANSIMatcher("not a directory")));
 }
 
-TEST_F(MerkleTarAdapterTest, many_files)
+TEST_P(MerkleTarAdapterTest, many_files)
 {
     auto pool = openWriterPool();
     auto tarSink = merkle::makeTarSink(*pool);
@@ -675,7 +713,7 @@ TEST_F(MerkleTarAdapterTest, many_files)
     }
 }
 
-TEST_F(MerkleTarAdapterTest, deep_nesting)
+TEST_P(MerkleTarAdapterTest, deep_nesting)
 {
     auto pool = openWriterPool();
     auto tarSink = merkle::makeTarSink(*pool);
@@ -689,7 +727,7 @@ TEST_F(MerkleTarAdapterTest, deep_nesting)
     ASSERT_THAT(accessor, testing::HasContents(CanonPath("a/b/c/d/e/f/g/h/file.txt"), "deeply nested"));
 }
 
-TEST_F(MerkleTarAdapterTest, directory_with_symlink_and_empty_subdir)
+TEST_P(MerkleTarAdapterTest, directory_with_symlink_and_empty_subdir)
 {
     auto pool = openWriterPool();
     auto tarSink = merkle::makeTarSink(*pool);
@@ -709,7 +747,7 @@ TEST_F(MerkleTarAdapterTest, directory_with_symlink_and_empty_subdir)
 // Tests for "last wins" tar semantics - when a path appears multiple times,
 // the last entry should win.
 
-TEST_F(MerkleTarAdapterTest, last_wins_file_overwrites_file)
+TEST_P(MerkleTarAdapterTest, last_wins_file_overwrites_file)
 {
     auto pool = openWriterPool();
     auto tarSink = merkle::makeTarSink(*pool);
@@ -723,7 +761,7 @@ TEST_F(MerkleTarAdapterTest, last_wins_file_overwrites_file)
     ASSERT_THAT(accessor, testing::HasContents(CanonPath("file.txt"), "second content"));
 }
 
-TEST_F(MerkleTarAdapterTest, last_wins_file_overwrites_symlink)
+TEST_P(MerkleTarAdapterTest, last_wins_file_overwrites_symlink)
 {
     auto pool = openWriterPool();
     auto tarSink = merkle::makeTarSink(*pool);
@@ -737,7 +775,7 @@ TEST_F(MerkleTarAdapterTest, last_wins_file_overwrites_symlink)
     ASSERT_THAT(accessor, testing::HasContents(CanonPath("entry"), "file content"));
 }
 
-TEST_F(MerkleTarAdapterTest, last_wins_symlink_overwrites_file)
+TEST_P(MerkleTarAdapterTest, last_wins_symlink_overwrites_file)
 {
     auto pool = openWriterPool();
     auto tarSink = merkle::makeTarSink(*pool);
@@ -751,7 +789,7 @@ TEST_F(MerkleTarAdapterTest, last_wins_symlink_overwrites_file)
     ASSERT_THAT(accessor, testing::HasSymlink(CanonPath("entry"), "new-target"));
 }
 
-TEST_F(MerkleTarAdapterTest, last_wins_symlink_overwrites_symlink)
+TEST_P(MerkleTarAdapterTest, last_wins_symlink_overwrites_symlink)
 {
     auto pool = openWriterPool();
     auto tarSink = merkle::makeTarSink(*pool);
@@ -765,7 +803,7 @@ TEST_F(MerkleTarAdapterTest, last_wins_symlink_overwrites_symlink)
     ASSERT_THAT(accessor, testing::HasSymlink(CanonPath("link"), "second-target"));
 }
 
-TEST_F(MerkleTarAdapterTest, last_wins_executable_changes)
+TEST_P(MerkleTarAdapterTest, last_wins_executable_changes)
 {
     auto pool = openWriterPool();
     auto tarSink = merkle::makeTarSink(*pool);
@@ -781,7 +819,7 @@ TEST_F(MerkleTarAdapterTest, last_wins_executable_changes)
     ASSERT_TRUE(accessor->lstat(CanonPath("script")).isExecutable);
 }
 
-TEST_F(MerkleTarAdapterTest, last_wins_nested_file_overwrites)
+TEST_P(MerkleTarAdapterTest, last_wins_nested_file_overwrites)
 {
     auto pool = openWriterPool();
     auto tarSink = merkle::makeTarSink(*pool);
@@ -795,7 +833,7 @@ TEST_F(MerkleTarAdapterTest, last_wins_nested_file_overwrites)
     ASSERT_THAT(accessor, testing::HasContents(CanonPath("a/b/file.txt"), "second"));
 }
 
-TEST_F(MerkleTarAdapterTest, last_wins_at_root)
+TEST_P(MerkleTarAdapterTest, last_wins_at_root)
 {
     auto pool = openWriterPool();
     auto tarSink = merkle::makeTarSink(*pool);
@@ -816,8 +854,37 @@ TEST_F(MerkleTarAdapterTest, last_wins_at_root)
     ASSERT_THAT(accessor, testing::HasSymlink(CanonPath("link"), "second-target"));
 }
 
+/* RapidCheck's fixture properties cannot take a gtest parameter, so each
+   backend has a fixture of its own. */
+template<GitBackend b>
+class MerkleTarAdapterPropTest : public MerkleTarAdapterTest
+{
+protected:
+    GitBackend backend() const override
+    {
+        return b;
+    }
+
+public:
+    void lastWins();
+};
+
+using MerkleTarAdapterLibgit2PropTest = MerkleTarAdapterPropTest<GitBackend::libgit2>;
+using MerkleTarAdapterGixPropTest = MerkleTarAdapterPropTest<GitBackend::gix>;
+
 // Property-based test: last entry for each path wins
-RC_GTEST_FIXTURE_PROP(MerkleTarAdapterTest, last_wins_property, ())
+RC_GTEST_FIXTURE_PROP(MerkleTarAdapterLibgit2PropTest, last_wins_property, ())
+{
+    lastWins();
+}
+
+RC_GTEST_FIXTURE_PROP(MerkleTarAdapterGixPropTest, last_wins_property, ())
+{
+    lastWins();
+}
+
+template<GitBackend b>
+void MerkleTarAdapterPropTest<b>::lastWins()
 {
     // Generate a list of (path, content) pairs where paths may repeat
     auto pathNames = *rc::gen::container<std::vector<std::string>>(
