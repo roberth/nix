@@ -213,6 +213,7 @@ sources = [ config_priv_h ] + files(
   'suggestions.cc',
   'table.cc',
   'tarfile.cc',
+  'task.cc',
   'tee-logger.cc',
   'terminal.cc',
   'thread-pool.cc',
