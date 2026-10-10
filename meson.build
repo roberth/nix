@@ -10,6 +10,7 @@ project(
 )
 
 # Internal Libraries
+subproject('librust')
 subproject('libutil')
 subproject('libstore')
 subproject('libfetchers')

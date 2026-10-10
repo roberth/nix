@@ -6,6 +6,8 @@
 
   maintainers,
 
+  nix-rust,
+
   nix-util,
   nix-util-c,
   nix-util-tests,
@@ -49,6 +51,7 @@
 let
   libs = {
     inherit
+      nix-rust
       nix-util
       nix-util-c
       nix-store
@@ -233,6 +236,7 @@ stdenv.mkDerivation (finalAttrs: {
       "nix-flake-c"
       "nix-main"
       "nix-main-c"
+      "nix-rust"
       "nix-store"
       "nix-store-c"
       "nix-util"

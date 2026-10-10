@@ -258,6 +258,8 @@
           flatMapAttrs
             {
               # Components we'll iterate over in the upcoming lambda
+              "nix-rust" = { };
+
               "nix-util" = { };
               "nix-util-c" = { };
               "nix-util-test-support" = { };

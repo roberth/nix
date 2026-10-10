@@ -273,6 +273,7 @@ nixComponents.callPackage (
       mesonFlags = [
         (lib.mesonBool "json-schema-checks" (isActiveComponent "nix-json-schema-checks"))
       ]
+      ++ map (transformFlag "librust") (ignoreCrossFile nixComponents.nix-rust.mesonFlags)
       ++ map (transformFlag "libutil") (ignoreCrossFile nixComponents.nix-util.mesonFlags)
       ++ map (transformFlag "libstore") (ignoreCrossFile nixComponents.nix-store.mesonFlags)
       ++ map (transformFlag "libfetchers") (ignoreCrossFile nixComponents.nix-fetchers.mesonFlags)

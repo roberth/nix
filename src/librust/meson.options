@@ -1,0 +1,8 @@
+# vim: filetype=meson
+
+option(
+  'rust-target',
+  type : 'string',
+  value : '',
+  description : 'the Rust target triple of the host machine, as passed to `cargo --target`; empty for a build for the machine that runs cargo',
+)

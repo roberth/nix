@@ -40,6 +40,7 @@ let
     lib.genAttrs (
       [
         "nix-everything"
+        "nix-rust"
         "nix-util"
         "nix-util-c"
         "nix-util-test-support"

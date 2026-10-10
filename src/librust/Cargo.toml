@@ -1,0 +1,24 @@
+[package]
+name = "nix-rust"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.88"
+publish = false
+license = "LGPL-2.1-or-later"
+description = "The Rust part of Nix, linked into the process exactly once"
+
+[lib]
+# Meson wraps this archive into `libnixrust` (shared or static); see
+# `meson.build` and `doc/manual/source/development/rust.md`.
+crate-type = ["staticlib"]
+path = "src/lib.rs"
+
+[dependencies]
+cxx = "1.0"
+
+[build-dependencies]
+cxx-build = "1.0"
+
+[profile.release]
+# Meson strips and splits debug info itself.
+debug = "line-tables-only"
