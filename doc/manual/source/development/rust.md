@@ -23,6 +23,10 @@ Such a reference makes a cycle in the library graph: a static link then depends 
 Rust code therefore calls upward only through virtual functions of abstract C++ classes that `libnixrust` declares, for example `nix::rs::Callback` in `nix/rust/boundary.hh`.
 The libraries above implement the classes and pass instances down.
 The call goes through the vtable at run time, so `libnixrust` has no undefined symbols of other Nix libraries.
+Two other kinds of upward call follow the same rule:
+
+- A C ABI future (`nix/rust/future-abi.h`) carries its own vtable, so Rust polls a C++ task through function pointers.
+- A library above registers a function pointer at run time, for example the factory that turns Rust errors into `nix::Error` (`nix_set_rust_error_factory`).
 
 Rejected alternatives:
 
@@ -52,6 +56,34 @@ A namespace `nix::rust` would hide cxx's own namespace `::rust` (`rust::String`,
 2. Add the file to `BRIDGES` in `build.rs`.
 3. Add `<module>.rs.h` to `bridge_headers` in `meson.build`.
 4. Include `nix/rust/<module>.rs.h` from C++, and add `dependency('nix-rust')` to the Meson dependencies of the library that includes it.
+
+## Asynchronous functions
+
+cxx has no support for `async fn`.
+An asynchronous function crosses the boundary as a C ABI future instead, which a bridge passes by value:
+
+```rust
+#[cxx::bridge(namespace = "nix::rs")]
+mod ffi {
+    unsafe extern "C++" {
+        include!("nix/rust/future-abi.hh");
+        #[namespace = ""]
+        type nix_future = crate::future::NixFuture;
+    }
+    extern "Rust" {
+        fn fetch_something(url: &str) -> nix_future;
+    }
+}
+
+fn fetch_something(url: &str) -> NixFuture {
+    let url = url.to_owned();
+    export_future(async move { Ok::<String, Error>(format!("fetched {url}")) })
+}
+```
+
+C++ awaits it with `co_await awaitCFuture<rust::String>(rs::fetch_something(url))`.
+In the other direction, a bridge function takes a `nix_future` that C++ made with `toCFuture(task)`, and Rust awaits `CxxFuture::<T>::new(future)`.
+See [Asynchronous code](./async.md#tasks-and-rust-futures) for the semantics.
 
 ## Adding a crate dependency
 

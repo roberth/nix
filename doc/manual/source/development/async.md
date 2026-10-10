@@ -29,8 +29,8 @@ This page states the contract and the reasons for it.
 - A task is driven by `poll(waker)`.
   `poll` returns `NIX_POLL_READY` when the task is complete.
   Otherwise it returns `NIX_POLL_PENDING`, after the task arranged for the waker to be woken when it can make progress.
-  The waker is two pointers with the layout of Rust's `RawWaker` (`future-abi.h`, a C header).
-  `toCFuture` and `awaitCFuture` cross that boundary in either direction.
+  The waker is two pointers with the layout of Rust's `RawWaker` (`nix/rust/future-abi.h`, a C header).
+  `toCFuture` and `awaitCFuture` cross that boundary in either direction; see [Tasks and Rust futures](#tasks-and-rust-futures).
 
   When a task awaits another task, control transfers directly between the two coroutines.
   Only the outermost task of a chain is polled.
@@ -74,3 +74,44 @@ Two consequences:
 
 There is no detached spawn.
 A task always has an owner, so its lifetime is visible in the code.
+
+## Tasks and Rust futures
+
+A C++ task and a Rust future can await each other, through the C ABI in `nix/rust/future-abi.h`.
+The ABI is in libnixrust, the lowest library, because both languages use it.
+
+- `toCFuture(task)` boxes a task as a `nix_future`.
+  Rust awaits it as a `CxxFuture<T>` (`src/librust/src/future.rs`).
+- Rust boxes a future with `export_future`.
+  C++ awaits the `nix_future` with `awaitCFuture<T>(future)`.
+
+Both sides have the same semantics, so a chain of `co_await` and `.await` can cross the boundary at any point:
+
+- Dropping the owner cancels the chain on both sides.
+  Dropping a task drops the Rust future that it awaits, and dropping a `CxxFuture` destroys the task that it awaits, down to the leaf operation.
+- A waker crosses as two pointers.
+  A waker that comes back to its own language is unwrapped, so a chain that crosses the boundary several times wakes through one level of indirection.
+- The output crosses by value, in storage that the receiver provides (`nix_future_vtable::take`).
+  Only types whose layout cxx guarantees to be the same in both languages can cross: `void`/`()`, `bool`, `uint64_t`/`u64`, `int64_t`/`i64`, `rust::String`/`String` and `rust::Vec<uint8_t>`/`Vec<u8>`.
+  Both sides name the type (`nix::rs::AbiType`, the Rust trait `AbiType`), and the receiver checks the name before it accepts the value.
+  A mismatch aborts, instead of corrupting memory.
+  To let a future carry another cxx type, for example `rust::Box<T>` of an opaque Rust type, add the same name on both sides.
+- An error crosses as a `nix_exception`, which owns an `std::exception_ptr`.
+  A C++ exception that travels through Rust and back keeps its dynamic type, because Rust holds it without looking inside.
+  A Rust `Err` and a Rust panic become a `nix::Error`.
+  libutil makes these exceptions through a factory that it registers with libnixrust at run time, because libnixrust cannot refer to libutil at link time.
+  A panic never unwinds into C++.
+
+A `CxxFuture` is `Send`, so a C++ task that crosses into Rust can be polled on any thread, one thread at a time.
+A task that keeps thread-local state across a `co_await`, such as a `PushActivity`, is therefore not fit to cross.
+
+### What remains for a Rust executor
+
+Today C++ drives every chain: `runBlocking` or the Asio runner polls the outermost task, and Rust futures run inside it.
+No Rust code spawns a task or owns a reactor.
+To run a chain on tokio, for example for network code in Rust, the following is necessary and does not exist yet:
+
+- A tokio runtime with a `LocalSet` for futures that contain C++ tasks, or an argument that the C++ tasks are thread-safe, so that a multi-threaded runtime can poll them.
+- A C++ entry point that submits a `nix_future` to the runtime and returns a task that completes with it, so that C++ code can wait for tokio without blocking an Asio thread.
+- Interrupt handling: `runBlocking` turns a user interrupt into a drop of the task, and a tokio-driven chain needs the same, for example by racing it against an interrupt future.
+- A decision about which reactor owns the curl multi handle, which is the same question for C++ code with or without Rust.
