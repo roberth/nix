@@ -10,6 +10,7 @@
 #include "nix/util/topo-sort.hh"
 #include "nix/util/callback.hh"
 #include "nix/util/closure.hh"
+#include "nix/util/task-asio.hh"
 #include "nix/store/filetransfer.hh"
 #include "nix/util/strings.hh"
 #include "nix/util/json-utils.hh"
@@ -87,83 +88,99 @@ const ContentAddress * getDerivationCA(const Derivation & drv)
     return nullptr;
 }
 
-static asio::awaitable<void>
-querySubstitutablePathInfosAsync(Store & store, const StorePathCAMap & paths, SubstitutablePathInfos & infos)
+/**
+ * Ask the substituters in order for one path, and return the info of the
+ * first one that has it.
+ */
+static Task<std::optional<SubstitutablePathInfo>>
+querySubstitutablePathInfo(Store & store, StorePath path, std::optional<ContentAddress> ca)
 {
-    if (!settings.getWorkerSettings().useSubstitutes)
-        co_return;
+    std::optional<Error> lastStoresException = std::nullopt;
+    for (ref<Store> sub : getDefaultSubstituters()) {
+        if (lastStoresException.has_value()) {
+            logError(lastStoresException->info());
+            lastStoresException.reset();
+        }
 
-    co_await forEachAsync(paths, [&store, &infos](auto path) -> asio::awaitable<void> {
-        std::optional<Error> lastStoresException = std::nullopt;
-        for (auto & sub : getDefaultSubstituters()) {
-            if (lastStoresException.has_value()) {
-                logError(lastStoresException->info());
-                lastStoresException.reset();
-            }
+        auto subPath(path);
 
-            auto subPath(path.first);
+        // Recompute store path so that we can use a different store root.
+        if (ca) {
+            subPath = store.makeFixedOutputPathFromCA(path.name(), ContentAddressWithReferences::withoutRefs(*ca));
+            if (sub->storeDir == store.storeDir)
+                assert(subPath == path);
+            if (subPath != path)
+                debug(
+                    "replaced path '%s' with '%s' for substituter '%s'",
+                    store.printStorePath(path),
+                    sub->printStorePath(subPath),
+                    sub->config.getHumanReadableURI());
+        } else if (sub->storeDir != store.storeDir)
+            continue;
 
-            // Recompute store path so that we can use a different store root.
-            if (path.second) {
-                subPath = store.makeFixedOutputPathFromCA(
-                    path.first.name(), ContentAddressWithReferences::withoutRefs(*path.second));
-                if (sub->storeDir == store.storeDir)
-                    assert(subPath == path.first);
-                if (subPath != path.first)
-                    debug(
-                        "replaced path '%s' with '%s' for substituter '%s'",
-                        store.printStorePath(path.first),
-                        sub->printStorePath(subPath),
-                        sub->config.getHumanReadableURI());
-            } else if (sub->storeDir != store.storeDir)
+        debug(
+            "checking substituter '%s' for path '%s'", sub->config.getHumanReadableURI(), sub->printStorePath(subPath));
+        try {
+            auto info = co_await sub->queryPathInfoAsync(subPath);
+
+            if (sub->storeDir != store.storeDir && !(info->isContentAddressed(*sub) && info->references.empty()))
                 continue;
 
-            debug(
-                "checking substituter '%s' for path '%s'",
-                sub->config.getHumanReadableURI(),
-                sub->printStorePath(subPath));
-            try {
-                auto info = co_await callbackToAwaitable<ref<const ValidPathInfo>>(
-                    [subPath, &sub](Callback<ref<const ValidPathInfo>> cb) {
-                        sub->queryPathInfo(subPath, std::move(cb));
-                    });
-
-                if (sub->storeDir != store.storeDir && !(info->isContentAddressed(*sub) && info->references.empty()))
-                    continue;
-
-                auto narInfo = std::dynamic_pointer_cast<const NarInfo>(std::shared_ptr<const ValidPathInfo>(info));
-                infos.insert_or_assign(
-                    path.first,
-                    SubstitutablePathInfo{
-                        .deriver = info->deriver,
-                        .references = info->references,
-                        .downloadSize = narInfo ? narInfo->fileSize : 0,
-                        .narSize = info->narSize,
-                    });
-
-                break; /* We are done. */
-            } catch (InvalidPath &) {
-            } catch (Error & e) {
-                lastStoresException = std::make_optional(std::move(e));
-            }
+            auto narInfo = std::dynamic_pointer_cast<const NarInfo>(std::shared_ptr<const ValidPathInfo>(info));
+            co_return SubstitutablePathInfo{
+                .deriver = info->deriver,
+                .references = info->references,
+                .downloadSize = narInfo ? narInfo->fileSize : 0,
+                .narSize = info->narSize,
+            };
+        } catch (InvalidPath &) {
+        } catch (Error & e) {
+            lastStoresException = std::make_optional(std::move(e));
         }
-        if (lastStoresException.has_value()) {
-            if (!settings.getWorkerSettings().tryFallback) {
-                throw std::move(*lastStoresException);
-            } else
-                logError(lastStoresException->info());
-        }
-    });
+    }
+    if (lastStoresException.has_value()) {
+        if (!settings.getWorkerSettings().tryFallback) {
+            throw std::move(*lastStoresException);
+        } else
+            logError(lastStoresException->info());
+    }
+    co_return std::nullopt;
 }
 
-void Store::querySubstitutablePathInfos(const StorePathCAMap & paths, SubstitutablePathInfos & infos)
+/**
+ * The default implementation of `Store::querySubstitutablePathInfos`.
+ * `queryMissing` calls it directly, also for stores that override the
+ * virtual function.
+ */
+static Task<SubstitutablePathInfos> querySubstitutablePathInfosFromSubstituters(Store & store, StorePathCAMap paths)
 {
-    asio::io_context ctx;
-    std::exception_ptr ex;
-    asio::co_spawn(ctx, querySubstitutablePathInfosAsync(*this, paths, infos), [&](std::exception_ptr e) { ex = e; });
-    ctx.run();
-    if (ex)
-        std::rethrow_exception(ex);
+    SubstitutablePathInfos infos;
+
+    if (!settings.getWorkerSettings().useSubstitutes)
+        co_return infos;
+
+    /* Each query returns its own result instead of writing to a shared
+       map: a query that is cancelled then cannot leave a partial
+       entry behind. */
+    std::vector<StorePath> order;
+    std::vector<Task<std::optional<SubstitutablePathInfo>>> queries;
+    for (auto & [path, ca] : paths) {
+        order.push_back(path);
+        queries.push_back(querySubstitutablePathInfo(store, path, ca));
+    }
+
+    auto results = co_await whenAll(std::move(queries));
+
+    for (size_t i = 0; i < results.size(); ++i)
+        if (results[i])
+            infos.insert_or_assign(order[i], std::move(*results[i]));
+
+    co_return infos;
+}
+
+Task<SubstitutablePathInfos> Store::querySubstitutablePathInfos(StorePathCAMap paths)
+{
+    co_return co_await querySubstitutablePathInfosFromSubstituters(*this, std::move(paths));
 }
 
 MissingPaths Store::queryMissing(const std::vector<DerivedPath> & targets)
@@ -278,9 +295,8 @@ MissingPaths Store::queryMissing(const std::vector<DerivedPath> & targets)
                             if (mustBuild)
                                 co_return;
 
-                            SubstitutablePathInfos infos;
-                            co_await querySubstitutablePathInfosAsync(
-                                *this, {{outPath, cap ? std::optional{*cap} : std::nullopt}}, infos);
+                            auto infos = co_await taskToAwaitable(querySubstitutablePathInfosFromSubstituters(
+                                *this, {{outPath, cap ? std::optional{*cap} : std::nullopt}}));
 
                             if (infos.empty())
                                 mustBuild = true;
@@ -301,8 +317,8 @@ MissingPaths Store::queryMissing(const std::vector<DerivedPath> & targets)
                     if (isValidPath(bo.path))
                         co_return;
 
-                    SubstitutablePathInfos infos;
-                    co_await querySubstitutablePathInfosAsync(*this, {{bo.path, std::nullopt}}, infos);
+                    auto infos = co_await taskToAwaitable(
+                        querySubstitutablePathInfosFromSubstituters(*this, {{bo.path, std::nullopt}}));
 
                     if (infos.empty()) {
                         res.unknown.insert(bo.path);

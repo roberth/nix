@@ -633,8 +633,6 @@ std::optional<std::shared_ptr<const ValidPathInfo>> Store::queryPathInfoFromClie
 
 void Store::queryPathInfo(const StorePath & storePath, Callback<ref<const ValidPathInfo>> callback) noexcept
 {
-    auto hashPart = std::string(storePath.hashPart());
-
     try {
         auto r = queryPathInfoFromClientCache(storePath);
         if (r.has_value()) {
@@ -651,24 +649,48 @@ void Store::queryPathInfo(const StorePath & storePath, Callback<ref<const ValidP
     auto callbackPtr = std::make_shared<decltype(callback)>(std::move(callback));
 
     queryPathInfoUncached(
-        storePath, {[this, storePath, hashPart, callbackPtr](std::future<std::shared_ptr<const ValidPathInfo>> fut) {
+        storePath, {[this, storePath, callbackPtr](std::future<std::shared_ptr<const ValidPathInfo>> fut) {
             try {
-                auto info = fut.get();
-
-                if (diskCache)
-                    diskCache->upsertNarInfo(config.getReference().render(/*FIXME withParams=*/false), hashPart, info);
-
-                if (pathInfoCache)
-                    pathInfoCache->lock()->upsert(storePath, PathInfoCacheValue{.value = info});
-
-                if (!info || !goodStorePath(storePath, info->path))
-                    throw InvalidPath("path '%s' is not valid", printStorePath(storePath));
-
-                (*callbackPtr)(ref<const ValidPathInfo>(info));
+                (*callbackPtr)(cacheUncachedPathInfo(storePath, fut.get()));
             } catch (...) {
                 callbackPtr->rethrow();
             }
         }});
+}
+
+ref<const ValidPathInfo>
+Store::cacheUncachedPathInfo(const StorePath & storePath, std::shared_ptr<const ValidPathInfo> info)
+{
+    if (diskCache)
+        diskCache->upsertNarInfo(
+            config.getReference().render(/*FIXME withParams=*/false), std::string(storePath.hashPart()), info);
+
+    if (pathInfoCache)
+        pathInfoCache->lock()->upsert(storePath, PathInfoCacheValue{.value = info});
+
+    if (!info || !goodStorePath(storePath, info->path))
+        throw InvalidPath("path '%s' is not valid", printStorePath(storePath));
+
+    return ref<const ValidPathInfo>(info);
+}
+
+Task<ref<const ValidPathInfo>> Store::queryPathInfoAsync(StorePath storePath)
+{
+    if (auto r = queryPathInfoFromClientCache(storePath)) {
+        if (!*r)
+            throw InvalidPath("path '%s' is not valid", printStorePath(storePath));
+        co_return ref<const ValidPathInfo>(*r);
+    }
+
+    co_return cacheUncachedPathInfo(storePath, co_await queryPathInfoUncachedAsync(storePath));
+}
+
+Task<std::shared_ptr<const ValidPathInfo>> Store::queryPathInfoUncachedAsync(StorePath path)
+{
+    co_return co_await callbackToTask<std::shared_ptr<const ValidPathInfo>>(
+        [this, path](Callback<std::shared_ptr<const ValidPathInfo>> callback) {
+            queryPathInfoUncached(path, std::move(callback));
+        });
 }
 
 void Store::queryRealisation(

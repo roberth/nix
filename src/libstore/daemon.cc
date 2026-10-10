@@ -863,8 +863,7 @@ static void performOp(
     case WorkerProto::Op::QuerySubstitutablePathInfo: {
         auto path = WorkerProto::Serialise<StorePath>::read(*store, rconn);
         logger->startWork();
-        SubstitutablePathInfos infos;
-        store->querySubstitutablePathInfos({{path, std::nullopt}}, infos);
+        auto infos = runBlocking(store->querySubstitutablePathInfos({{path, std::nullopt}}));
         logger->stopWork();
         auto i = infos.find(path);
         if (i == infos.end())
@@ -879,7 +878,6 @@ static void performOp(
     }
 
     case WorkerProto::Op::QuerySubstitutablePathInfos: {
-        SubstitutablePathInfos infos;
         StorePathCAMap pathsMap = {};
         if (conn.protoVersion.number < WorkerProto::Version::Number{1, 22}) {
             auto paths = WorkerProto::Serialise<StorePathSet>::read(*store, rconn);
@@ -888,7 +886,7 @@ static void performOp(
         } else
             pathsMap = WorkerProto::Serialise<StorePathCAMap>::read(*store, rconn);
         logger->startWork();
-        store->querySubstitutablePathInfos(pathsMap, infos);
+        auto infos = runBlocking(store->querySubstitutablePathInfos(std::move(pathsMap)));
         logger->stopWork();
         conn.to << infos.size();
         for (auto & i : infos) {

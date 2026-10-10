@@ -16,6 +16,7 @@
 #include "nix/store/store-reference.hh"
 #include "nix/store/substituter.hh"
 #include "nix/util/source-path.hh"
+#include "nix/util/task.hh"
 
 #include <nlohmann/json_fwd.hpp>
 #include <atomic>
@@ -534,6 +535,14 @@ public:
     void queryPathInfo(const StorePath & path, Callback<ref<const ValidPathInfo>> callback) noexcept;
 
     /**
+     * Version of queryPathInfo() as a task. Destroying the task cancels
+     * the query, including the network transfer of a binary cache.
+     *
+     * This store must outlive the task.
+     */
+    Task<ref<const ValidPathInfo>> queryPathInfoAsync(StorePath path);
+
+    /**
      * Version of queryPathInfo() that only queries the local narinfo cache and not
      * the actual store.
      *
@@ -578,6 +587,28 @@ protected:
 
     virtual void
     queryPathInfoUncached(const StorePath & path, Callback<std::shared_ptr<const ValidPathInfo>> callback) noexcept = 0;
+
+    /**
+     * Version of queryPathInfoUncached() as a task. The default
+     * implementation adapts the callback version, so destroying the task
+     * discards the result but does not stop the query. Stores that can
+     * cancel their queries override it.
+     */
+    virtual Task<std::shared_ptr<const ValidPathInfo>> queryPathInfoUncachedAsync(StorePath path);
+
+private:
+
+    /**
+     * Record the result of queryPathInfoUncached() in the caches, and
+     * return it if it is valid.
+     *
+     * @throws InvalidPath if `info` is null or is for a different path.
+     */
+    ref<const ValidPathInfo>
+    cacheUncachedPathInfo(const StorePath & storePath, std::shared_ptr<const ValidPathInfo> info);
+
+protected:
+
     virtual void queryRealisationUncached(
         const DrvOutput &, Callback<std::shared_ptr<const UnkeyedRealisation>> callback) noexcept = 0;
 
@@ -657,9 +688,12 @@ public:
      * sizes) of a map of paths to their optional ca values. The info of
      * the first succeeding substituter for each path will be returned.
      * If a path does not have substitute info, it's omitted from the
-     * resulting ‘infos’ map.
+     * result.
+     *
+     * The paths are queried concurrently. Destroying the task cancels
+     * all queries that are still in progress.
      */
-    virtual void querySubstitutablePathInfos(const StorePathCAMap & paths, SubstitutablePathInfos & infos);
+    virtual Task<SubstitutablePathInfos> querySubstitutablePathInfos(StorePathCAMap paths);
 
     /**
      * Import a path into the store. Note that the entire NAR may not be read from `narSource`, e.g. if the path is

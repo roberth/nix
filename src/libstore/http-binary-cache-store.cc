@@ -337,6 +337,19 @@ void HttpBinaryCacheStore::getFile(const std::string & path, Callback<std::optio
     }
 }
 
+Task<std::optional<std::string>> HttpBinaryCacheStore::getFileAsync(std::string path)
+{
+    checkEnabled();
+    try {
+        co_return (co_await fileTransfer->transfer(makeRequest(path))).data;
+    } catch (FileTransferError & e) {
+        if (e.error == FileTransfer::NotFound || e.error == FileTransfer::Forbidden)
+            co_return std::nullopt;
+        disable(e);
+        throw;
+    }
+}
+
 std::optional<std::string> HttpBinaryCacheStore::getNixCacheInfo()
 {
     try {

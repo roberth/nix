@@ -174,6 +174,11 @@ protected:
 
     void getFile(const std::string & path, Callback<std::optional<std::string>> callback) noexcept override;
 
+    /**
+     * Destroying the task cancels the HTTP transfer.
+     */
+    Task<std::optional<std::string>> getFileAsync(std::string path) override;
+
     std::optional<std::string> getNixCacheInfo() override;
 
     std::optional<TrustedFlag> isTrustedClient() override;

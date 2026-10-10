@@ -601,6 +601,36 @@ void BinaryCacheStore::queryPathInfoUncached(
     }
 }
 
+Task<std::shared_ptr<const ValidPathInfo>> BinaryCacheStore::queryPathInfoUncachedAsync(StorePath storePath)
+{
+    auto uri = config.getReference().render(/*FIXME withParams=*/false);
+    auto storePathS = printStorePath(storePath);
+    /* Destroyed when the query completes or is cancelled. A
+       `PushActivity` would be wrong here: it is thread-local state, and
+       the task can suspend. */
+    Activity act(
+        *logger,
+        lvlTalkative,
+        actQueryPathInfo,
+        fmt("querying info about '%s' on '%s'", storePathS, uri),
+        std::to_array<Logger::Field>({storePathS, uri}));
+
+    auto narInfoFile = narInfoFileFor(storePath);
+
+    auto data = co_await getFileAsync(narInfoFile);
+
+    if (!data)
+        co_return nullptr;
+
+    co_return std::make_shared<NarInfo>(*this, *data, narInfoFile);
+}
+
+Task<std::optional<std::string>> BinaryCacheStore::getFileAsync(std::string path)
+{
+    co_return co_await callbackToTask<std::optional<std::string>>(
+        [this, path](Callback<std::optional<std::string>> callback) { getFile(path, std::move(callback)); });
+}
+
 StorePath BinaryCacheStore::addToStore(
     std::string_view name,
     const SourcePath & path,

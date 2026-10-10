@@ -218,10 +218,12 @@ StorePathSet RemoteStore::querySubstitutablePaths(const StorePathSet & paths)
     return WorkerProto::Serialise<StorePathSet>::read(*this, *conn);
 }
 
-void RemoteStore::querySubstitutablePathInfos(const StorePathCAMap & pathsMap, SubstitutablePathInfos & infos)
+Task<SubstitutablePathInfos> RemoteStore::querySubstitutablePathInfos(StorePathCAMap pathsMap)
 {
+    SubstitutablePathInfos infos;
+
     if (pathsMap.empty())
-        return;
+        co_return infos;
 
     auto conn(getConnection());
 
@@ -242,6 +244,8 @@ void RemoteStore::querySubstitutablePathInfos(const StorePathCAMap & pathsMap, S
         info.downloadSize = readLongLong(conn->from);
         info.narSize = readLongLong(conn->from);
     }
+
+    co_return infos;
 }
 
 void RemoteStore::queryPathInfoUncached(

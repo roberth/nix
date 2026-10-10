@@ -169,6 +169,14 @@ public:
      */
     virtual void getFile(const std::string & path, Callback<std::optional<std::string>> callback) noexcept;
 
+    /**
+     * Version of getFile() as a task. The default implementation adapts
+     * the callback version, so destroying the task discards the result
+     * but does not stop the fetch. Stores that can cancel a fetch
+     * override it.
+     */
+    virtual Task<std::optional<std::string>> getFileAsync(std::string path);
+
     std::optional<std::string> getFile(const std::string & path);
 
 public:
@@ -214,6 +222,8 @@ public:
 
     void queryPathInfoUncached(
         const StorePath & path, Callback<std::shared_ptr<const ValidPathInfo>> callback) noexcept override;
+
+    Task<std::shared_ptr<const ValidPathInfo>> queryPathInfoUncachedAsync(StorePath path) override;
 
     std::optional<StorePath> queryPathFromHashPart(const std::string & hashPart) override;
 

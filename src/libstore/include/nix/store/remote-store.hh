@@ -82,7 +82,12 @@ public:
 
     StorePathSet querySubstitutablePaths(const StorePathSet & paths) override;
 
-    void querySubstitutablePathInfos(const StorePathCAMap & paths, SubstitutablePathInfos & infos) override;
+    /**
+     * Asks the daemon. The task does not suspend: the whole protocol
+     * exchange runs in its first poll, so cancellation cannot leave the
+     * connection in the middle of a message.
+     */
+    Task<SubstitutablePathInfos> querySubstitutablePathInfos(StorePathCAMap paths) override;
 
     /**
      * Add a content-addressable store path. `dump` will be drained.
