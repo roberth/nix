@@ -47,6 +47,7 @@ mkMesonLibrary (finalAttrs: {
     ./windows/include/nix/util/meson.build
     (fileset.fileFilter (file: file.hasExt "cc") ./.)
     (fileset.fileFilter (file: file.hasExt "hh") ./.)
+    ./include/nix/util/future-abi.h
   ];
 
   buildInputs = [
