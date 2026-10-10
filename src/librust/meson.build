@@ -92,6 +92,7 @@ bridge_headers = [
   'lib.rs.h',
   'probe.rs.h',
   'future_probe.rs.h',
+  'tarball_cache.rs.h',
 ]
 
 # The installation directory of each output of `cargo_build`. The staticlib
@@ -131,6 +132,7 @@ install_headers(
   'include/nix/rust/future-abi.h',
   'include/nix/rust/future-abi.hh',
   'include/nix/rust/future-probe.hh',
+  'include/nix/rust/tarball-cache.hh',
   subdir : 'nix/rust',
 )
 

@@ -14,7 +14,14 @@ crate-type = ["staticlib"]
 path = "src/lib.rs"
 
 [dependencies]
+crc32fast = "1"
 cxx = "1.0"
+gix-hash = { version = "0.28", features = ["sha1"] }
+gix-object = "0.66"
+gix-odb = { version = "0.86.0", features = ["sha1"] }
+gix-pack = { version = "0.76", default-features = false, features = ["sha1", "parallel", "pack-cache-lru-static"] }
+gix-zlib = "0.3.0"
+tempfile = "3"
 
 [build-dependencies]
 cxx-build = "1.0"

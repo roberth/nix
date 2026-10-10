@@ -1,0 +1,3 @@
+# The target directory of a `cargo` command run in this directory, for
+# example `cargo check`. The Meson build uses its own, in the build directory.
+/target

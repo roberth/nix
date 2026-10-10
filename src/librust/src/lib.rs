@@ -11,6 +11,7 @@
 pub mod future;
 pub mod future_probe;
 pub mod probe;
+pub mod tarball_cache;
 
 #[cxx::bridge(namespace = "nix::rs")]
 mod ffi {
