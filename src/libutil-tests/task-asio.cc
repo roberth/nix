@@ -109,6 +109,68 @@ TEST(TaskAsio, asioCancellationDestroysTask)
     EXPECT_EQ(log, (Log{"task local destroyed", "no value"}));
 }
 
+/**
+ * A leaf can wake its task after the task completed and after the
+ * `io_context` is gone: another thread publishes the result, the executor
+ * completes the task, and only then does that thread call `wake`. The
+ * functional tests crashed on this about once in three runs. This test
+ * makes the order deterministic by keeping a clone of the waker.
+ */
+TEST(TaskAsio, lateWakeAfterIoContextIsDestroyed)
+{
+    struct State
+    {
+        bool ready = false;
+        Waker waker;
+    };
+
+    struct Leaf : LeafAwaiter
+    {
+        std::shared_ptr<State> state;
+
+        explicit Leaf(std::shared_ptr<State> state)
+            : state(std::move(state))
+        {
+        }
+
+        Leaf(const Leaf &) = delete;
+
+        nix_poll pollLeaf(const Waker & waker) override
+        {
+            if (state->ready)
+                return NIX_POLL_READY;
+            state->waker = waker;
+            return NIX_POLL_PENDING;
+        }
+
+        void await_resume() noexcept {}
+    };
+
+    auto state = std::make_shared<State>();
+    auto ctx = std::make_unique<asio::io_context>();
+    bool completed = false;
+
+    asyncRunTask(
+        [](std::shared_ptr<State> state) -> Task<void> { co_await Leaf(state); }(state),
+        asio::bind_executor(*ctx, [&](std::exception_ptr) { completed = true; }));
+
+    ctx->poll();
+    ASSERT_TRUE(state->waker);
+    Waker late = state->waker;
+
+    state->ready = true;
+    state->waker.wakeByRef();
+    ctx->run();
+    EXPECT_TRUE(completed);
+
+    ctx.reset();
+
+    /* Must neither post to the destroyed `io_context` nor touch its
+       services when the last reference to the runner goes away. */
+    std::move(late).wake();
+    state->waker.reset();
+}
+
 TEST(TaskAsio, awaitAsioFromTask)
 {
     asio::io_context ctx;

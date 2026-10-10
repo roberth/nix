@@ -43,30 +43,60 @@ using AsioTaskSignature =
  *
  * All polls, the cancellation and the completion run on the executor, so
  * the task never runs on two threads at once.
+ *
+ * A leaf can wake the runner from another thread after the task has
+ * completed: it publishes its result, and the executor can poll, complete
+ * the task and let the `io_context` finish before the leaf calls `wake`.
+ * The `io_context` can be destroyed by then. So the runner drops its
+ * executor and work guard when it completes, under `mutex`, and `wake`
+ * only posts while it still holds them.
  */
 template<typename T, typename Handler>
 struct AsioTaskRunner : WakeTarget
 {
     using Executor = asio::associated_executor_t<Handler>;
+    using WorkGuard = asio::executor_work_guard<asio::io_context::executor_type>;
 
-    Executor executor;
     Task<T> task;
     std::optional<Handler> handler;
-    std::atomic<bool> scheduled{false};
+
+    std::mutex mutex;
+
+    /**
+     * Reset on completion. Protected by `mutex`.
+     */
+    std::optional<Executor> executor;
 
     /**
      * The task can wait for a wake from another thread, for example the
-     * curl thread. Keep the `io_context` running until then.
+     * curl thread. Keep the `io_context` running until then. Reset on
+     * completion. Protected by `mutex`.
      */
-    asio::executor_work_guard<asio::io_context::executor_type> workGuard;
+    std::optional<WorkGuard> workGuard;
 
-    AsioTaskRunner(Task<T> task, Handler handler)
-        : executor(asio::get_associated_executor(handler))
-        , task(std::move(task))
-        , handler(std::move(handler))
-        , workGuard(
-              asio::make_work_guard(static_cast<asio::io_context &>(asio::query(executor, asio::execution::context))))
+    /**
+     * Whether a poll is posted and has not started. Protected by `mutex`.
+     */
+    bool scheduled = false;
+
+    AsioTaskRunner(Task<T> task, Handler handler_)
+        : task(std::move(task))
+        , handler(std::move(handler_))
+        , executor(asio::get_associated_executor(*handler))
     {
+        workGuard.emplace(
+            asio::make_work_guard(static_cast<asio::io_context &>(asio::query(*executor, asio::execution::context))));
+    }
+
+    /**
+     * Post `f` to the executor, unless the runner has completed.
+     */
+    template<typename F>
+    void post(F && f)
+    {
+        std::lock_guard lock(mutex);
+        if (executor)
+            asio::post(*executor, std::forward<F>(f));
     }
 
     void start()
@@ -75,7 +105,7 @@ struct AsioTaskRunner : WakeTarget
         if (slot.is_connected()) {
             addRef();
             slot.assign([self = WakeTargetRef<AsioTaskRunner>(this)](asio::cancellation_type) {
-                asio::post(self->executor, [self]() { self->cancel(); });
+                self->post([self]() { self->cancel(); });
             });
         }
         wake();
@@ -83,11 +113,16 @@ struct AsioTaskRunner : WakeTarget
 
     void wake() noexcept override
     {
-        if (scheduled.exchange(true))
+        std::lock_guard lock(mutex);
+        if (!executor || scheduled)
             return;
+        scheduled = true;
         addRef();
-        asio::post(executor, [self = WakeTargetRef<AsioTaskRunner>(this)]() {
-            self->scheduled = false;
+        asio::post(*executor, [self = WakeTargetRef<AsioTaskRunner>(this)]() {
+            {
+                std::lock_guard lock(self->mutex);
+                self->scheduled = false;
+            }
             self->step();
         });
     }
@@ -139,7 +174,11 @@ struct AsioTaskRunner : WakeTarget
         handler.reset();
         /* Breaks the reference cycle through the slot handler. */
         asio::get_associated_cancellation_slot(h).clear();
-        workGuard.reset();
+        {
+            std::lock_guard lock(mutex);
+            executor.reset();
+            workGuard.reset();
+        }
         std::move(h)(std::forward<Args>(args)...);
     }
 };
