@@ -18,7 +18,9 @@ subdir('nix-meson-build-support/deps-lists')
 
 configuration_data()
 
-deps_private_maybe_subproject = []
+deps_private_maybe_subproject = [
+  dependency('nix-rust'),
+]
 deps_public_maybe_subproject = [
   dependency('nix-util'),
   dependency('nix-store'),
@@ -59,6 +61,7 @@ sources = [ config_priv_h ] + files(
   'path.cc',
   'register-library-versions.cc',
   'registry.cc',
+  'tarball-cache-gix.cc',
   'tarball.cc',
 )
 

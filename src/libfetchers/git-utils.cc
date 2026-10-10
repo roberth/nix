@@ -1,6 +1,7 @@
 #include "nix/fetchers/git-utils.hh"
 
 #include "fetchers-config-private.hh"
+#include "nix/fetchers/tarball-cache-gix.hh"
 #include "nix/fetchers/git-lfs-fetch.hh"
 #include "nix/fetchers/cache.hh"
 #include "nix/fetchers/fetch-settings.hh"
@@ -1689,13 +1690,29 @@ static std::filesystem::path tarballCacheDir()
 
 static constexpr GitRepo::Options tarballCacheOptions{.create = true, .bare = true, .packfilesOnly = true};
 
+/**
+ * Create the tarball cache with libgit2 if it does not exist, so that its
+ * on-disk format does not depend on the backend, and return its path.
+ */
+static std::filesystem::path initGixTarballCache()
+{
+    auto repoDir = tarballCacheDir();
+    initLibGit2();
+    initRepoAtomically(repoDir, tarballCacheOptions);
+    return repoDir;
+}
+
 ref<GitRepo> Settings::getTarballCache() const
 {
+    if (gix::useGixTarballCache())
+        return gix::openTarballCache(initGixTarballCache());
     return GitRepo::openRepo(tarballCacheDir(), tarballCacheOptions);
 }
 
 ref<GitRepoPool> Settings::getTarballWriterPool() const
 {
+    if (gix::useGixTarballCache())
+        return gix::openTarballWriter(initGixTarballCache());
     return GitRepoPool::create(tarballCacheDir(), tarballCacheOptions);
 }
 

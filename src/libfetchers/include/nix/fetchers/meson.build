@@ -12,5 +12,6 @@ headers = files(
   'input-cache.hh',
   'merkle-tar-adapter.hh',
   'registry.hh',
+  'tarball-cache-gix.hh',
   'tarball.hh',
 )
