@@ -26,6 +26,11 @@ mod ffi {
         /// Call `callback` and describe the result: `ok: <value>`, or
         /// `err: <what()>` when the C++ code throws.
         fn probe_call(callback: &Callback) -> String;
+
+        /// Unwind a panic through Rust frames, catch it again, and describe
+        /// the payload. This needs a working unwinder for Rust frames, which
+        /// in a static build is the unwinder of the C++ runtime.
+        fn probe_catch_panic() -> String;
     }
 }
 
@@ -41,5 +46,22 @@ fn probe_call(callback: &ffi::Callback) -> String {
     match callback.call() {
         Ok(value) => format!("ok: {value}"),
         Err(exception) => format!("err: {}", exception.what()),
+    }
+}
+
+#[inline(never)]
+fn probe_unwind() {
+    // `resume_unwind` does not call the panic hook, so the test output stays
+    // clean.
+    std::panic::resume_unwind(Box::new("probe panic"));
+}
+
+fn probe_catch_panic() -> String {
+    match std::panic::catch_unwind(probe_unwind) {
+        Ok(()) => "not caught".to_owned(),
+        Err(payload) => match payload.downcast_ref::<&str>() {
+            Some(message) => format!("caught: {message}"),
+            None => "caught: unknown payload".to_owned(),
+        },
     }
 }

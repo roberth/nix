@@ -55,4 +55,9 @@ TEST(rust, upwardCallExceptionBecomesErr)
     EXPECT_EQ(std::string(rs::probe_call(ThrowingCallback{})), "err: \x1B[31;1merror:\x1B[0m cannot do this");
 }
 
+TEST(rust, panicUnwindsThroughRustFrames)
+{
+    EXPECT_EQ(std::string(rs::probe_catch_panic()), "caught: probe panic");
+}
+
 } // namespace nix
