@@ -3,8 +3,10 @@
 
 #include "nix/util/callback.hh"
 
+#include <cstring>
 #include <functional>
 #include <future>
+#include <new>
 
 namespace nix {
 
@@ -288,12 +290,34 @@ struct CFutureTask
         return static_cast<Task<T> *>(self)->poll(Waker::borrow(waker));
     }
 
+    static nix_exception * take(void * self, void * out)
+    {
+        try {
+            if constexpr (std::is_void_v<T>)
+                static_cast<Task<T> *>(self)->takeResult();
+            else
+                /* The receiver owns the value from now on. For the cxx
+                   types (`rust::String`, `rust::Box`), a moved-from C++
+                   object releases nothing, and the bits are what Rust
+                   expects. */
+                new (out) T(static_cast<Task<T> *>(self)->takeResult());
+            return nullptr;
+        } catch (...) {
+            return rs::currentException();
+        }
+    }
+
     static void drop(void * self)
     {
         delete static_cast<Task<T> *>(self);
     }
 
-    static constexpr nix_future_vtable vtable{.poll = &poll, .drop = &drop};
+    static constexpr nix_future_vtable vtable{
+        .poll = &poll,
+        .take = &take,
+        .drop = &drop,
+        .output_type = rs::AbiType<T>::name,
+    };
 };
 
 struct CFutureLeaf : LeafAwaiter
@@ -327,21 +351,37 @@ nix_future toCFuture(Task<T> task)
 }
 
 template<typename T>
-T takeCFutureResult(const nix_future & future)
+T takeCFuture(const nix_future & future)
 {
-    assert(future.vtable == &detail::CFutureTask<T>::vtable);
-    return static_cast<Task<T> *>(future.self)->takeResult();
+    if (std::strcmp(future.vtable->output_type, rs::AbiType<T>::name) != 0)
+        detail::abortOutputTypeMismatch(rs::AbiType<T>::name, future.vtable->output_type);
+
+    detail::registerRustErrorFactory();
+
+    if constexpr (std::is_void_v<T>) {
+        if (auto e = future.vtable->take(future.self, nullptr))
+            rs::rethrowException(e);
+    } else {
+        alignas(T) unsigned char storage[sizeof(T)];
+        if (auto e = future.vtable->take(future.self, storage))
+            rs::rethrowException(e);
+        /* `take` placed a value of type `T` in `storage`. */
+        T * placed = std::launder(reinterpret_cast<T *>(storage));
+        T result(std::move(*placed));
+        placed->~T();
+        return result;
+    }
 }
 
-template<typename T, typename Take>
-Task<T> awaitCFuture(nix_future future, Take take)
+template<typename T>
+Task<T> awaitCFuture(nix_future future)
 {
     detail::CFutureLeaf leaf(future);
     co_await leaf;
 
-    /* The future is complete but not dropped yet: `take` reads its
-       result, and the drop follows at the end of this scope, also on
-       cancellation. */
+    /* The future is complete but not dropped yet: `takeCFuture` reads its
+       result, and the drop follows at the end of this scope, also when
+       `takeCFuture` throws. */
     struct Dropper
     {
         nix_future f;
@@ -352,7 +392,7 @@ Task<T> awaitCFuture(nix_future future, Take take)
         }
     } dropper{future};
 
-    co_return take(future);
+    co_return takeCFuture<T>(future);
 }
 
 } // namespace nix

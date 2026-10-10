@@ -425,7 +425,7 @@ static nix_waker cWakerClone(const void * data)
 TEST(Task, pollThroughCAbi)
 {
     Trigger trigger;
-    auto future = toCFuture([](Trigger & t) -> Task<int> {
+    auto future = toCFuture([](Trigger & t) -> Task<std::int64_t> {
         co_await t.wait();
         co_return 99;
     }(trigger));
@@ -442,7 +442,7 @@ TEST(Task, pollThroughCAbi)
     EXPECT_EQ(state.drops, 1);
 
     EXPECT_EQ(future.vtable->poll(future.self, &waker), NIX_POLL_READY);
-    EXPECT_EQ(takeCFutureResult<int>(future), 99);
+    EXPECT_EQ(takeCFuture<std::int64_t>(future), 99);
     future.vtable->drop(future.self);
 
     /* Every clone was released. */
@@ -454,13 +454,13 @@ TEST(Task, awaitCFutureDropsItOnCancellation)
     Log log;
     Trigger trigger;
 
-    auto inner = toCFuture([](Log & log, Trigger & t) -> Task<int> {
+    auto inner = toCFuture([](Log & log, Trigger & t) -> Task<std::int64_t> {
         Guard guard{log, "foreign local"};
         co_await t.wait();
         co_return 5;
     }(log, trigger));
 
-    auto outer = awaitCFuture<int>(inner, [](const nix_future & f) { return takeCFutureResult<int>(f); });
+    auto outer = awaitCFuture<std::int64_t>(inner);
     auto target = makeWakeTarget<CountingTarget>();
     EXPECT_EQ(outer.poll(target->waker()), NIX_POLL_PENDING);
 
@@ -472,12 +472,36 @@ TEST(Task, awaitCFutureTakesResult)
 {
     Trigger trigger;
     trigger.fire();
-    auto inner = toCFuture([](Trigger & t) -> Task<int> {
+    auto inner = toCFuture([](Trigger & t) -> Task<std::int64_t> {
         co_await t.wait();
         co_return 5;
     }(trigger));
-    auto outer = awaitCFuture<int>(inner, [](const nix_future & f) { return takeCFutureResult<int>(f) * 2; });
-    EXPECT_EQ(runBlocking(std::move(outer)), 10);
+    EXPECT_EQ(runBlocking(awaitCFuture<std::int64_t>(inner)), 5);
+}
+
+TEST(Task, awaitCFutureRethrowsWithDynamicType)
+{
+    auto inner = toCFuture([]() -> Task<void> {
+        throw SysError(ENOENT, "opening a file");
+        co_return;
+    }());
+    try {
+        runBlocking(awaitCFuture<void>(inner));
+        FAIL() << "the task did not throw";
+    } catch (const SysError & e) {
+        EXPECT_EQ(e.errNo, ENOENT);
+    }
+}
+
+TEST(Task, rustErrorFromFactoryIsNixError)
+{
+    detail::registerRustErrorFactory();
+    auto * exception = nix_exception_from_rust(NIX_RUST_PANIC, "boom", 4);
+    try {
+        rs::rethrowException(exception);
+    } catch (const Error & e) {
+        EXPECT_EQ(e.info().msg.str(), "Rust panic: boom");
+    }
 }
 
 } // namespace nix

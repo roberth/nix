@@ -1,7 +1,11 @@
 #include "nix/util/task.hh"
 #include "nix/util/signals.hh"
+#include "nix/util/error.hh"
 
 #include <condition_variable>
+#include <cstdio>
+#include <cstdlib>
+#include <string>
 
 namespace nix {
 
@@ -57,6 +61,36 @@ void WhenAllChild::wake() noexcept
         parent = shared->parent;
     }
     parent.wakeByRef();
+}
+
+static nix_exception * makeRustError(nix_rust_error_kind kind, const char * message, size_t length)
+{
+    std::string text(message, length);
+    try {
+        /* A single string argument is the literal message, not a format
+           string. */
+        throw Error(kind == NIX_RUST_PANIC ? "Rust panic: " + text : text);
+    } catch (...) {
+        return rs::currentException();
+    }
+}
+
+void registerRustErrorFactory()
+{
+    /* A function-local static runs the registration once, also when
+       several threads get here at the same time. Registration at load
+       time would not work in a static build: the linker drops an object
+       file that nothing refers to, together with its initializers. */
+    [[maybe_unused]] static const bool registered = [] {
+        nix_set_rust_error_factory(&makeRustError);
+        return true;
+    }();
+}
+
+void abortOutputTypeMismatch(const char * expected, const char * actual)
+{
+    std::fprintf(stderr, "nix: a C ABI future has output type '%s', but '%s' was expected\n", actual, expected);
+    std::abort();
 }
 
 CFutureLeaf::~CFutureLeaf()

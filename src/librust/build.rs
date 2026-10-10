@@ -10,6 +10,7 @@ fn main() {
     // version, which the separate `cxxbridge` command does not guarantee.
     cxx_build::bridges(BRIDGES)
         .file("src/boundary.cc")
+        .file("src/future-abi.cc")
         .include("include")
         .std("c++23")
         .compile("nix-rust-bridge");
@@ -18,7 +19,10 @@ fn main() {
         println!("cargo:rerun-if-changed={bridge}");
     }
     println!("cargo:rerun-if-changed=src/boundary.cc");
+    println!("cargo:rerun-if-changed=src/future-abi.cc");
     println!("cargo:rerun-if-changed=include/nix/rust/boundary.hh");
+    println!("cargo:rerun-if-changed=include/nix/rust/future-abi.h");
+    println!("cargo:rerun-if-changed=include/nix/rust/future-abi.hh");
 
     let rustc = std::env::var("RUSTC").expect("cargo sets RUSTC for build scripts");
     let output = Command::new(rustc)

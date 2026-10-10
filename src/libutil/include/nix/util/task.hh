@@ -27,7 +27,7 @@
  * operation that the chain is suspended on.
  */
 
-#include "nix/rust/future-abi.h"
+#include "nix/rust/future-abi.hh"
 
 #include <atomic>
 #include <cassert>
@@ -654,26 +654,48 @@ race(Task<A> a, Task<B> b);
 
 /**
  * Box a task as a C ABI future (`future-abi.h`), for code in another
- * language to poll. Retrieve the result of the completed future with
- * `takeCFutureResult<T>()`, then drop it.
+ * language to poll. The future's `take` moves the result out, or returns
+ * the task's exception as a `nix_exception`.
+ *
+ * `T` must have a Rust counterpart (`nix::rs::AbiType<T>`).
  */
 template<typename T>
 nix_future toCFuture(Task<T> task);
 
 /**
- * The result of a completed future that `toCFuture<T>()` created.
- * Rethrows the task's exception, if any.
+ * The result of a completed C ABI future, from any language. Rethrows the
+ * future's exception with its dynamic type. An error that started in Rust
+ * arrives as a `nix::Error`.
+ *
+ * Checks that the future's output type is `T`. Does not drop the future.
  */
 template<typename T>
-T takeCFutureResult(const nix_future & future);
+T takeCFuture(const nix_future & future);
 
 /**
- * Await a C ABI future from a task. The task owns the future and drops
- * it when the task completes or is cancelled. `take` retrieves the result
- * from the completed future.
+ * Await a C ABI future from a task, from any language. The task owns the
+ * future and drops it when the task completes or is cancelled, so
+ * cancelling the task cancels the future.
  */
-template<typename T, typename Take>
-Task<T> awaitCFuture(nix_future future, Take take);
+template<typename T>
+Task<T> awaitCFuture(nix_future future);
+
+namespace detail {
+
+/**
+ * Register the factory that turns Rust errors into `nix::Error`
+ * (`nix_set_rust_error_factory`). Idempotent. `takeCFuture` calls it, so
+ * that a Rust error reaching C++ through a future is a `nix::Error`.
+ */
+void registerRustErrorFactory();
+
+/**
+ * Abort with a message about the mismatch. Not inline, to keep the
+ * template code small.
+ */
+[[noreturn]] void abortOutputTypeMismatch(const char * expected, const char * actual);
+
+} // namespace detail
 
 } // namespace nix
 
