@@ -14,12 +14,12 @@ namespace {
 
 using Log = std::vector<std::string>;
 
-struct Guard
+struct AsioGuard
 {
     Log & log;
     std::string name;
 
-    ~Guard()
+    ~AsioGuard()
     {
         log.push_back(name + " destroyed");
     }
@@ -74,7 +74,7 @@ TEST(TaskAsio, asioCancellationDestroysTask)
     PendingOp op;
 
     auto task = [](Log & log, PendingOp & op) -> Task<int> {
-        Guard guard{log, "task local"};
+        AsioGuard guard{log, "task local"};
         co_return co_await op.start();
     }(log, op);
 
@@ -199,7 +199,7 @@ TEST(TaskAsio, droppingTaskCancelsAwaitable)
     Log log;
 
     auto task = [](Log & log, asio::io_context & ctx) -> Task<void> {
-        Guard guard{log, "task local"};
+        AsioGuard guard{log, "task local"};
         co_await awaitableToTask(ctx.get_executor(), [](Log & log) -> asio::awaitable<void> {
             asio::steady_timer timer(co_await asio::this_coro::executor, std::chrono::hours(1));
             try {
