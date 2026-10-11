@@ -5,6 +5,7 @@
 #include "nix/util/finally.hh"
 #include "nix/util/callback.hh"
 #include "nix/util/signals.hh"
+#include "nix/util/task-thread.hh"
 #include "nix/util/logging.hh"
 #include "nix/util/util.hh"
 #include "nix/util/socket.hh"
@@ -1615,6 +1616,11 @@ void FileTransfer::download(
             }
             state->avail.notify_one();
         }});
+
+    /* On a thread of a `runInThread` task, a drop of the task cancels the
+       transfer. The transfer then fails, which wakes the loop below also
+       when no data arrives, and `checkInterrupt()` throws. */
+    auto cancelOnDrop = onThreadCancelled([this, handle]() { cancelTransfer(handle); });
 
     while (true) {
         checkInterrupt();

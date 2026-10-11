@@ -228,6 +228,7 @@ suites += {
   ],
   'tests' : [
     'tarball-cancel.sh',
+    'substitute-cancel.sh',
   ],
   'workdir' : meson.current_source_dir(),
   'env' : tarball_cancel_env,
