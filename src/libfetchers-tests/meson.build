@@ -52,6 +52,7 @@ sources = files(
   'nix_api_fetchers.cc',
   'public-key.cc',
   'tarball-cache-gix.cc',
+  'tarball-unpack.cc',
 )
 
 include_dirs = [ include_directories('.') ]

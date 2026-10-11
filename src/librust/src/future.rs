@@ -166,7 +166,8 @@ impl Error {
         Error(Repr::Message(message.into()))
     }
 
-    fn from_panic(payload: Box<dyn std::any::Any + Send>) -> Self {
+    /// An error for the payload of a panic that `catch_unwind` caught.
+    pub fn from_panic(payload: Box<dyn std::any::Any + Send>) -> Self {
         let message = if let Some(s) = payload.downcast_ref::<&str>() {
             (*s).to_owned()
         } else if let Some(s) = payload.downcast_ref::<String>() {

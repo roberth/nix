@@ -1702,6 +1702,11 @@ static std::filesystem::path initGixTarballCache()
     return repoDir;
 }
 
+std::filesystem::path gix::initTarballCache()
+{
+    return initGixTarballCache();
+}
+
 ref<GitRepo> Settings::getTarballCache() const
 {
     if (gix::useGixTarballCache())

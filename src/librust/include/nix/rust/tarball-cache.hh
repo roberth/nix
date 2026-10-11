@@ -4,13 +4,24 @@
 /// Upward interface of the gitoxide tarball cache (`src/tarball_cache.rs`).
 /// See `boundary.hh` for why Rust calls up only through abstract classes.
 
+#include "nix/rust/future-abi.hh"
 #include "rust/cxx.h"
 
 namespace nix::rs {
 
+/* Defined by the bridge in `tarball_cache.rs.h`. */
+struct TarballCacheWriter;
+struct CancelToken;
+struct TarballUnpackResult;
+
 /**
  * The services of the C++ libraries that the tarball cache uses while it
  * writes a pack.
+ *
+ * Cancellation is not one of them: the owner of a write cancels it with a
+ * `CancelToken`, which the writer checks. A global interrupt check here
+ * would stop all writes in the process at once, and could not stop one
+ * write whose owner gave up on it.
  */
 class TarballCacheHooks
 {
@@ -18,17 +29,41 @@ public:
     virtual ~TarballCacheHooks();
 
     /**
-     * Throw if the user interrupted Nix. The exception arrives in Rust as an
-     * `Err`, and the Rust code stops and cleans up. The C++ caller then
-     * calls `checkInterrupt()` again to throw the original exception type.
-     */
-    virtual void checkInterrupt() const = 0;
-
-    /**
      * Log a message at the debug verbosity. (Not `debug`: that is a macro
      * in `nix/util/logging.hh`.)
      */
     virtual void logDebug(::rust::Str message) const = 0;
+};
+
+/**
+ * Reads an archive and writes its contents into the tarball cache, for the
+ * future of `tarball_cache_unpack()`.
+ *
+ * The future calls `run()` on a thread of its own, and may call
+ * `cancel()` on another thread at the same time. An implementation must
+ * therefore be thread-safe for these two calls.
+ */
+class TarballUnpacker
+{
+public:
+    virtual ~TarballUnpacker();
+
+    /**
+     * Parse the archive and write its files and directories with `writer`,
+     * without a flush. Store the root of the tree in `out`. Return null,
+     * or the exception that stopped the parse. Check `cancel` while
+     * waiting for data and between entries, and stop with an exception
+     * when it is set.
+     */
+    virtual nix_exception *
+    run(const TarballCacheWriter & writer, const CancelToken & cancel, TarballUnpackResult & out) const noexcept = 0;
+
+    /**
+     * Wake `run()` if it waits for data, so that it sees the cancellation.
+     */
+    virtual void cancel() const noexcept = 0;
+
+    virtual const TarballCacheHooks & hooks() const noexcept = 0;
 };
 
 } // namespace nix::rs

@@ -24,12 +24,22 @@
 //! objects only: gitoxide has no delta compression.
 
 use std::collections::HashSet;
+use std::ffi::CStr;
+use std::future::poll_fn;
 use std::io::Write as _;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
+use std::task::{Poll, Waker};
+use std::thread;
+use std::time::Duration;
 
+use cxx::UniquePtr;
 use gix_hash::ObjectId;
 use gix_object::WriteTo as _;
+
+use crate::future::{AbiType, Error, NixException, NixFuture, export_future};
 
 #[cxx::bridge(namespace = "nix::rs")]
 mod ffi {
@@ -50,19 +60,77 @@ mod ffi {
         is_tree: bool,
     }
 
+    /// The result of unpacking a tarball into the cache.
+    struct TarballUnpackResult {
+        /// The id of the root of the unpacked tree, as the archive has it:
+        /// before a single top-level directory is removed.
+        tree: [u8; 20],
+        /// The latest modification time of the files in the archive.
+        last_modified: i64,
+    }
+
     unsafe extern "C++" {
         include!("nix/rust/tarball-cache.hh");
 
-        type TarballCacheHooks;
+        #[namespace = ""]
+        type nix_future = crate::future::NixFuture;
 
-        #[cxx_name = "checkInterrupt"]
-        fn check_interrupt(self: &TarballCacheHooks) -> Result<()>;
+        #[namespace = ""]
+        type nix_exception;
+
+        type TarballCacheHooks;
 
         #[cxx_name = "logDebug"]
         fn log_debug(self: &TarballCacheHooks, message: &str);
+
+        /// Reads an archive and writes its contents with a writer. Runs on
+        /// the thread of a `tarball_cache_unpack` future.
+        type TarballUnpacker;
+
+        /// Parse the archive and write its files and directories with
+        /// `writer`, but do not flush. Stores the root in `out` and
+        /// returns null, or returns the exception that stopped it. Checks
+        /// `cancel` between entries and while it waits for data.
+        unsafe fn run(
+            self: &TarballUnpacker,
+            writer: &TarballCacheWriter,
+            cancel: &CancelToken,
+            out: &mut TarballUnpackResult,
+        ) -> *mut nix_exception;
+
+        /// Wake `run` from a wait for data, so that it sees that it is
+        /// cancelled. Called on the thread that drops the future, while
+        /// `run` may be running on another.
+        fn cancel(self: &TarballUnpacker);
+
+        /// The hooks for the flush.
+        fn hooks(self: &TarballUnpacker) -> &TarballCacheHooks;
     }
 
     extern "Rust" {
+        /// A flag that the owner of an operation sets to stop it. The
+        /// operation checks it at points where stopping is safe.
+        type CancelToken;
+
+        fn cancel_token_new() -> Box<CancelToken>;
+
+        /// Set the flag. Thread-safe.
+        fn cancel(self: &CancelToken);
+
+        #[cxx_name = "isCancelled"]
+        fn is_cancelled(self: &CancelToken) -> bool;
+
+        /// Unpack an archive into the tarball cache at `objects_dir`, as a
+        /// future of `TarballUnpackResult`.
+        ///
+        /// The future owns a writer and a thread. On its first poll it
+        /// starts the thread, which runs `unpacker`, and then flushes the
+        /// writer: the archive becomes one pack. Dropping the future
+        /// before it completes cancels the thread and waits for it; the
+        /// cache is then as it was, with no new pack and no temporary
+        /// files.
+        fn tarball_cache_unpack(objects_dir: &str, unpacker: UniquePtr<TarballUnpacker>) -> nix_future;
+
         /// Writes objects into the tarball cache. All methods take `&self`
         /// and may be called from several threads at once.
         type TarballCacheWriter;
@@ -78,8 +146,9 @@ mod ffi {
         fn write_tree(self: &TarballCacheWriter, entries: &[GitTreeEntry]) -> Result<[u8; 20]>;
 
         /// Write the objects that were added since the last flush as one
-        /// pack with its index.
-        fn flush(self: &TarballCacheWriter, hooks: &TarballCacheHooks) -> Result<()>;
+        /// pack with its index. Stops with an error, and leaves no files,
+        /// when `cancel` is set.
+        fn flush(self: &TarballCacheWriter, cancel: &CancelToken, hooks: &TarballCacheHooks) -> Result<()>;
 
         /// The number of objects that the next `flush` writes.
         fn pending_objects(self: &TarballCacheWriter) -> usize;
@@ -107,7 +176,55 @@ mod ffi {
     }
 }
 
-use ffi::{GitPeeledObject, GitTreeEntry, TarballCacheHooks};
+use ffi::{GitPeeledObject, GitTreeEntry, TarballCacheHooks, TarballUnpackResult, TarballUnpacker};
+
+// The C++ unpacker is thread-safe: `run` and `cancel` may be called at the
+// same time from different threads (`tarball-cache.hh`).
+unsafe impl Send for TarballUnpacker {}
+unsafe impl Sync for TarballUnpacker {}
+
+unsafe impl AbiType for TarballUnpackResult {
+    const NAME: &'static CStr = c"TarballUnpackResult";
+}
+
+pub struct CancelToken(AtomicBool);
+
+fn cancel_token_new() -> Box<CancelToken> {
+    Box::new(CancelToken(AtomicBool::new(false)))
+}
+
+impl CancelToken {
+    fn cancel(&self) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+
+    fn is_cancelled(&self) -> bool {
+        self.0.load(Ordering::SeqCst)
+    }
+
+    /// An error if the token is set, for `?` at the points where an
+    /// operation may stop.
+    fn check(&self) -> Result<(), String> {
+        if self.is_cancelled() {
+            Err("writing to the tarball cache was cancelled".to_owned())
+        } else {
+            Ok(())
+        }
+    }
+}
+
+/// Whether a test asked the writer to stop at `phase` until it is
+/// cancelled (`_NIX_TEST_TARBALL_CACHE_PAUSE`), so that a test can
+/// interrupt Nix in that phase. If so, announce it on stderr and wait.
+fn pause_for_test(phase: &str, cancel: &CancelToken) -> Result<(), String> {
+    if std::env::var_os("_NIX_TEST_TARBALL_CACHE_PAUSE").is_some_and(|v| v == phase) {
+        eprintln!("nix: tarball cache test hook: paused in phase '{phase}'");
+        while !cancel.is_cancelled() {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+    cancel.check()
+}
 
 /// The tarball cache uses SHA-1, like the libgit2 implementation.
 const HASH: gix_hash::Kind = gix_hash::Kind::Sha1;
@@ -233,13 +350,13 @@ impl TarballCacheWriter {
         self.lock().entries.len()
     }
 
-    fn flush(&self, hooks: &TarballCacheHooks) -> Result<(), String> {
+    fn flush(&self, cancel: &CancelToken, hooks: &TarballCacheHooks) -> Result<(), String> {
         let entries = std::mem::take(&mut self.lock().entries);
         if entries.is_empty() {
             return Ok(());
         }
 
-        match write_pack(&self.objects_dir.join("pack"), &entries, hooks) {
+        match write_pack(&self.objects_dir.join("pack"), &entries, cancel) {
             Ok(name) => {
                 hooks.log_debug(&format!(
                     "wrote {} objects to the tarball cache as {name}.{{pack,idx}}",
@@ -301,7 +418,7 @@ struct IndexEntry {
 /// The files appear under their final names only when they are complete:
 /// first the pack, then the index. A reader finds a pack through its index,
 /// so an interrupted flush leaves no pack that a reader can see.
-fn write_pack(pack_dir: &Path, entries: &[PackEntry], hooks: &TarballCacheHooks) -> Result<String, String> {
+fn write_pack(pack_dir: &Path, entries: &[PackEntry], cancel: &CancelToken) -> Result<String, String> {
     let io_error = |what: &str| {
         let what = what.to_owned();
         move |e: std::io::Error| format!("{what} in '{}': {e}", pack_dir.display())
@@ -323,8 +440,8 @@ fn write_pack(pack_dir: &Path, entries: &[PackEntry], hooks: &TarballCacheHooks)
 
         let mut header = Vec::with_capacity(16);
         for (n, entry) in entries.iter().enumerate() {
-            if n % 4096 == 0 {
-                hooks.check_interrupt().map_err(|e| e.what().to_owned())?;
+            if n % 1024 == 0 {
+                cancel.check()?;
             }
 
             header.clear();
@@ -353,7 +470,7 @@ fn write_pack(pack_dir: &Path, entries: &[PackEntry], hooks: &TarballCacheHooks)
         pack_checksum
     };
 
-    hooks.check_interrupt().map_err(|e| e.what().to_owned())?;
+    pause_for_test("flush", cancel)?;
 
     let mut index_file = tempfile::Builder::new()
         .prefix("tmp_idx_")
@@ -372,6 +489,9 @@ fn write_pack(pack_dir: &Path, entries: &[PackEntry], hooks: &TarballCacheHooks)
         make_read_only(file.path()).map_err(io_error("changing the permissions of a pack"))?;
         file.as_file().sync_all().map_err(io_error("syncing a pack"))?;
     }
+    // The last point where the flush can stop and leave nothing behind:
+    // from here on, the pack appears in the cache.
+    cancel.check()?;
     // A pack with the same checksum has the same contents, so replacing an
     // existing one is harmless.
     pack_file
@@ -461,6 +581,144 @@ fn make_read_only(path: &Path) -> std::io::Result<()> {
     let mut permissions = std::fs::metadata(path)?.permissions();
     permissions.set_readonly(true);
     std::fs::set_permissions(path, permissions)
+}
+
+// Unpacking as a future.
+//
+// The future runs the blocking work, parsing and writing, on a thread of
+// its own, because no Rust executor exists in Nix: C++ polls the future
+// (`runBlocking`). The thread wakes the future when it is done.
+
+/// What the thread of an unpack future shares with the future.
+struct UnpackShared {
+    cancel: CancelToken,
+    /// The result of the thread, when it is done.
+    result: Mutex<Option<Result<TarballUnpackResult, Error>>>,
+    /// The waker of the last poll. The thread wakes it when it is done.
+    waker: Mutex<Option<Waker>>,
+}
+
+/// The thread of an unpack future. Dropping it before the thread is done
+/// cancels the thread and waits for it.
+struct UnpackJob {
+    shared: Arc<UnpackShared>,
+    unpacker: Arc<UniquePtr<TarballUnpacker>>,
+    thread: Option<thread::JoinHandle<()>>,
+}
+
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+impl Drop for UnpackJob {
+    fn drop(&mut self) {
+        let Some(thread) = self.thread.take() else {
+            return;
+        };
+        self.shared.cancel.cancel();
+        self.unpacker.cancel();
+        // Wait for the thread. After the drop, nothing writes to the cache
+        // and no temporary file is left. The thread checks the token while
+        // it waits for data, between the entries of the archive, and
+        // during the flush, so the wait is short.
+        let _ = thread.join();
+    }
+}
+
+fn tarball_cache_unpack(objects_dir: &str, unpacker: UniquePtr<TarballUnpacker>) -> NixFuture {
+    let objects_dir = objects_dir.to_owned();
+    let mut unpacker = Some(unpacker);
+    let mut job: Option<UnpackJob> = None;
+    export_future(poll_fn(move |cx| {
+        // Lazy, like any future: the thread starts on the first poll.
+        let job = job.get_or_insert_with(|| {
+            start_unpack(
+                objects_dir.clone(),
+                unpacker.take().expect("the unpacker is used once"),
+            )
+        });
+        // Store the waker before looking for the result. The thread stores
+        // the result before it takes the waker, so either this poll sees
+        // the result, or the thread wakes this waker.
+        *lock(&job.shared.waker) = Some(cx.waker().clone());
+        let result = lock(&job.shared.result).take();
+        match result {
+            Some(result) => {
+                if let Some(thread) = job.thread.take() {
+                    let _ = thread.join();
+                }
+                Poll::Ready(result)
+            }
+            None => Poll::Pending,
+        }
+    }))
+}
+
+fn start_unpack(objects_dir: String, unpacker: UniquePtr<TarballUnpacker>) -> UnpackJob {
+    let shared = Arc::new(UnpackShared {
+        cancel: CancelToken(AtomicBool::new(false)),
+        result: Mutex::new(None),
+        waker: Mutex::new(None),
+    });
+    let unpacker = Arc::new(unpacker);
+
+    let spawned = {
+        let shared = shared.clone();
+        let unpacker = unpacker.clone();
+        thread::Builder::new()
+            .name("nix-unpack".to_owned())
+            .spawn(move || {
+                let result = catch_unwind(AssertUnwindSafe(|| {
+                    unpack(&objects_dir, &unpacker, &shared.cancel)
+                }))
+                .unwrap_or_else(|payload| Err(Error::from_panic(payload)));
+                *lock(&shared.result) = Some(result);
+                let waker = lock(&shared.waker).take();
+                if let Some(waker) = waker {
+                    waker.wake();
+                }
+            })
+    };
+
+    let thread = match spawned {
+        Ok(thread) => Some(thread),
+        Err(e) => {
+            *lock(&shared.result) = Some(Err(Error::msg(format!(
+                "starting a thread to unpack into the tarball cache: {e}"
+            ))));
+            None
+        }
+    };
+
+    UnpackJob {
+        shared,
+        unpacker,
+        thread,
+    }
+}
+
+/// The work of the thread of an unpack future.
+fn unpack(
+    objects_dir: &str,
+    unpacker: &TarballUnpacker,
+    cancel: &CancelToken,
+) -> Result<TarballUnpackResult, Error> {
+    let writer = tarball_cache_writer_open(objects_dir).map_err(Error::msg)?;
+
+    let mut out = TarballUnpackResult {
+        tree: [0; 20],
+        last_modified: 0,
+    };
+    let exception = unsafe { unpacker.run(&writer, cancel, &mut out) };
+    if !exception.is_null() {
+        // A C++ exception, for example the error of the download, keeps
+        // its dynamic type on the way back to C++.
+        return Err(unsafe { Error::from_exception(exception as *mut NixException) });
+    }
+
+    pause_for_test("before-flush", cancel).map_err(Error::msg)?;
+    writer.flush(cancel, unpacker.hooks()).map_err(Error::msg)?;
+    Ok(out)
 }
 
 pub struct TarballCacheReader {

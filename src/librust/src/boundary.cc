@@ -11,4 +11,6 @@ Callback::~Callback() = default;
 
 TarballCacheHooks::~TarballCacheHooks() = default;
 
+TarballUnpacker::~TarballUnpacker() = default;
+
 } // namespace nix::rs
