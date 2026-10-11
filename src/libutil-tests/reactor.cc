@@ -105,6 +105,33 @@ TEST(Reactor, runsATaskOnTheReactorThread)
     EXPECT_TRUE(onReactor);
 }
 
+TEST(Reactor, aSpawnedTaskRunsOnTheReactorAndTheAwaiterGetsItsResult)
+{
+    auto onReactor = runBlocking(spawnOnReactor([]() -> Task<bool> { co_return onReactorThread(); }()));
+    EXPECT_TRUE(onReactor);
+}
+
+TEST(Reactor, aDroppedSpawnedTaskWaitsForTheCleanupsOfTheRun)
+{
+    ReactorTestLog log;
+    /* The sleep wins; the drop of the spawned task cancels the slow
+       future on the reactor, which defers its wait to the run, and the
+       drop waits for the run. */
+    runBlocking(race(
+        spawnOnReactor(reactorTestSlowDrop(log, std::chrono::milliseconds(10))),
+        sleepFor(std::chrono::milliseconds(100))));
+    log.add("dropped");
+    EXPECT_EQ(
+        log.get(),
+        (std::vector<std::string>{
+            "polled in a cleanup scope",
+            "drop",
+            "drop returned",
+            "cleanup done",
+            "dropped",
+        }));
+}
+
 TEST(Reactor, anExceptionKeepsItsType)
 {
     EXPECT_THROW(

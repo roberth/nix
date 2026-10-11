@@ -64,7 +64,35 @@ namespace detail {
 
 void runOnReactorImpl(Task<void> task);
 
+Task<void> spawnOnReactorImpl(Task<void> task);
+
 } // namespace detail
+
+/**
+ * Run a task on the reactor thread, as a task that any executor can
+ * await. The task starts on the first poll of the returned task, which
+ * completes when the task and the cleanups that its drops deferred are
+ * done.
+ *
+ * Dropping the returned task cancels the task on the reactor and waits
+ * for its cleanups. Off the reactor thread, the drop blocks until then;
+ * on the reactor thread, the wait is a cleanup of the run that drops it.
+ */
+template<typename T>
+Task<T> spawnOnReactor(Task<T> task)
+{
+    if constexpr (std::is_void_v<T>)
+        co_await detail::spawnOnReactorImpl(std::move(task));
+    else {
+        /* The task on the reactor writes the result into this frame. A
+           drop of this frame waits for that task to end first. */
+        std::optional<T> result;
+        co_await detail::spawnOnReactorImpl([](Task<T> task, std::optional<T> & out) -> Task<void> {
+            out.emplace(co_await std::move(task));
+        }(std::move(task), result));
+        co_return std::move(*result);
+    }
+}
 
 /**
  * Run a task to completion on the reactor thread. The calling thread

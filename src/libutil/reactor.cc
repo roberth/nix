@@ -103,7 +103,12 @@ void detail::runOnReactorImpl(Task<void> task)
 {
     if (onReactorThread())
         throw Error("cannot block the reactor thread to run a task on it");
-    runBlocking(awaitCFuture<void>(callReactor([&] { return rs::reactor_spawn(toCFuture(std::move(task))); })));
+    runBlocking(spawnOnReactorImpl(std::move(task)));
+}
+
+Task<void> detail::spawnOnReactorImpl(Task<void> task)
+{
+    return awaitCFuture<void>(callReactor([&] { return rs::reactor_spawn(toCFuture(std::move(task))); }));
 }
 
 Task<void> sleepFor(std::chrono::milliseconds duration)
