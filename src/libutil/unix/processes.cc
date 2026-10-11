@@ -14,6 +14,8 @@
 #include <future>
 #include <iostream>
 #include <atomic>
+#include <condition_variable>
+#include <mutex>
 
 #include <grp.h>
 #include <sys/types.h>
@@ -84,20 +86,22 @@ int Pid::kill(bool allowInterrupts)
 
     debug("killing process %1%", pid);
 
-    std::atomic<bool> killed = false;
+    /* The thread waits on a condition variable, not in steps of a fixed
+       sleep, so that it ends as soon as the child is reaped. With steps
+       of 25 ms, the join below took up to 25 ms after a child that had
+       exited already, for example the build hook after each remote
+       build. */
+    std::mutex killedMutex;
+    std::condition_variable killedCv;
+    bool killed = false;
 
     using namespace std::chrono_literals;
 
     if (killTimeout > 0ms && killSignal != SIGKILL)
         killThread = std::thread([&]() {
-            auto elapsed = 0ms;
-            while (elapsed < killTimeout) {
-                std::this_thread::sleep_for(25ms);
-                elapsed += 25ms;
-                if (killed)
-                    return;
-            }
-            ::kill(separatePG ? -pid : pid, SIGKILL);
+            std::unique_lock lock(killedMutex);
+            if (!killedCv.wait_for(lock, killTimeout, [&] { return killed; }))
+                ::kill(separatePG ? -pid : pid, SIGKILL);
         });
 
     /* Send the requested signal to the child.  If it has its own
@@ -115,7 +119,11 @@ int Pid::kill(bool allowInterrupts)
 
     int ret = wait(allowInterrupts);
     if (killThread.joinable()) {
-        killed = true;
+        {
+            std::lock_guard lock(killedMutex);
+            killed = true;
+        }
+        killedCv.notify_one();
         killThread.join();
     }
     return ret;
