@@ -3,6 +3,7 @@
 #include "nix/util/config-global.hh"
 #include "nix/expr/eval-gc.hh"
 #include "nix/expr/value.hh"
+#include "nix/util/fiber.hh"
 
 #include "expr-config-private.hh"
 
@@ -44,6 +45,94 @@ static void * oomHandler(size_t requested)
     throw std::bad_alloc();
 }
 
+#  if NIX_GC_USER_STACKS
+
+/*
+ * The `FiberStackHooks` of libutil, with the client-registered stacks of
+ * bdwgc. The collector scans the stack that a stopped thread executes
+ * on from its stack pointer, and each other registered stack that has a
+ * saved stack pointer from there. So each stack that holds live frames,
+ * but that no thread executes on, must have a saved stack pointer: the
+ * stack of the thread while it runs a fiber, and the stack of a
+ * suspended fiber. `GC_current_stack` is the stack that the thread
+ * executes on; the hooks keep it correct across the switches.
+ */
+
+/**
+ * The saved stack pointer is lower than `GC_get_approx_sp()` by this
+ * much. The approximation is taken in a callee of the function that
+ * switches stacks. The slack covers what the switch puts below it: the
+ * frames of `boost::context::fiber::resume` and the callee-saved
+ * registers that its assembly stores on the stack (64 bytes on x86-64,
+ * 176 on aarch64). Those registers can hold pointers of the callers.
+ * The same value as in DeterminateSystems/nix-src.
+ */
+static constexpr size_t gcStackSwitchSlack = 512;
+
+static void gcSaveStackPointer(struct GC_stack * stk)
+{
+    auto sp = (char *) GC_get_approx_sp();
+    /* A switch from a stack that is not `stk`, for example from the
+       unregistered stack of a `sinkToSource` coroutine, would make the
+       collector scan from one stack to the base of another. */
+    if (!(sp < (char *) stk->base && (!stk->limit || sp >= (char *) stk->limit)))
+        panic(
+            fmt("stack pointer %p is not in the stack [%p, %p) that the thread leaves",
+                (void *) sp,
+                stk->limit,
+                stk->base));
+    stk->saved_sp = sp - gcStackSwitchSlack;
+}
+
+static void * fiberRegisterStack(void * base, size_t size)
+{
+    auto stk = new GC_stack{};
+    stk->base = base;
+    stk->limit = (char *) base - size;
+    GC_register_stack(stk);
+    return stk;
+}
+
+static void fiberUnregisterStack(void * cookie)
+{
+    auto stk = (struct GC_stack *) cookie;
+    GC_unregister_stack(stk);
+    delete stk;
+}
+
+static void * fiberSwitchTo(void * cookie)
+{
+    /* Null on a thread that is not registered with the collector. Such a
+       thread holds no roots. */
+    auto prev = GC_current_stack;
+    if (prev)
+        gcSaveStackPointer(prev);
+    GC_current_stack = (struct GC_stack *) cookie;
+    return prev;
+}
+
+static void fiberSwitchedBack(void * handle)
+{
+    auto prev = (struct GC_stack *) handle;
+    GC_current_stack = prev;
+    if (prev)
+        prev->saved_sp = nullptr;
+}
+
+static void fiberSuspend(void * cookie)
+{
+    gcSaveStackPointer((struct GC_stack *) cookie);
+}
+
+static void fiberResumed(void * cookie)
+{
+    auto stk = (struct GC_stack *) cookie;
+    stk->saved_sp = nullptr;
+    GC_current_stack = stk;
+}
+
+#  endif
+
 static inline void initGCReal()
 {
     /* Initialise the Boehm garbage collector. */
@@ -73,6 +162,21 @@ static inline void initGCReal()
             GC_register_displacement(i);
 
     GC_set_oom_fn(oomHandler);
+
+    /* Make the stacks of suspended fibers visible to the collector. */
+#  if NIX_GC_USER_STACKS
+    setFiberStackHooks(
+        FiberStackHooks{
+            .registerStack = fiberRegisterStack,
+            .unregisterStack = fiberUnregisterStack,
+            .switchTo = fiberSwitchTo,
+            .switchedBack = fiberSwitchedBack,
+            .suspend = fiberSuspend,
+            .resumed = fiberResumed,
+        });
+#  else
+    disableFibers("the Boehm GC of this build cannot scan the stacks of fibers");
+#  endif
 
     /* Funnel boehm warnings into debug logs. The message is `char *`
        before bdwgc 8.3 and `const char *` from 8.3 on; the generic

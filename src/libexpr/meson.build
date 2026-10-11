@@ -76,6 +76,21 @@ if bdw_gc.found()
     configdata_pub.set('GC_NO_INLINE_STD_NEW', 1)
   endif
 endif
+# Client-registered stacks, which the fork of bdwgc in
+# `packaging/dependencies.nix` has, and the release does not. Without
+# them, the collector cannot scan the stack of a suspended fiber.
+configdata_priv.set(
+  'NIX_GC_USER_STACKS',
+  (
+    bdw_gc.found()
+    and cxx.has_header_symbol(
+    'gc/gc.h',
+      'GC_register_stack',
+      prefix : '#define GC_THREADS 1',
+      dependencies : bdw_gc,
+      )
+  ).to_int(),
+)
 # Used in public header. Affects ABI!
 configdata_pub.set('NIX_USE_BOEHMGC', bdw_gc.found().to_int())
 
