@@ -3,6 +3,7 @@
 #include "nix/store/filetransfer.hh"
 #include "nix/util/file-system.hh"
 #include "nix/util/finally.hh"
+#include "nix/util/reactor.hh"
 #include "nix/util/signals.hh"
 
 #include <archive.h>
@@ -245,6 +246,37 @@ TEST_F(TarballUnpackTest, aNewTaskAfterACancelledOneUnpacksTheSameTree)
 
     EXPECT_EQ(runBlocking(downloadAndUnpack()).treeHash, expected);
     EXPECT_EQ(packFiles().size(), 2u);
+}
+
+TEST_F(TarballUnpackTest, unpacksOnTheReactor)
+{
+    auto tree = runOnReactor(downloadAndUnpack());
+
+    EXPECT_EQ(tree.lastModified, 1700000000);
+    EXPECT_EQ(packFiles().size(), 2u);
+}
+
+TEST_F(TarballUnpackTest, cancellingOnTheReactorWaitsForTheThreadInTheRun)
+{
+    PauseInPhase pause("flush");
+
+    /* The race cancels the unpacking on the reactor thread, as soon as the
+       flush holds still with a temporary pack. The drop must not join the
+       unpacking thread there; it defers the join to the run. */
+    auto flushing = [](const TarballUnpackTest & test) -> Task<void> {
+        while (true) {
+            auto files = test.packFiles();
+            if (files.size() == 1 && files[0].starts_with("tmp_pack_"))
+                co_return;
+            co_await sleepFor(std::chrono::milliseconds(10));
+        }
+    };
+    auto winner = runOnReactor(race(downloadAndUnpack(), flushing(*this)));
+
+    EXPECT_EQ(winner.index(), 1u);
+    /* `runOnReactor` returned after the deferred join, so the thread
+       removed its temporary pack already. */
+    EXPECT_EQ(packFiles(), std::vector<std::string>{});
 }
 
 } // namespace nix::fetchers::gix::unpack_tests

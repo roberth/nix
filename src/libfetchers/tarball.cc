@@ -11,6 +11,7 @@
 #include "nix/fetchers/merkle-tar-adapter.hh"
 #include "nix/fetchers/fetch-settings.hh"
 #include "nix/fetchers/tarball-cache-gix.hh"
+#include "nix/util/reactor.hh"
 #include "nix/util/task.hh"
 
 namespace nix::fetchers {
@@ -129,9 +130,11 @@ Task<void> unpackInto(
  * connects. The first error cancels the other task.
  *
  * Destroying this task, for example on a user interrupt in
- * `runBlocking()`, cancels both: the transfer stops in curl, and the
- * unpacking stops and waits for its thread, which removes its temporary
- * files and leaves no pack.
+ * `runOnReactor()`, cancels both: the transfer stops in curl, and the
+ * unpacking stops its thread, which removes its temporary files and leaves
+ * no pack. On the reactor, the wait for the thread is a cleanup of the run,
+ * so `runOnReactor()` returns after it; under `runBlocking()` the drop
+ * waits.
  */
 Task<UnpackedDownload> downloadIntoGixTarballCache(FileTransferRequest request, bool isZip)
 {
@@ -203,7 +206,10 @@ UnpackedDownload downloadIntoTarballCache(
     Activity act(*logger, lvlInfo, actUnknown, fmt("unpacking '%s' into the Git cache", description));
 
     if (gix::useGixTarballCache())
-        return runBlocking(downloadIntoGixTarballCache(std::move(request), isZip));
+        /* On the reactor, the task and curl share one thread, so a wake
+           from curl does not have to cross to this thread. */
+        return fileTransferUsesReactor() ? runOnReactor(downloadIntoGixTarballCache(std::move(request), isZip))
+                                         : runBlocking(downloadIntoGixTarballCache(std::move(request), isZip));
     return downloadIntoLibgit2TarballCache(settings, std::move(request), isZip);
 }
 
