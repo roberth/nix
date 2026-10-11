@@ -1,7 +1,6 @@
 #include "nix/fetchers/git-utils.hh"
 #include "nix/fetchers/tarball-cache-gix.hh"
 #include "nix/store/filetransfer.hh"
-#include "nix/util/environment-variables.hh"
 #include "nix/util/file-system.hh"
 #include "nix/util/finally.hh"
 #include "nix/util/signals.hh"
@@ -149,18 +148,25 @@ public:
 };
 
 /**
- * Set `_NIX_TEST_TARBALL_CACHE_PAUSE` for the duration of a test.
+ * Hold the writes to the tarball cache still in `phase` until they are
+ * cancelled, for the duration of a test.
  */
 struct PauseInPhase
 {
-    explicit PauseInPhase(const std::string & phase)
+    explicit PauseInPhase(std::string phase)
     {
-        setEnv("_NIX_TEST_TARBALL_CACHE_PAUSE", phase.c_str());
+        setTarballCachePhaseHook(
+            [phase = std::move(phase)](std::string_view reached, const std::function<bool()> & isCancelled) {
+                if (reached != phase)
+                    return;
+                while (!isCancelled())
+                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            });
     }
 
     ~PauseInPhase()
     {
-        unsetenv("_NIX_TEST_TARBALL_CACHE_PAUSE");
+        setTarballCachePhaseHook({});
     }
 };
 

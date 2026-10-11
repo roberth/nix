@@ -53,17 +53,21 @@ fetchExpr() {
     echo "builtins.fetchTarball \"$1\""
 }
 
-# Interrupt a fetch of URL $1 in PHASE $2 (the value of
-# `_NIX_TEST_TARBALL_CACHE_PAUSE`, empty for none), once the file $3
-# contains the text $4.
+# Interrupt a fetch of URL $1 in PHASE $2, once the file $3 contains the
+# text $4. A phase other than the empty one needs the plugin in
+# `tarball-cache-pause-plugin`, which holds the write still in that phase.
 interruptFetch() {
     local url=$1 phase=$2 file=$3 text=$4
     rm -rf "$TEST_HOME/.cache"
     local err=$TEST_ROOT/nix-$phase.err
     : > "$err"
 
+    local pluginArgs=()
+    if [[ -n $phase ]]; then
+        pluginArgs=(--option plugin-files "$_NIX_TEST_TARBALL_CACHE_PAUSE_PLUGIN")
+    fi
     _NIX_TEST_TARBALL_CACHE_PAUSE=$phase \
-        nix eval --impure --raw --expr "$(fetchExpr "$url")" 2> "$err" &
+        nix "${pluginArgs[@]}" eval --impure --raw --expr "$(fetchExpr "$url")" 2> "$err" &
     local pid=$!
 
     waitForText "$file" "$text"
@@ -96,12 +100,18 @@ interruptFetch() {
 interruptFetch "http://127.0.0.1:$port/stall/tree.tar.gz" "" "$serverLog" "stalled tree.tar.gz"
 waitForText "$serverLog" "closed by client tree.tar.gz 500000"
 
-# While unpacking: the unpacking holds still after the first file.
-interruptFetch "http://127.0.0.1:$port/tree.tar.gz" unpack "$TEST_ROOT/nix-unpack.err" "paused in phase 'unpack'"
+# A static Nix cannot load the plugin. The unit tests in
+# `libfetchers-tests/tarball-unpack.cc` cover these phases there.
+if [[ -n ${_NIX_TEST_TARBALL_CACHE_PAUSE_PLUGIN:-} ]]; then
+    # While unpacking: the unpacking holds still after the first file.
+    interruptFetch "http://127.0.0.1:$port/tree.tar.gz" unpack "$TEST_ROOT/nix-unpack.err" "paused in phase 'unpack'"
 
-# During the flush: the flush holds still after it wrote the temporary
-# pack, before the index. The interrupt removes the temporary pack.
-interruptFetch "http://127.0.0.1:$port/tree.tar.gz" flush "$TEST_ROOT/nix-flush.err" "paused in phase 'flush'"
+    # During the flush: the flush holds still after it wrote the temporary
+    # pack, before the index. The interrupt removes the temporary pack.
+    interruptFetch "http://127.0.0.1:$port/tree.tar.gz" flush "$TEST_ROOT/nix-flush.err" "paused in phase 'flush'"
+else
+    echo "no tarball cache pause plugin; skipping the unpack and flush phases"
+fi
 
 # A fetch after the interrupted ones unpacks the same tree, into one pack.
 out=$(nix eval --impure --raw --expr "$(fetchExpr "http://127.0.0.1:$port/tree.tar.gz")")

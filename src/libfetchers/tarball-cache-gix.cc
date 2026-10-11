@@ -16,10 +16,7 @@
 #include <boost/unordered/unordered_flat_map.hpp>
 #include <boost/unordered/unordered_flat_set.hpp>
 
-#include <chrono>
-#include <cstdio>
 #include <cstring>
-#include <thread>
 
 /* All names are in this namespace, including those with internal linkage:
    in a unity build this file shares a translation unit with `git-utils.cc`,
@@ -70,11 +67,28 @@ auto callRust(F && f) -> decltype(f())
     }
 }
 
+TarballCachePhaseHook & phaseHook()
+{
+    static TarballCachePhaseHook hook;
+    return hook;
+}
+
+void reachedPhase(std::string_view phase, const rs::CancelToken & cancel)
+{
+    if (auto & hook = phaseHook())
+        hook(phase, [&cancel]() { return cancel.isCancelled(); });
+}
+
 struct Hooks final : rs::TarballCacheHooks
 {
     void logDebug(::rust::Str message) const override
     {
         debug("%s", std::string_view(message.data(), message.size()));
+    }
+
+    void reachedPhase(::rust::Str phase, const rs::CancelToken & cancel) const override
+    {
+        gix::reachedPhase(std::string_view(phase.data(), phase.size()), cancel);
     }
 };
 
@@ -280,14 +294,13 @@ struct RememberingSource final : Source
 
 /**
  * A `TarSink` that checks for cancellation between the entries of the
- * archive, and that holds still in the "unpack" phase for a test
- * (`_NIX_TEST_TARBALL_CACHE_PAUSE=unpack`).
+ * archive, and that reports the phase `unpack` after the first file.
  */
 struct CancellableTarSink final : TarSink
 {
     TarSink & sink;
     const rs::CancelToken & cancel;
-    bool pauseForTest = getEnv("_NIX_TEST_TARBALL_CACHE_PAUSE") == "unpack";
+    bool firstFile = true;
 
     CancellableTarSink(TarSink & sink, const rs::CancelToken & cancel)
         : sink(sink)
@@ -310,12 +323,9 @@ struct CancellableTarSink final : TarSink
     {
         check();
         sink.createRegularFile(path, isExecutable, callback);
-        if (pauseForTest) {
-            pauseForTest = false;
-            /* Not a log message: a test waits for this exact line. */
-            std::fprintf(stderr, "nix: tarball cache test hook: paused in phase 'unpack'\n");
-            while (!cancel.isCancelled())
-                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        if (firstFile) {
+            firstFile = false;
+            reachedPhase("unpack", cancel);
             check();
         }
     }
@@ -431,6 +441,11 @@ Task<UnpackedTree> unpackIntoTarballCache(std::filesystem::path repoDir, ref<Tra
         .treeHash = toHash(result.tree),
         .lastModified = (time_t) result.last_modified,
     };
+}
+
+void setTarballCachePhaseHook(TarballCachePhaseHook hook)
+{
+    phaseHook() = std::move(hook);
 }
 
 namespace {

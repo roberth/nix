@@ -64,4 +64,23 @@ struct UnpackedTree
  */
 Task<UnpackedTree> unpackIntoTarballCache(std::filesystem::path repoDir, ref<TransferStream> stream, bool isZip);
 
+/**
+ * A function that a write to the tarball cache calls when it reaches a
+ * phase, on the thread of the write. `isCancelled` tells whether the write
+ * is cancelled; the write checks it again right after the call. Phases:
+ *
+ * - `unpack`: after the first file of an archive.
+ * - `flush`: the pack is on disk under a temporary name, and its index is
+ *   not.
+ */
+using TarballCachePhaseHook = std::function<void(std::string_view phase, const std::function<bool()> & isCancelled)>;
+
+/**
+ * Set the phase hook, or remove it with an empty function. For tests: a
+ * hook that blocks until the write is cancelled holds the write still in a
+ * phase, so that a test can interrupt it there. Not thread-safe: set it
+ * while no write runs.
+ */
+void setTarballCachePhaseHook(TarballCachePhaseHook hook);
+
 } // namespace nix::fetchers::gix

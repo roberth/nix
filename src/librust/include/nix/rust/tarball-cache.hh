@@ -34,6 +34,17 @@ public:
      * in `nix/util/logging.hh`.)
      */
     virtual void logDebug(::rust::Str message) const = 0;
+
+    /**
+     * A write reached `phase`, on the thread of the write. Phases:
+     *
+     * - `flush`: the pack is on disk under a temporary name, and its index
+     *   is not.
+     *
+     * The write checks `cancel` right after the call. A test can block
+     * here until `cancel` is set, to interrupt the write in this phase.
+     */
+    virtual void reachedPhase(::rust::Str phase, const CancelToken & cancel) const = 0;
 };
 
 /**

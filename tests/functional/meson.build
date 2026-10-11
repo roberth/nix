@@ -209,18 +209,28 @@ if nix_store.found()
 endif
 
 # An HTTP server that can stall in the middle of a response, for the
-# tests that interrupt a download.
+# tests that interrupt a download, and a plugin that holds a write to the
+# tarball cache still, for the tests that interrupt it.
 add_languages('cpp')
 subdir('test-http-server')
+subdir('tarball-cache-pause-plugin')
+tarball_cancel_env = {}
+if have_tarball_cache_pause_plugin
+  tarball_cancel_env += {
+    '_NIX_TEST_TARBALL_CACHE_PAUSE_PLUGIN' : tarball_cache_pause_plugin.full_path(),
+  }
+endif
 suites += {
   'name' : 'tarball-cancel',
   'deps' : [
     test_http_server,
+    tarball_cache_pause_plugin,
   ],
   'tests' : [
     'tarball-cancel.sh',
   ],
   'workdir' : meson.current_source_dir(),
+  'env' : tarball_cancel_env,
 }
 
 subdir('suites')

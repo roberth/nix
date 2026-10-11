@@ -33,7 +33,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::task::{Poll, Waker};
 use std::thread;
-use std::time::Duration;
 
 use cxx::UniquePtr;
 use gix_hash::ObjectId;
@@ -82,6 +81,11 @@ mod ffi {
 
         #[cxx_name = "logDebug"]
         fn log_debug(self: &TarballCacheHooks, message: &str);
+
+        /// A write reached `phase`. A test can hold the write still here
+        /// until `cancel` is set.
+        #[cxx_name = "reachedPhase"]
+        fn reached_phase(self: &TarballCacheHooks, phase: &str, cancel: &CancelToken);
 
         /// Reads an archive and writes its contents with a writer. Runs on
         /// the thread of a `tarball_cache_unpack` future.
@@ -211,19 +215,6 @@ impl CancelToken {
             Ok(())
         }
     }
-}
-
-/// Whether a test asked the writer to stop at `phase` until it is
-/// cancelled (`_NIX_TEST_TARBALL_CACHE_PAUSE`), so that a test can
-/// interrupt Nix in that phase. If so, announce it on stderr and wait.
-fn pause_for_test(phase: &str, cancel: &CancelToken) -> Result<(), String> {
-    if std::env::var_os("_NIX_TEST_TARBALL_CACHE_PAUSE").is_some_and(|v| v == phase) {
-        eprintln!("nix: tarball cache test hook: paused in phase '{phase}'");
-        while !cancel.is_cancelled() {
-            std::thread::sleep(Duration::from_millis(10));
-        }
-    }
-    cancel.check()
 }
 
 /// The tarball cache uses SHA-1, like the libgit2 implementation.
@@ -399,7 +390,7 @@ impl TarballCacheWriter {
             return Ok(());
         }
 
-        match write_pack(&self.objects_dir.join("pack"), &entries, cancel) {
+        match write_pack(&self.objects_dir.join("pack"), &entries, cancel, hooks) {
             Ok(name) => {
                 hooks.log_debug(&format!(
                     "wrote {} objects to the tarball cache as {name}.{{pack,idx}}",
@@ -452,7 +443,12 @@ struct IndexEntry {
 /// The files appear under their final names only when they are complete:
 /// first the pack, then the index. A reader finds a pack through its index,
 /// so an interrupted flush leaves no pack that a reader can see.
-fn write_pack(pack_dir: &Path, entries: &[PackEntry], cancel: &CancelToken) -> Result<String, String> {
+fn write_pack(
+    pack_dir: &Path,
+    entries: &[PackEntry],
+    cancel: &CancelToken,
+    hooks: &TarballCacheHooks,
+) -> Result<String, String> {
     let io_error = |what: &str| {
         let what = what.to_owned();
         move |e: std::io::Error| format!("{what} in '{}': {e}", pack_dir.display())
@@ -504,7 +500,9 @@ fn write_pack(pack_dir: &Path, entries: &[PackEntry], cancel: &CancelToken) -> R
         pack_checksum
     };
 
-    pause_for_test("flush", cancel)?;
+    // The pack is on disk under a temporary name, and its index is not.
+    hooks.reached_phase("flush", cancel);
+    cancel.check()?;
 
     let mut index_file = tempfile::Builder::new()
         .prefix("tmp_idx_")
@@ -752,7 +750,6 @@ fn unpack(
         return Err(unsafe { Error::from_exception(exception as *mut NixException) });
     }
 
-    pause_for_test("before-flush", cancel).map_err(Error::msg)?;
     writer.flush(cancel, unpacker.hooks()).map_err(Error::msg)?;
     Ok(out)
 }
