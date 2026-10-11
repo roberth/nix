@@ -21,3 +21,12 @@ cxx = { version = "1.0", optional = true }
 # crate brings the C++ runtime of cxx, which `nix-rust-test-support` must not
 # contain.
 cxx = ["dep:cxx"]
+
+# The lints of the workspace, but not inherited from it:
+# `nix-rust-test-support` uses this crate from outside the workspace, and its
+# package has no workspace root.
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.clippy]
+undocumented_unsafe_blocks = "warn"

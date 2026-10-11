@@ -24,6 +24,18 @@
 
 #include <stddef.h>
 
+/* Rust calls the functions of this header, and the functions in the
+   vtables, through `extern "C"`, which does not unwind. A C++ exception
+   that leaves one of them is undefined behaviour, so the C++
+   implementations are `noexcept`: an exception terminates the process
+   instead. In the other direction, a Rust panic that leaves an
+   `extern "C"` function aborts the process. */
+#ifdef __cplusplus
+#  define NIX_FUTURE_ABI_NOEXCEPT noexcept
+#else
+#  define NIX_FUTURE_ABI_NOEXCEPT
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -63,13 +75,13 @@ typedef struct nix_exception nix_exception;
 /**
  * Release an exception without rethrowing it.
  */
-void nix_exception_free(nix_exception * exception);
+void nix_exception_free(nix_exception * exception) NIX_FUTURE_ABI_NOEXCEPT;
 
 /**
  * The `what()` string of the exception, or a fixed text if it is not a
  * `std::exception`. The string is valid as long as the exception is.
  */
-const char * nix_exception_what(const nix_exception * exception);
+const char * nix_exception_what(const nix_exception * exception) NIX_FUTURE_ABI_NOEXCEPT;
 
 typedef enum nix_rust_error_kind {
     /** A Rust `Err` value. */
@@ -86,8 +98,12 @@ typedef enum nix_rust_error_kind {
  * (`nix::Error` once libutil registered its factory), and
  * `std::runtime_error` otherwise.
  */
-nix_exception * nix_exception_from_rust(nix_rust_error_kind kind, const char * message, size_t length);
+nix_exception *
+nix_exception_from_rust(nix_rust_error_kind kind, const char * message, size_t length) NIX_FUTURE_ABI_NOEXCEPT;
 
+/**
+ * A factory for `nix_exception_from_rust`. It must not throw.
+ */
 typedef nix_exception * (*nix_rust_error_factory)(nix_rust_error_kind kind, const char * message, size_t length);
 
 /**
@@ -95,7 +111,7 @@ typedef nix_exception * (*nix_rust_error_factory)(nix_rust_error_kind kind, cons
  * libnixrust registers it at run time, so that libnixrust does not refer
  * to the library's exception types at link time.
  */
-void nix_set_rust_error_factory(nix_rust_error_factory factory);
+void nix_set_rust_error_factory(nix_rust_error_factory factory) NIX_FUTURE_ABI_NOEXCEPT;
 
 /**
  * A type-erased future.

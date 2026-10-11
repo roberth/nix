@@ -285,12 +285,14 @@ namespace detail {
 template<typename T>
 struct CFutureTask
 {
-    static nix_poll poll(void * self, const nix_waker * waker)
+    /* `noexcept`, because Rust calls these through `extern "C"`; see
+       `nix/rust/future-abi.h`. */
+    static nix_poll poll(void * self, const nix_waker * waker) noexcept
     {
         return static_cast<Task<T> *>(self)->poll(Waker::borrow(waker));
     }
 
-    static nix_exception * take(void * self, void * out)
+    static nix_exception * take(void * self, void * out) noexcept
     {
         try {
             if constexpr (std::is_void_v<T>)
@@ -307,7 +309,7 @@ struct CFutureTask
         }
     }
 
-    static void drop(void * self)
+    static void drop(void * self) noexcept
     {
         delete static_cast<Task<T> *>(self);
     }

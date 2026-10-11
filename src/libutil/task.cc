@@ -63,7 +63,7 @@ void WhenAllChild::wake() noexcept
     parent.wakeByRef();
 }
 
-static nix_exception * makeRustError(nix_rust_error_kind kind, const char * message, size_t length)
+static nix_exception * makeRustError(nix_rust_error_kind kind, const char * message, size_t length) noexcept
 {
     std::string text(message, length);
     try {

@@ -182,11 +182,16 @@ mod ffi {
 
 use ffi::{GitPeeledObject, GitTreeEntry, TarballCacheHooks, TarballUnpackResult, TarballUnpacker};
 
-// The C++ unpacker is thread-safe: `run` and `cancel` may be called at the
-// same time from different threads (`tarball-cache.hh`).
+// SAFETY: The C++ unpacker may move to another thread, and `run` and
+// `cancel` may be called at the same time from different threads; see
+// `tarball-cache.hh`.
 unsafe impl Send for TarballUnpacker {}
+// SAFETY: As for `Send`.
 unsafe impl Sync for TarballUnpacker {}
 
+// SAFETY: A shared struct of the bridge, so cxx gives it the same layout in
+// C++, and `nix::rs::AbiType<TarballUnpackResult>` in libfetchers has the
+// same name.
 unsafe impl AbiType for TarballUnpackResult {
     const NAME: &'static CStr = c"TarballUnpackResult";
 }
@@ -516,7 +521,7 @@ fn write_pack(
         .prefix("tmp_idx_")
         .tempfile_in(pack_dir)
         .map_err(io_error("creating a temporary pack index"))?;
-    index.sort_by(|a, b| a.id.cmp(&b.id));
+    index.sort_by_key(|entry| entry.id);
     write_index_v2(
         std::io::BufWriter::new(index_file.as_file_mut()),
         &index,
@@ -740,10 +745,14 @@ fn unpack(
         tree: [0; 20],
         last_modified: 0,
     };
+    // SAFETY: `run` has no requirements beyond its signature; cxx requires
+    // `unsafe` because it returns a raw pointer.
     let exception = unsafe { unpacker.run(&writer, cancel, &mut out) };
     if !exception.is_null() {
         // A C++ exception, for example the error of the download, keeps
         // its dynamic type on the way back to C++.
+        // SAFETY: `run` gives up the ownership of the exception that it
+        // returns.
         return Err(unsafe { Error::from_exception(exception as *mut NixException) });
     }
 

@@ -50,6 +50,9 @@ pub struct NixWaker {
     pub vtable: *const NixWakerVTable,
 }
 
+// SAFETY: `nix_waker` in `future-abi.h` is a C struct with the same two
+// pointer fields, and it is trivially movable: its owner is whoever holds
+// the bits.
 #[cfg(feature = "cxx")]
 unsafe impl cxx::ExternType for NixWaker {
     type Id = cxx::type_id!("nix_waker");
@@ -96,6 +99,8 @@ pub struct NixFuture {
     pub vtable: *const NixFutureVTable,
 }
 
+// SAFETY: `nix_future` in `future-abi.h` is a C struct with the same two
+// pointer fields, and it is trivially movable, like `nix_waker`.
 #[cfg(feature = "cxx")]
 unsafe impl cxx::ExternType for NixFuture {
     type Id = cxx::type_id!("nix_future");
@@ -122,26 +127,34 @@ pub unsafe trait AbiType: Send + 'static {
     const NAME: &'static CStr;
 }
 
+// SAFETY: C++ uses `void`, and passes no storage for it.
 unsafe impl AbiType for () {
     const NAME: &'static CStr = c"()";
 }
 
+// SAFETY: `bool` has the same layout in Rust and C++ on all platforms of
+// Nix, and cxx relies on that too.
 unsafe impl AbiType for bool {
     const NAME: &'static CStr = c"bool";
 }
 
+// SAFETY: `uint64_t` in C++.
 unsafe impl AbiType for u64 {
     const NAME: &'static CStr = c"u64";
 }
 
+// SAFETY: `int64_t` in C++.
 unsafe impl AbiType for i64 {
     const NAME: &'static CStr = c"i64";
 }
 
+// SAFETY: `rust::String` in C++, which cxx defines with the layout of
+// `String` and frees with the Rust allocator.
 unsafe impl AbiType for String {
     const NAME: &'static CStr = c"String";
 }
 
+// SAFETY: `rust::Vec<uint8_t>` in C++, as for `String`.
 unsafe impl AbiType for Vec<u8> {
     const NAME: &'static CStr = c"Vec<u8>";
 }
@@ -159,9 +172,12 @@ enum Repr {
     Panic(String),
 }
 
-// A `std::exception_ptr` refers to an immutable exception object, and
-// libstdc++ and libc++ count its references atomically.
+// SAFETY: A `std::exception_ptr` refers to an immutable exception object,
+// and libstdc++ and libc++ count its references atomically, so it can move
+// to another thread.
 unsafe impl Send for Error {}
+// SAFETY: `&Error` gives access only to `what()` of the exception, which
+// does not change the exception object.
 unsafe impl Sync for Error {}
 
 impl Error {
@@ -201,12 +217,14 @@ impl Error {
     /// Give the error to C++, as an exception.
     pub fn into_exception(self) -> *mut NixException {
         let this = ManuallyDrop::new(self);
-        // `this` is not dropped, so moving the fields out is sound.
+        // SAFETY: `this` is never dropped, so the field is moved out once.
         match unsafe { std::ptr::read(&this.0) } {
             Repr::Cxx(exception) => exception.as_ptr(),
+            // SAFETY: The message is valid for `len()` bytes during the call.
             Repr::Message(message) => unsafe {
                 nix_exception_from_rust(NixRustErrorKind::Error, message.as_ptr().cast(), message.len())
             },
+            // SAFETY: As above.
             Repr::Panic(message) => unsafe {
                 nix_exception_from_rust(NixRustErrorKind::Panic, message.as_ptr().cast(), message.len())
             },
@@ -217,6 +235,7 @@ impl Error {
 impl Drop for Error {
     fn drop(&mut self) {
         if let Repr::Cxx(exception) = self.0 {
+            // SAFETY: The error owns the exception, and drops it once.
             unsafe { nix_exception_free(exception.as_ptr()) }
         }
     }
@@ -226,6 +245,8 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.0 {
             Repr::Cxx(exception) => {
+                // SAFETY: The error owns the exception, and the string lives
+                // as long as the exception does.
                 let what = unsafe { CStr::from_ptr(nix_exception_what(exception.as_ptr())) };
                 f.write_str(&what.to_string_lossy())
             }
@@ -280,22 +301,36 @@ static BORROWED_RUST_WAKER_VTABLE: NixWakerVTable = NixWakerVTable {
     drop: borrowed_rust_waker_drop,
 };
 
+// The functions of the two vtables above. For both, `data` points to a
+// `Waker`: in a box that the `nix_waker` owns for `RUST_WAKER_VTABLE`, and
+// borrowed for `BORROWED_RUST_WAKER_VTABLE`. The ABI rules of
+// `future-abi.h` say which function consumes the `nix_waker`.
+//
+// A panic in the waker of a Rust executor aborts the process here: these
+// functions are `extern "C"`.
+
 unsafe extern "C" fn rust_waker_clone(data: *const c_void) -> NixWaker {
+    // SAFETY: `data` points to a live `Waker`, owned or borrowed.
     let waker = unsafe { &*(data as *const Waker) };
     nix_waker_from_rust(waker.clone())
 }
 
 unsafe extern "C" fn rust_waker_wake(data: *const c_void) {
+    // SAFETY: Only `RUST_WAKER_VTABLE` has this function as `wake`, so
+    // `data` is the box, and `wake` consumes the `nix_waker`.
     let waker = unsafe { Box::from_raw(data as *mut Waker) };
     waker.wake();
 }
 
 unsafe extern "C" fn rust_waker_wake_by_ref(data: *const c_void) {
+    // SAFETY: `data` points to a live `Waker`, owned or borrowed.
     let waker = unsafe { &*(data as *const Waker) };
     waker.wake_by_ref();
 }
 
 unsafe extern "C" fn rust_waker_drop(data: *const c_void) {
+    // SAFETY: Only `RUST_WAKER_VTABLE` has this function as `drop`, so
+    // `data` is the box, and `drop` consumes the `nix_waker`.
     drop(unsafe { Box::from_raw(data as *mut Waker) });
 }
 
@@ -315,24 +350,39 @@ static BORROWED_NIX_WAKER_VTABLE: RawWakerVTable = RawWakerVTable::new(
     borrowed_nix_waker_drop,
 );
 
+// The functions of the two vtables above. For both, `data` points to a
+// valid `nix_waker`: in a box that the `Waker` owns for `NIX_WAKER_VTABLE`,
+// and borrowed for `BORROWED_NIX_WAKER_VTABLE`. The functions of a valid
+// `nix_waker` follow the ABI rules of `future-abi.h`.
+
 unsafe fn nix_waker_clone(data: *const ()) -> RawWaker {
+    // SAFETY: `data` points to a valid `nix_waker`, owned or borrowed.
     let waker = unsafe { &*(data as *const NixWaker) };
+    // SAFETY: `clone` of a valid `nix_waker` returns an owned clone.
     let clone = unsafe { ((*waker.vtable).clone)(waker.data) };
     RawWaker::new(Box::into_raw(Box::new(clone)) as *const (), &NIX_WAKER_VTABLE)
 }
 
 unsafe fn nix_waker_wake(data: *const ()) {
+    // SAFETY: Only `NIX_WAKER_VTABLE` has this function as `wake`, so `data`
+    // is the box, and `wake` consumes the `Waker`.
     let waker = unsafe { Box::from_raw(data as *mut NixWaker) };
+    // SAFETY: The box owned the `nix_waker`, and `wake` consumes it.
     unsafe { ((*waker.vtable).wake)(waker.data) }
 }
 
 unsafe fn nix_waker_wake_by_ref(data: *const ()) {
+    // SAFETY: `data` points to a valid `nix_waker`, owned or borrowed.
     let waker = unsafe { &*(data as *const NixWaker) };
+    // SAFETY: `wake_by_ref` does not consume the `nix_waker`.
     unsafe { ((*waker.vtable).wake_by_ref)(waker.data) }
 }
 
 unsafe fn nix_waker_drop(data: *const ()) {
+    // SAFETY: Only `NIX_WAKER_VTABLE` has this function as `drop`, so `data`
+    // is the box, and `drop` consumes the `Waker`.
     let waker = unsafe { Box::from_raw(data as *mut NixWaker) };
+    // SAFETY: The box owned the `nix_waker`, and `drop` consumes it.
     unsafe { ((*waker.vtable).drop)(waker.data) }
 }
 
@@ -350,12 +400,17 @@ fn is_rust_waker(waker: &NixWaker) -> bool {
 pub unsafe fn waker_from_nix(waker: NixWaker) -> Waker {
     if std::ptr::eq(waker.vtable, &RUST_WAKER_VTABLE) {
         // A Rust waker that went to C++ and comes back: unwrap it.
+        // SAFETY: The vtable says that `data` is the box of a `Waker`, which
+        // the `nix_waker` owns, and the caller passes that ownership.
         return *unsafe { Box::from_raw(waker.data as *mut Waker) };
     }
     assert!(
         !std::ptr::eq(waker.vtable, &BORROWED_RUST_WAKER_VTABLE),
         "a borrowed nix_waker cannot be owned"
     );
+    // SAFETY: The functions of `NIX_WAKER_VTABLE` expect a box with an owned
+    // `nix_waker`, and each of them is thread-safe, as `future-abi.h`
+    // requires of the functions of a `nix_waker`.
     unsafe {
         Waker::from_raw(RawWaker::new(
             Box::into_raw(Box::new(waker)) as *const (),
@@ -369,6 +424,8 @@ pub fn nix_waker_from_rust(waker: Waker) -> NixWaker {
     if std::ptr::eq(waker.vtable(), &NIX_WAKER_VTABLE) {
         // A C++ waker that came to Rust and goes back: unwrap it.
         let waker = ManuallyDrop::new(waker);
+        // SAFETY: The vtable says that the data is the box of an owned
+        // `nix_waker`. The `Waker` is not dropped, so the box is freed once.
         return *unsafe { Box::from_raw(waker.data() as *mut NixWaker) };
     }
     NixWaker {
@@ -383,11 +440,18 @@ pub fn nix_waker_from_rust(waker: Waker) -> NixWaker {
 ///
 /// `waker` must be valid for the duration of the call.
 pub unsafe fn with_borrowed_nix_waker<R>(waker: *const NixWaker, f: impl FnOnce(&Waker) -> R) -> R {
+    // SAFETY: The caller guarantees that `waker` is valid during the call.
     let waker = unsafe { &*waker };
     if is_rust_waker(waker) {
+        // SAFETY: The vtable says that `data` points to a `Waker`, which
+        // lives as long as the `nix_waker`.
         return f(unsafe { &*(waker.data as *const Waker) });
     }
     let raw = RawWaker::new(waker as *const NixWaker as *const (), &BORROWED_NIX_WAKER_VTABLE);
+    // SAFETY: `BORROWED_NIX_WAKER_VTABLE` expects a pointer to a valid
+    // `nix_waker`, which `waker` is during the call. `f` receives only a
+    // reference, and the `Waker` is not dropped, so nothing consumes the
+    // borrowed `nix_waker`.
     let waker = ManuallyDrop::new(unsafe { Waker::from_raw(raw) });
     f(&waker)
 }
@@ -395,6 +459,8 @@ pub unsafe fn with_borrowed_nix_waker<R>(waker: *const NixWaker, f: impl FnOnce(
 /// Call `f` with a borrowed Rust `Waker` as a borrowed `nix_waker`.
 pub fn with_borrowed_rust_waker<R>(waker: &Waker, f: impl FnOnce(&NixWaker) -> R) -> R {
     if std::ptr::eq(waker.vtable(), &NIX_WAKER_VTABLE) || std::ptr::eq(waker.vtable(), &BORROWED_NIX_WAKER_VTABLE) {
+        // SAFETY: The vtable says that the data points to a valid
+        // `nix_waker`, which lives as long as `waker`.
         return f(unsafe { &*(waker.data() as *const NixWaker) });
     }
     let nix = NixWaker {
@@ -427,12 +493,22 @@ impl<T: AbiType> ExportedFuture<T> {
         output_type: T::NAME.as_ptr(),
     };
 
+    // The functions of `VTABLE`. `this` is the box that `export_future`
+    // made, which the `nix_future` owns; C++ calls them one at a time, as
+    // `future-abi.h` requires. A panic of the future becomes an error. A
+    // panic here otherwise is a broken contract, for example a second
+    // `take`; it aborts the process, because these functions are
+    // `extern "C"`.
+
     unsafe extern "C" fn poll(this: *mut c_void, waker: *const NixWaker) -> NixPoll {
+        // SAFETY: `this` is the box of `export_future`, and nothing else
+        // uses it during the call.
         let this = unsafe { &mut *(this as *mut Self) };
         let future = this
             .future
             .as_mut()
             .expect("a completed nix_future is not polled again");
+        // SAFETY: `waker` is valid for the duration of `poll`.
         let result = unsafe {
             with_borrowed_nix_waker(waker, |waker| {
                 let mut cx = Context::from_waker(waker);
@@ -452,6 +528,7 @@ impl<T: AbiType> ExportedFuture<T> {
     }
 
     unsafe extern "C" fn take(this: *mut c_void, out: *mut c_void) -> *mut NixException {
+        // SAFETY: As in `poll`.
         let this = unsafe { &mut *(this as *mut Self) };
         match this
             .output
@@ -463,6 +540,10 @@ impl<T: AbiType> ExportedFuture<T> {
                     // C++ passes no storage for `void`.
                     std::mem::forget(value);
                 } else {
+                    // SAFETY: `out` is uninitialized storage for one value of
+                    // the output type, which C++ checked through
+                    // `output_type`, and which has the layout of `T`
+                    // (`AbiType`).
                     unsafe { std::ptr::write(out as *mut T, value) };
                 }
                 std::ptr::null_mut()
@@ -472,6 +553,8 @@ impl<T: AbiType> ExportedFuture<T> {
     }
 
     unsafe extern "C" fn drop(this: *mut c_void) {
+        // SAFETY: `this` is the box of `export_future`, and `drop` consumes
+        // the `nix_future`.
         drop_quietly(unsafe { Box::from_raw(this as *mut Self) });
     }
 }
@@ -507,8 +590,8 @@ pub struct CxxFuture<T> {
     output: PhantomData<fn() -> T>,
 }
 
-// C++ futures that cross the boundary must tolerate being polled on any
-// thread, one thread at a time. `nix::Task` does: a waker posts the
+// SAFETY: C++ futures that cross the boundary must tolerate being polled on
+// any thread, one thread at a time. `nix::Task` does: a waker posts the
 // resumption to whichever executor drives the outermost task.
 unsafe impl<T> Send for CxxFuture<T> {}
 
@@ -523,6 +606,8 @@ impl<T: AbiType> CxxFuture<T> {
     ///
     /// `raw` must be a valid `nix_future` that nothing else owns.
     pub unsafe fn new(raw: NixFuture) -> Self {
+        // SAFETY: The caller guarantees a valid `nix_future`, whose vtable
+        // has a null-terminated `output_type`.
         let actual = unsafe { CStr::from_ptr((*raw.vtable).output_type) };
         let this = CxxFuture {
             raw,
@@ -545,17 +630,28 @@ impl<T: AbiType> Future for CxxFuture<T> {
         // `CxxFuture` is `Unpin`: the C++ future lives behind a pointer.
         let this = self.get_mut();
         assert!(!this.complete, "a completed CxxFuture is not polled again");
+        // SAFETY: `new` adopted a valid `nix_future`, whose vtable lives as
+        // long as the future.
         let vtable = unsafe { &*this.raw.vtable };
-        let polled = with_borrowed_rust_waker(cx.waker(), |waker| unsafe { (vtable.poll)(this.raw.this, waker) });
+        let polled = with_borrowed_rust_waker(cx.waker(), |waker| {
+            // SAFETY: The future is not complete, and `waker` is valid
+            // during the call.
+            unsafe { (vtable.poll)(this.raw.this, waker) }
+        });
         if polled == NixPoll::Pending {
             return Poll::Pending;
         }
         this.complete = true;
         let mut out = MaybeUninit::<T>::uninit();
+        // SAFETY: `poll` returned ready, and `take` runs once, because
+        // `complete` stops a second poll. `out` is storage for a `T`, the
+        // output type that `new` checked.
         let exception = unsafe { (vtable.take)(this.raw.this, out.as_mut_ptr() as *mut c_void) };
         if exception.is_null() {
+            // SAFETY: `take` returned no exception, so it wrote the value.
             Poll::Ready(Ok(unsafe { out.assume_init() }))
         } else {
+            // SAFETY: `take` gives up the ownership of the exception.
             Poll::Ready(Err(unsafe { Error::from_exception(exception) }))
         }
     }
@@ -563,6 +659,8 @@ impl<T: AbiType> Future for CxxFuture<T> {
 
 impl<T> Drop for CxxFuture<T> {
     fn drop(&mut self) {
+        // SAFETY: The `CxxFuture` owns the `nix_future`, and `drop` consumes
+        // it once.
         unsafe { ((*self.raw.vtable).drop)(self.raw.this) }
     }
 }

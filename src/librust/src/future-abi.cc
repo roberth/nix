@@ -12,12 +12,12 @@ static std::atomic<nix_rust_error_factory> errorFactory{nullptr};
 
 extern "C" {
 
-void nix_exception_free(nix_exception * exception)
+void nix_exception_free(nix_exception * exception) noexcept
 {
     delete exception;
 }
 
-const char * nix_exception_what(const nix_exception * exception)
+const char * nix_exception_what(const nix_exception * exception) noexcept
 {
     try {
         std::rethrow_exception(exception->ptr);
@@ -30,7 +30,9 @@ const char * nix_exception_what(const nix_exception * exception)
     }
 }
 
-nix_exception * nix_exception_from_rust(nix_rust_error_kind kind, const char * message, size_t length)
+/* `noexcept`: an allocation failure terminates the process. Rust cannot
+   receive a C++ exception. */
+nix_exception * nix_exception_from_rust(nix_rust_error_kind kind, const char * message, size_t length) noexcept
 {
     if (auto factory = errorFactory.load(std::memory_order_acquire))
         return factory(kind, message, length);
@@ -40,7 +42,7 @@ nix_exception * nix_exception_from_rust(nix_rust_error_kind kind, const char * m
     return new nix_exception{std::make_exception_ptr(std::runtime_error(text))};
 }
 
-void nix_set_rust_error_factory(nix_rust_error_factory factory)
+void nix_set_rust_error_factory(nix_rust_error_factory factory) noexcept
 {
     errorFactory.store(factory, std::memory_order_release);
 }

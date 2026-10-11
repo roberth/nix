@@ -18,6 +18,15 @@ path = "src/lib.rs"
 # cxx runtime; see `src/lib.rs`.
 nix-rust-future = { path = "../librust/future" }
 
+# The lints of the workspace of `nix-rust`, which this crate is not a member
+# of: it has its own lock file and its own staticlib, and its package does
+# not contain the workspace root.
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.clippy]
+undocumented_unsafe_blocks = "warn"
+
 [profile.release]
 # Meson strips and splits debug info itself.
 debug = "line-tables-only"

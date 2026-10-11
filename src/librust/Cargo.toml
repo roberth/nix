@@ -27,6 +27,21 @@ tempfile = "3"
 [build-dependencies]
 cxx-build = "1.0"
 
+[lints]
+workspace = true
+
+[workspace]
+# One lock file, and `cargo clippy --workspace` checks both crates.
+members = [".", "future"]
+
+[workspace.lints.rust]
+# Each unsafe operation in an `unsafe fn` needs its own `unsafe` block,
+# with its own `SAFETY` comment.
+unsafe_op_in_unsafe_fn = "deny"
+
+[workspace.lints.clippy]
+undocumented_unsafe_blocks = "warn"
+
 [profile.release]
 # Meson strips and splits debug info itself.
 debug = "line-tables-only"
