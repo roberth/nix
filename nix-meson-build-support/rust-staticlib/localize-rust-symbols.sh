@@ -6,8 +6,8 @@
 #
 # CC is the compiler driver, as one word list. C_EXPORTS is an extended
 # regular expression for the C functions to keep global, for example
-# `^nix_`. AR, NM and OBJCOPY come from the environment, as Nixpkgs sets
-# them for the host, and default to the unprefixed tools.
+# `^nix_`. AR, NM, OBJCOPY and READELF come from the environment, as
+# Nixpkgs sets them for the host, and default to the unprefixed tools.
 #
 # A Rust staticlib contains the Rust standard library, every crate, and the
 # compiler runtime as global symbols. Two of them in one static link, for
@@ -15,19 +15,21 @@
 # `libnixstore.a`, fail on duplicate symbols. The shared libraries solve
 # this with a version script; an archive has no such thing. Instead, this
 # script links all members of the archive into one relocatable object, so
-# that the references between them are resolved, and then makes the strong
+# that the references between them are resolved, and then makes the global
 # symbols local to that object, except:
 #
 # - C++ symbols. They are the interface, for example `nix::rs` and the cxx
-#   runtime `rust::cxxbridge1`. Rust symbols with the legacy mangling look
+#   runtime `rust::cxxbridge1`, and the inline functions and templates of
+#   the C++ standard library. Rust symbols with the legacy mangling look
 #   like C++ symbols, but end in a hash.
 # - The C functions that match C_EXPORTS.
+# - The signatures of COMDAT groups, for example `DW.ref.rust_eh_personality`.
+#   The final link merges the groups by name with the same groups of other
+#   objects, and a local symbol in a discarded group would break that.
 #
-# Weak symbols stay global. They are the inline functions and templates of
-# C++, in COMDAT groups, which the final link merges by name with the same
-# groups in other objects; a local symbol in a discarded group would break
-# that. The weak symbols of the compiler runtime stay global too, which is
-# harmless: any copy of them does the same.
+# The weak symbols of the compiler runtime, for example `sqrt` and
+# `__udivti3`, become local too, so that they do not replace the functions
+# of the C library and of libgcc in the program.
 
 set -eu
 
@@ -39,6 +41,7 @@ output=$4
 ar=${AR:-ar}
 nm=${NM:-nm}
 objcopy=${OBJCOPY:-objcopy}
+readelf=${READELF:-readelf}
 
 work=$output.localize
 rm -rf "$work"
@@ -49,17 +52,26 @@ $cc -r -nostdlib \
     -Wl,--whole-archive "$input" -Wl,--no-whole-archive \
     -o "$work/prelinked.o"
 
-# `nm` prints the type of a strong global symbol in upper case, and of a
-# weak one as `W` or `V`. A Rust symbol has the v0 mangling (`_R`), or the
-# legacy mangling, which ends in a hash `17h<hex digits>E`, sometimes with a
-# suffix `.llvm.<digits>` after it.
+# The lines of `readelf -g` look like
+# COMDAT group section [    3] `.group' [<signature>] contains 2 sections:
+"$readelf" -gW "$work/prelinked.o" \
+    | sed -n "s/^COMDAT group section \[[ 0-9]*\] \`[^']*' \[\(.*\)\] contains .*/\1/p" \
+    > "$work/group-signatures"
+
+# A Rust symbol has the v0 mangling (`_R`), or the legacy mangling, which
+# ends in a hash `17h<hex digits>E`, sometimes with a suffix
+# `.llvm.<digits>` after it.
 "$nm" -g --defined-only "$work/prelinked.o" \
-    | awk -v c_exports="$c_exports" '
-        $2 ~ /^[A-Z]$/ && $2 != "W" && $2 != "V" {
+    | awk -v c_exports="$c_exports" -v signatures="$work/group-signatures" '
+        BEGIN {
+            while ((getline line < signatures) > 0)
+                signature[line] = 1
+        }
+        NF == 3 {
             name = $3
             rust = name ~ /^_R/ || name ~ /17h[0-9a-f]+E(\.llvm\.[0-9]+)?$/
             cxx = name ~ /^_Z/ && !rust
-            if (!cxx && name !~ c_exports)
+            if (!cxx && name !~ c_exports && !(name in signature))
                 print name
         }' \
     > "$work/localize"
