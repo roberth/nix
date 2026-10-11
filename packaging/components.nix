@@ -468,6 +468,7 @@ in
   mkFuzzSeedCheck = callPackage ./fuzz-seed-check.nix { };
 
   nix-rust = callPackage ../src/librust/package.nix { };
+  nix-rust-test-support = callPackage ../src/librust-test-support/package.nix { };
 
   nix-util = callPackage ../src/libutil/package.nix { };
   nix-util-c = callPackage ../src/libutil-c/package.nix { };

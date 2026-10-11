@@ -9,8 +9,6 @@
 //! `nix/rust/<module>.rs.h`. The headers are listed in `meson.build`.
 
 pub use nix_rust_future as future;
-pub mod future_probe;
-pub mod probe;
 pub mod tarball_cache;
 
 #[cxx::bridge(namespace = "nix::rs")]

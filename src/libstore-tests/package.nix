@@ -9,6 +9,7 @@
   nix-store,
   nix-store-c,
   nix-store-test-support,
+  nix-rust-test-support,
   sqlite,
   openssl,
 
@@ -61,6 +62,7 @@ mkMesonExecutable (finalAttrs: {
     gtest
     nix-store-c
     nix-store-test-support
+    nix-rust-test-support
   ]
   ++ lib.optionals doBenchmarks [
     gbenchmark

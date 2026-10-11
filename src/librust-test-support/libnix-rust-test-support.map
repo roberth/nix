@@ -1,0 +1,13 @@
+/* The symbols that the shared `libnix-rust-test-support` exports on ELF
+   platforms. `libnix-rust-test-support.exp` is the same list for Darwin.
+
+   Only the C functions of `nix/rust/tests/probes.hh`. Its copy of the Rust
+   standard library stays local, as the one in `libnixrust` does, so that
+   each copy binds to itself. */
+{
+  global:
+    nix_rust_test_*;
+
+  local:
+    *;
+};

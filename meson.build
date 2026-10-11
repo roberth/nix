@@ -48,6 +48,7 @@ unit_tests = get_option('unit-tests')
 fuzzers = get_option('fuzzers')
 
 if unit_tests
+  subproject('librust-test-support')
   subproject('libutil-test-support')
 endif
 

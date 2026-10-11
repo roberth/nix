@@ -94,6 +94,8 @@ include_dirs = [ include_directories('.') ]
 
 if build_unit_tests
   unit_dependencies = fuzz_dependencies + [
+    # For the Rust probes in `nix/rust/tests/probes.hh`.
+    dependency('nix-rust-test-support'),
     dependency('nix-util-c'),
     dependency('nix-util-test-support'),
     dependency('rapidcheck'),

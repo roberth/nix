@@ -259,6 +259,7 @@
             {
               # Components we'll iterate over in the upcoming lambda
               "nix-rust" = { };
+              "nix-rust-test-support" = { };
 
               "nix-util" = { };
               "nix-util-c" = { };

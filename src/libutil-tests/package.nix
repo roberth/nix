@@ -8,6 +8,7 @@
   nix-util,
   nix-util-c,
   nix-util-test-support,
+  nix-rust-test-support,
 
   rapidcheck,
   gtest,
@@ -53,6 +54,7 @@ mkMesonExecutable (finalAttrs: {
   ++ lib.optionals withUnitTests [
     nix-util-c
     nix-util-test-support
+    nix-rust-test-support
     rapidcheck
     gtest
     zstd

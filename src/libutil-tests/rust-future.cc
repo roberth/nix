@@ -4,7 +4,7 @@
 #include "nix/util/signals.hh"
 #include "nix/util/task.hh"
 #include "nix/util/task-asio.hh"
-#include "nix/rust/future_probe.rs.h"
+#include "nix/rust/tests/probes.hh"
 
 #include <boost/asio/bind_executor.hpp>
 #include <boost/asio/io_context.hpp>
@@ -18,7 +18,7 @@ namespace nix {
 
 /* These tests drive Rust futures from C++ tasks and C++ tasks from Rust
    futures, through the C ABI in `nix/rust/future-abi.h`. The Rust side is
-   `src/librust/src/future_probe.rs`. */
+   `src/librust-test-support/src/lib.rs`. */
 
 namespace {
 
@@ -27,15 +27,14 @@ namespace {
  * unique within the test program, because the unity build puts several
  * test files into one translation unit.
  */
-struct RustFutureLog : rs::ProbeLog
+struct RustFutureLog : rs::tests::ProbeLog
 {
     mutable std::mutex mutex;
     mutable std::vector<std::string> events;
 
-    void push(rust::Str event) const override
+    RustFutureLog()
+        : ProbeLog([this](std::string_view event) { add(std::string(event)); })
     {
-        std::lock_guard lock(mutex);
-        events.emplace_back(event);
     }
 
     void add(std::string event) const
@@ -128,13 +127,13 @@ Task<rust::String> cxxString(std::string value)
 
 TEST(RustFuture, valueFromRust)
 {
-    EXPECT_EQ(std::string(runBlocking(awaitCFuture<rust::String>(rs::probe_future_ready("from Rust")))), "from Rust");
+    EXPECT_EQ(std::string(runBlocking(awaitCFuture<rust::String>(rs::tests::futureReady("from Rust")))), "from Rust");
 }
 
 TEST(RustFuture, rustErrorBecomesNixError)
 {
     try {
-        runBlocking(awaitCFuture<void>(rs::probe_future_error("no such thing")));
+        runBlocking(awaitCFuture<void>(rs::tests::futureError("no such thing")));
         FAIL() << "the future did not fail";
     } catch (const Error & e) {
         EXPECT_EQ(e.info().msg.str(), "no such thing");
@@ -144,7 +143,7 @@ TEST(RustFuture, rustErrorBecomesNixError)
 TEST(RustFuture, rustPanicBecomesNixError)
 {
     try {
-        runBlocking(awaitCFuture<void>(rs::probe_future_panic("probe panic")));
+        runBlocking(awaitCFuture<void>(rs::tests::futurePanic("probe panic")));
         FAIL() << "the future did not fail";
     } catch (const Error & e) {
         EXPECT_EQ(e.info().msg.str(), "Rust panic: probe panic");
@@ -154,7 +153,7 @@ TEST(RustFuture, rustPanicBecomesNixError)
 TEST(RustFuture, cxxValueThroughRust)
 {
     RustFutureLog log;
-    auto future = rs::probe_future_forward(toCFuture(cxxString("from C++")), log);
+    auto future = nix_rust_test_future_forward(toCFuture(cxxString("from C++")), log);
     EXPECT_EQ(std::string(runBlocking(awaitCFuture<rust::String>(future))), "Rust saw: from C++");
     /* The Rust future is dropped as soon as it completes. */
     EXPECT_EQ(log.get(), std::vector<std::string>{"rust: dropped"});
@@ -167,7 +166,7 @@ TEST(RustFuture, cxxExceptionKeepsItsTypeThroughRust)
         throw SysError(ENOENT, "opening a file");
         co_return rust::String();
     }();
-    auto future = rs::probe_future_forward(toCFuture(std::move(inner)), log);
+    auto future = nix_rust_test_future_forward(toCFuture(std::move(inner)), log);
     try {
         runBlocking(awaitCFuture<rust::String>(future));
         FAIL() << "the future did not fail";
@@ -179,7 +178,7 @@ TEST(RustFuture, cxxExceptionKeepsItsTypeThroughRust)
 TEST(RustFuture, droppingTheTaskDropsTheRustFuture)
 {
     RustFutureLog log;
-    auto task = awaitCFuture<void>(rs::probe_future_pending(log));
+    auto task = awaitCFuture<void>(nix_rust_test_future_pending(log));
 
     auto counter = makeWakeTarget<RustFutureWakeCounter>();
     EXPECT_EQ(task.poll(counter->waker()), NIX_POLL_PENDING);
@@ -200,7 +199,7 @@ TEST(RustFuture, droppingTheRustFutureCancelsTheCxxTask)
             [&log](Callback<rust::String>) { return [&log]() { log.add("C++ operation cancelled"); }; });
     }(log);
 
-    auto task = awaitCFuture<rust::String>(rs::probe_future_forward(toCFuture(std::move(inner)), log));
+    auto task = awaitCFuture<rust::String>(nix_rust_test_future_forward(toCFuture(std::move(inner)), log));
 
     auto counter = makeWakeTarget<RustFutureWakeCounter>();
     EXPECT_EQ(task.poll(counter->waker()), NIX_POLL_PENDING);
@@ -218,19 +217,19 @@ TEST(RustFuture, droppingTheRustFutureCancelsTheCxxTask)
 TEST(RustFuture, interruptDropsARustFutureThatAnotherThreadWakes)
 {
     RustFutureLog log;
-    auto pollsBefore = rs::probe_ticking_polls();
+    auto pollsBefore = nix_rust_test_ticking_polls();
 
     /* Interrupt once the Rust thread woke the future a few times. */
     std::thread interrupter([&]() {
         auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
-        while (rs::probe_ticking_polls() < pollsBefore + 4 && std::chrono::steady_clock::now() < deadline)
+        while (nix_rust_test_ticking_polls() < pollsBefore + 4 && std::chrono::steady_clock::now() < deadline)
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         unix::triggerInterrupt();
     });
 
     bool interrupted = false;
     try {
-        runBlocking(awaitCFuture<void>(rs::probe_future_ticking(log, 2)));
+        runBlocking(awaitCFuture<void>(nix_rust_test_future_ticking(log, 2)));
     } catch (const Interrupted &) {
         interrupted = true;
     }
@@ -238,7 +237,7 @@ TEST(RustFuture, interruptDropsARustFutureThatAnotherThreadWakes)
     setInterrupted(false);
 
     EXPECT_TRUE(interrupted);
-    EXPECT_GE(rs::probe_ticking_polls(), pollsBefore + 4);
+    EXPECT_GE(nix_rust_test_ticking_polls(), pollsBefore + 4);
     /* `rust: dropped` comes after the Rust thread stopped. */
     EXPECT_EQ(log.get(), (std::vector<std::string>{"rust: started", "rust: dropped"}));
 }
@@ -251,7 +250,7 @@ TEST(RustFuture, rustThreadWakesAnAsioTaskAlsoAfterItCompleted)
     {
         asio::io_context ctx;
         asyncRunTask(
-            awaitCFuture<rust::String>(rs::probe_future_woken_from_thread(20, 50)),
+            awaitCFuture<rust::String>(nix_rust_test_future_woken_from_thread(20, 50)),
             asio::bind_executor(ctx, [&](std::exception_ptr ex, std::optional<rust::String> value) {
                 if (ex)
                     std::rethrow_exception(ex);
@@ -263,11 +262,11 @@ TEST(RustFuture, rustThreadWakesAnAsioTaskAlsoAfterItCompleted)
     }
     /* The executor is gone now. The late wake must find nothing to do. */
     auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
-    while (rs::probe_wake_threads_running() != 0 && std::chrono::steady_clock::now() < deadline)
+    while (nix_rust_test_wake_threads_running() != 0 && std::chrono::steady_clock::now() < deadline)
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
 
     EXPECT_EQ(result, "woken from a Rust thread");
-    EXPECT_EQ(rs::probe_wake_threads_running(), 0u);
+    EXPECT_EQ(nix_rust_test_wake_threads_running(), 0u);
 }
 
 TEST(RustFuture, wakerOwnershipAcrossTheBoundary)
@@ -275,7 +274,11 @@ TEST(RustFuture, wakerOwnershipAcrossTheBoundary)
     RustFutureCWakerCounts counts;
     nix_waker waker{&counts, &rustFutureCWakerVtable};
 
-    EXPECT_EQ(std::string(rs::probe_waker_roundtrip(waker)), "C++ waker unwrapped: true, Rust waker unwrapped: true");
+    EXPECT_EQ(
+        rs::tests::probeString([&](nix_rust_test_string_sink sink, void * context) {
+            nix_rust_test_waker_roundtrip(&waker, sink, context);
+        }),
+        "C++ waker unwrapped: true, Rust waker unwrapped: true");
 
     /* Rust cloned the borrowed waker three times, woke one clone by value
        and one by reference, and dropped the other two. */

@@ -41,6 +41,7 @@ let
       [
         "nix-everything"
         "nix-rust"
+        "nix-rust-test-support"
         "nix-util"
         "nix-util-c"
         "nix-util-test-support"

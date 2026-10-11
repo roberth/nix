@@ -4,6 +4,7 @@
 /// Upward interface of the gitoxide tarball cache (`src/tarball_cache.rs`).
 /// See `boundary.hh` for why Rust calls up only through abstract classes.
 
+#include "nix/rust/boundary.hh"
 #include "nix/rust/future-abi.hh"
 #include "rust/cxx.h"
 

@@ -1,0 +1,23 @@
+[package]
+name = "nix-rust-test-support"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.88"
+publish = false
+license = "LGPL-2.1-or-later"
+description = "Rust functions for the unit tests of the boundary between C++ and Rust in Nix"
+
+[lib]
+# Meson wraps this archive into `libnix-rust-test-support`; see `meson.build`
+# and `doc/manual/source/development/rust.md`.
+crate-type = ["staticlib"]
+path = "src/lib.rs"
+
+[dependencies]
+# Without the feature `cxx`: this staticlib must not contain a copy of the
+# cxx runtime; see `src/lib.rs`.
+nix-rust-future = { path = "../librust/future" }
+
+[profile.release]
+# Meson strips and splits debug info itself.
+debug = "line-tables-only"

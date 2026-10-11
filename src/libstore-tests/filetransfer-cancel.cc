@@ -6,7 +6,7 @@
 #  include "nix/store/tests/https-store.hh"
 #  include "nix/util/file-descriptor.hh"
 #  include "nix/util/fmt.hh"
-#  include "nix/rust/future_probe.rs.h"
+#  include "nix/rust/tests/probes.hh"
 
 #  include <arpa/inet.h>
 #  include <netinet/in.h>
@@ -192,17 +192,10 @@ TEST(FileTransferCancel, droppingARustFutureThatAwaitsTheTransferClosesTheConnec
         co_return rust::String(result.data);
     }(fileTransfer->transfer(std::move(request)));
 
-    struct Log : rs::ProbeLog
-    {
-        mutable std::vector<std::string> events;
+    std::vector<std::string> events;
+    rs::tests::ProbeLog log([&](std::string_view event) { events.emplace_back(event); });
 
-        void push(rust::Str event) const override
-        {
-            events.emplace_back(event);
-        }
-    } log;
-
-    auto task = awaitCFuture<rust::String>(rs::probe_future_forward(toCFuture(std::move(transfer)), log));
+    auto task = awaitCFuture<rust::String>(nix_rust_test_future_forward(toCFuture(std::move(transfer)), log));
 
     auto target = makeWakeTarget<CountingTarget>();
     EXPECT_EQ(task.poll(target->waker()), NIX_POLL_PENDING);
@@ -212,7 +205,7 @@ TEST(FileTransferCancel, droppingARustFutureThatAwaitsTheTransferClosesTheConnec
     task.reset();
 
     EXPECT_EQ(server.result(), "closed by client");
-    EXPECT_EQ(log.events, std::vector<std::string>{"rust: dropped"});
+    EXPECT_EQ(events, std::vector<std::string>{"rust: dropped"});
     EXPECT_EQ(target->count, 0);
 }
 

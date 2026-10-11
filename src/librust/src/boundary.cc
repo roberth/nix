@@ -7,8 +7,6 @@ namespace nix::rs {
    the vtables and the type information strong symbols of libnixrust, so that
    the libraries above it share one copy. See `-Werror=weak-vtables` in
    `nix-meson-build-support/common/meson.build`. */
-Callback::~Callback() = default;
-
 TarballCacheHooks::~TarballCacheHooks() = default;
 
 TarballUnpacker::~TarballUnpacker() = default;

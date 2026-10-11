@@ -1,0 +1,3 @@
+# The symbols that the shared `libnix-rust-test-support` exports on Darwin,
+# for `-exported_symbols_list`. See `libnix-rust-test-support.map`.
+_nix_rust_test_*
