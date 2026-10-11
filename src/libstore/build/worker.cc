@@ -18,7 +18,7 @@ namespace nix {
 
 Worker::Worker(Store & store, Store & evalStore)
     /* Can't use make_ref, because the constructor is private. */
-    : wakerState(ref<Waker>(new Waker{}))
+    : wakerState(ref<WakeupQueue>(new WakeupQueue{}))
     , act(*logger, actRealise)
     , actDerivations(*logger, actBuilds)
     , actSubstitutions(*logger, actCopyPaths)
@@ -250,33 +250,12 @@ void Worker::childTerminated(Goal * goal, JobCategory jobCategory)
     children.erase(i);
 }
 
-void Worker::waitForBuildSlot(GoalPtr goal)
+bool Worker::slotAvailable(JobCategory category)
 {
-    goal->trace("wait for build slot");
-
-    bool slotAvailable = [&] {
-        if (goal->jobCategory() == JobCategory::Substitution)
-            return getNrSubstitutions() < settings.maxSubstitutionJobs;
-        else
-            return getNrLocalBuilds() < settings.maxBuildJobs;
-    }();
-
-    if (slotAvailable)
-        wakeUp(goal); /* Can do it right away. */
+    if (category == JobCategory::Substitution)
+        return getNrSubstitutions() < settings.maxSubstitutionJobs;
     else
-        addToWeakGoals(goal->jobCategory() == JobCategory::Substitution ? wantingToSubstitute : wantingToBuild, goal);
-}
-
-void Worker::waitForAWhile(GoalPtr goal)
-{
-    goal->trace("wait for a while");
-    addToWeakGoals(waitingForAWhile, goal);
-}
-
-void Worker::waitForCompletion(GoalPtr goal)
-{
-    goal->trace("waiting for completion callback");
-    addToWeakGoals(waitingForCompletion, goal);
+        return getNrLocalBuilds() < settings.maxBuildJobs;
 }
 
 void Worker::run(const Goals & _topGoals)
@@ -285,12 +264,23 @@ void Worker::run(const Goals & _topGoals)
     for (std::shared_ptr<Goal> goal : _topGoals)
         topGoals.insert(std::move(goal));
 
+    wakerState->owner = std::this_thread::get_id();
+
+    /* Make `waitForInput` return on a user interrupt, also when it waits
+       without a timeout, so that `checkInterrupt` below throws. */
+    auto interruptCallback = createInterruptCallback([queue = std::weak_ptr<WakeupQueue>(wakerState.get_ptr())]() {
+        if (auto q = queue.lock())
+            q->notify();
+    });
+
     while (1) {
         checkInterrupt();
 
         // TODO GC interface?
         if (auto localStore = dynamic_cast<LocalStore *>(&store))
             localStore->autoGC(false);
+
+        wakerState->wakeAll(*this);
 
         /* Call every wake goal (in the ordering established by
            CompareGoalPtrs). */
@@ -324,28 +314,25 @@ void Worker::run(const Goals & _topGoals)
                     break; // stuff may have been cancelled
             }
 
-            auto wakeSlotWaiters = [this](WeakGoals & waiting, size_t running, size_t limit) {
-                auto it = waiting.begin();
-                while (it != waiting.end() && running < limit) {
-                    auto goal = it->lock();
-                    it = waiting.erase(it);
-                    if (!goal)
-                        continue;
-                    wakeUp(goal);
+            auto wakeSlotWaiters = [](WaitQueue & waiting, size_t running, size_t limit) {
+                while (running < limit && waiting.wakeOne())
                     ++running;
-                }
             };
 
             wakeSlotWaiters(
                 wantingToSubstitute, getNrSubstitutions(), std::max<std::size_t>(1, settings.maxSubstitutionJobs));
             wakeSlotWaiters(wantingToBuild, getNrLocalBuilds(), settings.maxBuildJobs);
+
+            /* The goals that woke during this round, on this thread. */
+            wakerState->wakeAll(*this);
         }
 
         if (topGoals.empty())
             break;
 
-        /* Wait for input or completion callbacks. */
-        if (!children.empty() || !waitingForAWhile.empty() || !waitingForCompletion.empty())
+        /* Wait for input, or for a goal that waits for something outside of
+           the worker. Otherwise no goal can continue. */
+        if (!children.empty() || !waitingForAWhile.empty() || nrGoalsSuspendedElsewhere > 0)
             waitForInput();
         else if (awake.empty() && 0U == settings.maxBuildJobs) {
             if (Machine::parseConfig({nix::settings.thisSystem}, nix::settings.getWorkerSettings().builders).empty())
@@ -498,7 +485,10 @@ void Worker::waitForInput()
     std::set<MuxablePipePollState::CommChannel> wakerChannels{wakerState->wakeupPipe.pipe.readSide.get()};
     state.iterate(
         wakerChannels,
-        [&](Descriptor k, std::string_view data) { wakerState->wakeAll(*this); },
+        [&](Descriptor k, std::string_view data) {
+            wakerState->wakeupPipe.drain();
+            wakerState->wakeAll(*this);
+        },
         [](Descriptor fd) { unreachable(); });
 #else
     /* Slightly less optimal on windows. We don't use a wakeup pipe and signal the ioport directly. */
@@ -507,40 +497,40 @@ void Worker::waitForInput()
 
     if (!waitingForAWhile.empty() && lastWokenUp + std::chrono::seconds(settings.pollInterval) <= after) {
         lastWokenUp = after;
-        for (auto & i : waitingForAWhile) {
-            GoalPtr goal = i.lock();
-            if (goal)
-                wakeUp(goal);
-        }
-        waitingForAWhile.clear();
+        waitingForAWhile.wakeAll();
     }
 }
 
-std::weak_ptr<Worker::Waker> Worker::getCrossThreadWaker()
+std::weak_ptr<Worker::WakeupQueue> Worker::getCrossThreadWaker()
 {
     return wakerState.get_ptr();
 }
 
-void Worker::Waker::wakeAll(Worker & worker)
+void Worker::WakeupQueue::wakeAll(Worker & worker)
 {
-    /* Wake up all goals that have been enqueued by asynchronous completion callbacks. */
-    auto wakeupQueue(wakeupQueue_.lock());
-#ifndef _WIN32
-    wakeupPipe.drain();
-#endif
-    while (!wakeupQueue->empty()) {
-        auto ptr = wakeupQueue->front().lock();
-        wakeupQueue->pop();
-        if (ptr) {
-            worker.waitingForCompletion.erase(ptr);
+    /* Take the queue first: releasing the last reference to a goal below
+       destroys it, and its destruction can wake other goals. */
+    std::queue<WeakGoalPtr> queue;
+    std::swap(queue, *wakeupQueue_.lock());
+    while (!queue.empty()) {
+        auto ptr = queue.front().lock();
+        queue.pop();
+        if (ptr)
             worker.wakeUp(ptr);
-        }
     }
 }
 
-void Worker::Waker::enqueue(WeakGoalPtr goal)
+void Worker::WakeupQueue::enqueue(WeakGoalPtr goal)
 {
     wakeupQueue_.lock()->push(goal);
+    /* On the worker's own thread, the worker is not in `waitForInput`, and
+       takes the queue before it waits again. */
+    if (std::this_thread::get_id() != owner)
+        notify();
+}
+
+void Worker::WakeupQueue::notify()
+{
 #ifdef _WIN32
     PostQueuedCompletionStatus(
         ioport, /*dwNumberOfBytesTransferred=*/0, /*dwCompletionKey=*/0, /*lpOverlapped=*/nullptr);

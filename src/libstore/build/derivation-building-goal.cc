@@ -685,7 +685,7 @@ Goal::Co<DerivationBuildingGoal::Result> DerivationBuildingGoal::buildWithHook(
     uint64_t logSize = 0;
 
     while (true) {
-        auto event = co_await WaitForChildEvent{};
+        auto event = co_await waitForChildEvent();
         if (auto * output = std::get_if<ChildOutput>(&event)) {
             auto & fd = output->fd;
             auto & data = output->data;
@@ -805,7 +805,7 @@ Goal::Co<DerivationBuildingGoal::Result> DerivationBuildingGoal::buildWithHook(
         auto hookState = runPostBuildHook(worker.settings, worker.store, *logger, drvPath, outputPaths);
         worker.childStarted(shared_from_this(), {hookState->out->readSide.get()}, false, false);
         while (true) {
-            auto event = co_await WaitForChildEvent{};
+            auto event = co_await waitForChildEvent();
             if (auto * output = std::get_if<ChildOutput>(&event)) {
                 (*hookState->sink)(output->data);
             } else if (std::get_if<ChildEOF>(&event)) {
@@ -1026,7 +1026,7 @@ Goal::Co<DerivationBuildingGoal::LocalBuildOutcome> DerivationBuildingGoal::buil
     uint64_t logSize = 0;
 
     while (true) {
-        auto event = co_await WaitForChildEvent{};
+        auto event = co_await waitForChildEvent();
         if (auto * output = std::get_if<ChildOutput>(&event)) {
             if (output->fd == builder->logDescriptor()) {
                 logSize += output->data.size();
@@ -1114,7 +1114,7 @@ Goal::Co<DerivationBuildingGoal::LocalBuildOutcome> DerivationBuildingGoal::buil
             auto hookState = runPostBuildHook(worker.settings, worker.store, *logger, drvPath, outputPaths);
             worker.childStarted(shared_from_this(), {hookState->out->readSide.get()}, false, false);
             while (true) {
-                auto event = co_await WaitForChildEvent{};
+                auto event = co_await waitForChildEvent();
                 if (auto * output = std::get_if<ChildOutput>(&event)) {
                     (*hookState->sink)(output->data);
                 } else if (std::get_if<ChildEOF>(&event)) {

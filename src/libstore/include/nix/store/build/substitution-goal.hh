@@ -22,11 +22,6 @@ class PathSubstitutionGoal : public Goal
      */
     RepairFlag repair;
 
-    /**
-     * The substituter thread.
-     */
-    std::thread thr;
-
     std::unique_ptr<MaintainCount<uint64_t>> maintainExpectedSubstitutions, maintainRunningSubstitutions,
         maintainExpectedNar, maintainExpectedDownload;
 
@@ -69,9 +64,6 @@ public:
      * The states.
      */
     Co<ExitCode> init();
-
-    /* Called by destructor, can't be overridden */
-    void cleanup() override final;
 
     JobCategory jobCategory() const override
     {

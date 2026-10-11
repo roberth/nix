@@ -2,19 +2,54 @@
 #include "nix/store/build/worker.hh"
 #include "nix/store/worker-settings.hh"
 
+#include <algorithm>
+
 namespace nix {
 
-Goal::Goal(Worker & worker, Co<ExitCode> init)
-    : worker(worker)
-    , top_co(std::move(init))
+namespace {
+
+/**
+ * Wakes a goal through the queue of its `Worker`, from any thread.
+ */
+struct GoalWakeTarget : WakeTarget
 {
-    // top_co shouldn't have a goal already, should be nullptr.
-    auto handle = HandleType<ExitCode>::from_address(top_co->handle.address());
-    assert(!handle.promise().goal);
-    // we set it such that top_co can pass it down to its subcoroutines.
-    handle.promise().goal = this;
-    // Nobody awaits the top-level coroutine, so its result goes to us.
-    handle.promise().resultSlot = &finalExitCode;
+    std::weak_ptr<Worker::WakeupQueue> queue;
+    WeakGoalPtr goal;
+
+    GoalWakeTarget(std::weak_ptr<Worker::WakeupQueue> queue, WeakGoalPtr goal)
+        : queue(std::move(queue))
+        , goal(std::move(goal))
+    {
+    }
+
+    void wake() noexcept override
+    {
+        /* The Worker might have died, and the queue with it. */
+        if (auto q = queue.lock())
+            q->enqueue(goal);
+    }
+};
+
+} // namespace
+
+struct Goal::WaiteeSet
+{
+    Goal & waiter;
+    Goals waitees;
+    Waker waker;
+};
+
+Goal::Goal(Worker & worker, Task<ExitCode> init)
+    : task(std::move(init))
+    , worker(worker)
+{
+}
+
+Goal::~Goal()
+{
+    trace("goal destroyed");
+    if (suspendedElsewhere)
+        --worker.nrGoalsSuspendedElsewhere;
 }
 
 void WorkerSettings::anchor() {}
@@ -34,6 +69,7 @@ void Goal::ChildEvents::pushChildEvent(ChildOutput event)
     if (childTimeout)
         return; // Already timed out, ignore
     childOutputs.push(std::move(event));
+    waker.wakeByRef();
 }
 
 void Goal::ChildEvents::pushChildEvent(ChildEOF event)
@@ -42,6 +78,7 @@ void Goal::ChildEvents::pushChildEvent(ChildEOF event)
         return; // Already timed out, ignore
     assert(!childEOF);
     childEOF = std::move(event);
+    waker.wakeByRef();
 }
 
 void Goal::ChildEvents::pushChildEvent(TimedOut event)
@@ -50,6 +87,7 @@ void Goal::ChildEvents::pushChildEvent(TimedOut event)
     childOutputs = {};
     childEOF.reset();
     childTimeout = std::make_unique<TimedOut>(std::move(event));
+    waker.wakeByRef();
 }
 
 bool Goal::ChildEvents::hasChildEvent() const
@@ -71,28 +109,46 @@ Goal::ChildEvent Goal::ChildEvents::popChildEvent()
     unreachable();
 }
 
-using Suspend = nix::Goal::Suspend;
-
-Goal::CoBase & Goal::CoBase::operator=(CoBase && rhs) noexcept
+WaitQueue::Entry::~Entry()
 {
-    if (this == &rhs)
-        return *this;
-    if (handle) {
-        auto baseHandle = HandleTypeBase::from_address(handle.address());
-        baseHandle.promise().alive = false;
-        handle.destroy();
-    }
-    handle = std::exchange(rhs.handle, nullptr);
-    return *this;
+    if (queue)
+        queue->entries.erase(pos);
 }
 
-Goal::CoBase::~CoBase()
+void WaitQueue::Entry::wait(WaitQueue & q, const Waker & w)
 {
-    if (handle) {
-        auto baseHandle = HandleTypeBase::from_address(handle.address());
-        baseHandle.promise().alive = false;
-        handle.destroy();
+    if (!waker.willWake(w))
+        waker = w;
+    if (!queue) {
+        queue = &q;
+        pos = q.entries.insert(q.entries.end(), this);
     }
+}
+
+WaitQueue::~WaitQueue()
+{
+    /* The entries live in the frames of tasks, which can outlive the
+       queue. */
+    for (auto * e : entries)
+        e->queue = nullptr;
+}
+
+bool WaitQueue::wakeOne()
+{
+    if (entries.empty())
+        return false;
+    auto * e = entries.front();
+    entries.pop_front();
+    e->queue = nullptr;
+    e->woken = true;
+    e->waker.wakeByRef();
+    return true;
+}
+
+void WaitQueue::wakeAll()
+{
+    while (wakeOne())
+        ;
 }
 
 bool CompareGoalPtrs::operator()(const GoalPtr & a, const GoalPtr & b) const
@@ -107,17 +163,141 @@ void addToWeakGoals(WeakGoals & goals, GoalPtr p)
     goals.insert(p);
 }
 
-Goal::Co<void> Goal::await(Goals new_waitees)
+namespace {
+
+/**
+ * Base class of the leaves that the `Worker` wakes. A goal that suspends
+ * on one of them can only continue through the `Worker`, which lets the
+ * `Worker` tell a deadlock from a wait for something outside of it.
+ */
+struct WorkerLeaf : LeafAwaiter
 {
-    assert(waitees.empty());
-    if (!new_waitees.empty()) {
-        waitees = std::move(new_waitees);
-        for (auto waitee : waitees) {
-            addToWeakGoals(waitee->waiters, shared_from_this());
-        }
-        co_await Suspend{};
-        assert(waitees.empty());
+    bool & suspendedOnWorker;
+
+    explicit WorkerLeaf(bool & suspendedOnWorker)
+        : suspendedOnWorker(suspendedOnWorker)
+    {
     }
+
+    nix_poll pollLeaf(const Waker & waker) final
+    {
+        auto res = pollWorker(waker);
+        if (res == NIX_POLL_PENDING)
+            suspendedOnWorker = true;
+        return res;
+    }
+
+    virtual nix_poll pollWorker(const Waker & waker) = 0;
+};
+
+/**
+ * Suspend once and wake immediately, so that the `Worker` polls the other
+ * goals that are awake first.
+ */
+struct YieldLeaf : WorkerLeaf
+{
+    bool yielded = false;
+
+    using WorkerLeaf::WorkerLeaf;
+
+    nix_poll pollWorker(const Waker & waker) override
+    {
+        if (yielded)
+            return NIX_POLL_READY;
+        yielded = true;
+        waker.wakeByRef();
+        return NIX_POLL_PENDING;
+    }
+
+    void await_resume() noexcept {}
+};
+
+/**
+ * Wait in a `WaitQueue` of the `Worker`. If `ready` is true, yield
+ * instead of waiting.
+ */
+struct WaitQueueLeaf : WorkerLeaf
+{
+    WaitQueue & queue;
+    bool ready;
+    bool yielded = false;
+    WaitQueue::Entry entry;
+
+    WaitQueueLeaf(bool & suspendedOnWorker, WaitQueue & queue, bool ready)
+        : WorkerLeaf(suspendedOnWorker)
+        , queue(queue)
+        , ready(ready)
+    {
+    }
+
+    nix_poll pollWorker(const Waker & waker) override
+    {
+        if (ready) {
+            if (yielded)
+                return NIX_POLL_READY;
+            yielded = true;
+            waker.wakeByRef();
+            return NIX_POLL_PENDING;
+        }
+        if (entry.isWoken())
+            return NIX_POLL_READY;
+        entry.wait(queue, waker);
+        return NIX_POLL_PENDING;
+    }
+
+    void await_resume() noexcept {}
+};
+
+} // namespace
+
+void Goal::removeWaiter(const WaiteeSet * set)
+{
+    std::erase_if(waiters, [&](const std::weak_ptr<WaiteeSet> & w) {
+        auto s = w.lock();
+        return !s || s.get() == set;
+    });
+}
+
+Goal::Co<void> Goal::await(Goals newWaitees)
+{
+    if (newWaitees.empty())
+        co_return;
+
+    struct WaiteesLeaf : WorkerLeaf
+    {
+        std::shared_ptr<WaiteeSet> set;
+
+        WaiteesLeaf(Goal & goal, Goals waitees)
+            : WorkerLeaf(goal.suspendedOnWorker)
+            , set(std::make_shared<WaiteeSet>(goal, std::move(waitees)))
+        {
+            for (auto & waitee : set->waitees)
+                waitee->waiters.push_back(set);
+        }
+
+        WaiteesLeaf(const WaiteesLeaf &) = delete;
+
+        ~WaiteesLeaf()
+        {
+            /* Unregister before releasing the waitees: releasing the last
+               reference cancels a waitee. */
+            for (auto & waitee : set->waitees)
+                waitee->removeWaiter(set.get());
+        }
+
+        nix_poll pollWorker(const Waker & waker) override
+        {
+            if (set->waitees.empty())
+                return NIX_POLL_READY;
+            if (!set->waker.willWake(waker))
+                set->waker = waker;
+            return NIX_POLL_PENDING;
+        }
+
+        void await_resume() noexcept {}
+    };
+
+    co_await WaiteesLeaf(*this, std::move(newWaitees));
 }
 
 void Goal::trace(std::string_view s)
@@ -127,22 +307,48 @@ void Goal::trace(std::string_view s)
 
 void Goal::work()
 {
-    assert(top_co);
-    assert(top_co->handle);
-    auto baseHandle = HandleTypeBase::from_address(top_co->handle.address());
-    assert(baseHandle.promise().alive);
-    baseHandle.resume();
-
-    /* Still suspended somewhere, so we'll be work()-ed again. */
-    if (top_co)
+    /* A waker can wake the goal after its task completed, for example
+       when the goal woke twice before it ran. */
+    if (!task)
         return;
 
+    if (!waker)
+        waker = makeWakeTarget<GoalWakeTarget>(worker.getCrossThreadWaker(), weak_from_this())->waker();
+
+    if (suspendedElsewhere) {
+        suspendedElsewhere = false;
+        --worker.nrGoalsSuspendedElsewhere;
+    }
+    suspendedOnWorker = false;
+
+    if (task.poll(waker) == NIX_POLL_PENDING) {
+        if (!suspendedOnWorker) {
+            suspendedElsewhere = true;
+            ++worker.nrGoalsSuspendedElsewhere;
+        }
+        return;
+    }
+
     trace("done");
-    assert(finalExitCode);
+
+    /* An exception escapes to the caller of `Worker::run`, as before the
+       goals were tasks. */
+    auto result = task.takeResult();
+    task.reset();
+    finish(result);
+}
+
+void Goal::finish(ExitCode result)
+{
     assert(!exitCode);
-    auto result = *std::exchange(finalExitCode, std::nullopt);
     assert(result == ecSuccess || result == ecFailed || result == ecNoSubstituters);
     exitCode = result;
+
+    auto me = shared_from_this();
+
+    /* Take the list, so that the cancellations below cannot change it
+       while we iterate. */
+    auto waiters2 = std::exchange(waiters, {});
 
     // Log the failure if we have one and shouldn't preserve it.
     // Only log for actual failures (ecFailed), not for ecNoSubstituters
@@ -150,42 +356,44 @@ void Goal::work()
     // expected behavior, not an error.
     if (result == ecFailed) {
         if (auto * failure = buildResult.tryGetFailure()) {
-            if (!preserveFailure && !waiters.empty())
+            bool haveWaiters = std::ranges::any_of(waiters2, [](auto & w) { return !w.expired(); });
+            if (!preserveFailure && haveWaiters)
                 logError(failure->info());
         }
     }
 
-    for (auto & i : waiters) {
-        GoalPtr goal = i.lock();
-        if (goal) {
-            auto me = shared_from_this();
-            assert(goal->waitees.count(me));
-            goal->waitees.erase(me);
+    for (auto & w : waiters2) {
+        /* A cancellation in an earlier iteration can have destroyed the
+           waiter. */
+        auto set = w.lock();
+        if (!set || !set->waitees.erase(me))
+            continue;
 
-            goal->trace(fmt("waitee '%s' done; %d left", name, goal->waitees.size()));
+        Goal & goal = set->waiter;
 
-            if (result == ecFailed || result == ecNoSubstituters)
-                ++goal->nrFailed;
+        goal.trace(fmt("waitee '%s' done; %d left", name, set->waitees.size()));
 
-            if (result == ecNoSubstituters)
-                ++goal->nrNoSubstituters;
+        if (result == ecFailed || result == ecNoSubstituters)
+            ++goal.nrFailed;
 
-            if (goal->waitees.empty()) {
-                worker.wakeUp(goal);
-            } else if (result == ecFailed && !worker.settings.keepGoing) {
-                /* If we failed and keepGoing is not set, we remove all
-                   remaining waitees. */
-                for (auto & g : goal->waitees) {
-                    g->waiters.erase(goal);
-                }
-                goal->waitees.clear();
+        if (result == ecNoSubstituters)
+            ++goal.nrNoSubstituters;
 
-                worker.wakeUp(goal);
-            }
+        if (set->waitees.empty()) {
+            set->waker.wakeByRef();
+        } else if (result == ecFailed && !worker.settings.keepGoing) {
+            /* If we failed and keepGoing is not set, we stop waiting for
+               the remaining waitees. Releasing them cancels those that
+               nothing else holds. */
+            auto rest = std::exchange(set->waitees, {});
+            for (auto & g : rest)
+                g->removeWaiter(set.get());
+            set->waker.wakeByRef();
+            rest.clear();
         }
     }
-    waiters.clear();
-    worker.removeGoal(shared_from_this());
+
+    worker.removeGoal(me);
 
     cleanup();
 }
@@ -193,43 +401,72 @@ void Goal::work()
 void Goal::handleChildOutput(Descriptor fd, std::string_view data)
 {
     childEvents.pushChildEvent(ChildOutput{fd, std::string{data}});
-    worker.wakeUp(shared_from_this());
 }
 
 void Goal::handleEOF(Descriptor fd)
 {
     childEvents.pushChildEvent(ChildEOF{fd});
-    worker.wakeUp(shared_from_this());
 }
 
 void Goal::timedOut(TimedOut && ex)
 {
     childEvents.pushChildEvent(std::move(ex));
-    worker.wakeUp(shared_from_this());
 }
 
 Goal::Co<void> Goal::yield()
 {
-    worker.wakeUp(shared_from_this());
-    co_await Suspend{};
+    co_await YieldLeaf(suspendedOnWorker);
 }
 
 Goal::Co<void> Goal::waitForAWhile()
 {
-    worker.waitForAWhile(shared_from_this());
-    co_await Suspend{};
-}
-
-Goal::Co<void> Goal::waitUntilWoken()
-{
-    worker.waitForCompletion(shared_from_this());
-    co_await Suspend{};
+    trace("wait for a while");
+    co_await WaitQueueLeaf(suspendedOnWorker, worker.waitingForAWhile, false);
 }
 
 Goal::Co<void> Goal::waitForBuildSlot()
 {
-    worker.waitForBuildSlot(shared_from_this());
-    co_await Suspend{};
+    trace("wait for build slot");
+    auto category = jobCategory();
+    co_await WaitQueueLeaf(
+        suspendedOnWorker,
+        category == JobCategory::Substitution ? worker.wantingToSubstitute : worker.wantingToBuild,
+        worker.slotAvailable(category));
+}
+
+Goal::Co<Goal::ChildEvent> Goal::waitForChildEvent()
+{
+    struct ChildEventLeaf : WorkerLeaf
+    {
+        ChildEvents & events;
+
+        ChildEventLeaf(Goal & goal)
+            : WorkerLeaf(goal.suspendedOnWorker)
+            , events(goal.childEvents)
+        {
+        }
+
+        ~ChildEventLeaf()
+        {
+            events.waker.reset();
+        }
+
+        nix_poll pollWorker(const Waker & waker) override
+        {
+            if (events.hasChildEvent())
+                return NIX_POLL_READY;
+            if (!events.waker.willWake(waker))
+                events.waker = waker;
+            return NIX_POLL_PENDING;
+        }
+
+        ChildEvent await_resume()
+        {
+            return events.popChildEvent();
+        }
+    };
+
+    co_return co_await ChildEventLeaf(*this);
 }
 
 } // namespace nix

@@ -1,5 +1,3 @@
-#include "goal-impl.hh"
-
 #include "nix/store/build/drv-output-substitution-goal.hh"
 #include "nix/store/build/worker.hh"
 #include "nix/util/callback.hh"
@@ -31,8 +29,10 @@ Goal::Co<Goal::ExitCode> DrvOutputSubstitutionGoal::init()
         trace("trying next substituter");
 
         try {
-            outputInfo = co_await AsyncCallback<std::shared_ptr<const UnkeyedRealisation>>(
-                [sub, id = this->id](auto cb) { sub->queryRealisation(id, std::move(cb)); });
+            outputInfo = co_await callbackToTask<std::shared_ptr<const UnkeyedRealisation>>(
+                [sub, id = this->id](Callback<std::shared_ptr<const UnkeyedRealisation>> cb) {
+                    sub->queryRealisation(id, std::move(cb));
+                });
         } catch (std::exception & e) {
             printError(e.what());
             substituterFailed = true;

@@ -1,11 +1,9 @@
-#include "goal-impl.hh"
-
 #include "nix/store/build/worker.hh"
 #include "nix/store/build/substitution-goal.hh"
 #include "nix/store/nar-info.hh"
 #include "nix/store/worker-settings.hh"
 #include "nix/util/signals.hh"
-#include "nix/util/callback.hh"
+#include "nix/util/task-thread.hh"
 
 #include <array>
 
@@ -23,10 +21,7 @@ PathSubstitutionGoal::PathSubstitutionGoal(
     maintainExpectedSubstitutions = std::make_unique<MaintainCount<uint64_t>>(worker.expectedSubstitutions);
 }
 
-PathSubstitutionGoal::~PathSubstitutionGoal()
-{
-    cleanup();
-}
+PathSubstitutionGoal::~PathSubstitutionGoal() = default;
 
 Goal::Co<Goal::ExitCode> PathSubstitutionGoal::init()
 {
@@ -65,8 +60,6 @@ Goal::Co<PathSubstitutionGoal::Result> PathSubstitutionGoal::substitute()
             lastStoresException.reset();
         }
 
-        cleanup();
-
         /* The path the substituter refers to the path as. This will be
          * different when the stores have different names. */
         std::optional<StorePath> subPath;
@@ -84,8 +77,7 @@ Goal::Co<PathSubstitutionGoal::Result> PathSubstitutionGoal::substitute()
         }
 
         try {
-            info = co_await AsyncCallback<ref<const ValidPathInfo>>(
-                [sub, path = subPath.value_or(storePath)](auto cb) { sub->queryPathInfo(path, std::move(cb)); });
+            info = co_await sub->queryPathInfoAsync(subPath.value_or(storePath));
         } catch (InvalidPath &) {
             continue;
         } catch (Error & e) {
@@ -223,63 +215,50 @@ PathSubstitutionGoal::tryToRun(StorePath subPath, nix::ref<Store> sub, std::shar
     auto maintainRunningSubstitutions = std::make_unique<MaintainCount<uint64_t>>(worker.runningSubstitutions);
     worker.updateProgress();
 
-    auto promise = std::promise<void>();
-    auto future = promise.get_future();
+    /* Copy on a thread of its own. Destroying the task, for example when
+       another goal fails without --keep-going, interrupts the copy and
+       waits for the thread. The thread refers to the worker's store, which
+       outlives the worker and therefore this goal. */
+    auto copy = runInThread<void>([subPath, storePath = storePath, repair = repair, sub, &dstStore = worker.store]() {
+        Activity act(
+            *logger,
+            actSubstitute,
+            std::to_array<Logger::Field>({dstStore.printStorePath(storePath), sub->config.getHumanReadableURI()}));
+        PushActivity pact(act.id);
 
-    /* Be careful with ownership. cleanup() doesn't signal the worker thread
-       to cleanly shutdown, so the worker can die while the thread is still
-       running. That's why we use weak_ptr for everything that is owned by the
-       Worker. */
-    thr = std::thread([weakGoal = weak_from_this(),
-                       promise = std::move(promise),
-                       subPath,
-                       storePath = storePath,
-                       repair = repair,
-                       sub,
-                       maybeWaker = worker.getCrossThreadWaker(),
-                       maybeWorkerStore = worker.store.weak_from_this()]() mutable {
-        try {
-            ReceiveInterrupts receiveInterrupts;
-
-            /* The Worker might have died while we were starting up. */
-            auto workerStore = maybeWorkerStore.lock();
-            if (!workerStore)
-                return;
-
-            Activity act(
-                *logger,
-                actSubstitute,
-                std::to_array<Logger::Field>(
-                    {workerStore->printStorePath(storePath), sub->config.getHumanReadableURI()}));
-            PushActivity pact(act.id);
-
-            copyStorePath(*sub, *workerStore, subPath, repair, sub->config.isTrusted ? NoCheckSigs : CheckSigs);
-
-            promise.set_value();
-        } catch (...) {
-            promise.set_exception(std::current_exception());
-        }
-
-        /* The Worker might have already died (and the waker with it) by the
-           time we finished. N.B. if enqueueing to the waker throws, we better
-           std::terminate, since something has gone very wrong. This intentionally
-           lets the thread crash on exceptions for that reason. */
-        if (auto waker = maybeWaker.lock())
-            waker->enqueue(weakGoal);
+        copyStorePath(*sub, dstStore, subPath, repair, sub->config.isTrusted ? NoCheckSigs : CheckSigs);
     });
 
-    /* Use up the substitution slot. */
+    /* Use up the substitution slot, until the copy has finished or is
+       cancelled. */
+    struct Slot
+    {
+        Worker & worker;
+        Goal * goal;
+
+        ~Slot()
+        {
+            worker.childTerminated(goal, JobCategory::Substitution);
+        }
+    };
+
     worker.childStarted(shared_from_this(), /*channels=*/{}, /*inBuildSlot=*/true, /*respectTimeouts=*/false);
-    /* Suspend until the thread finishes. */
-    co_await waitUntilWoken();
+
+    std::exception_ptr copyError;
+    {
+        Slot slot{worker, this};
+        try {
+            co_await std::move(copy);
+        } catch (...) {
+            copyError = std::current_exception();
+        }
+    }
 
     trace("substitute finished");
 
-    thr.join();
-    worker.childTerminated(this);
-
     try {
-        future.get();
+        if (copyError)
+            std::rethrow_exception(copyError);
     } catch (std::exception & e) {
         /* Cause the parent build to fail unless --fallback is given,
            or the substitute has disappeared. The latter case behaves
@@ -322,19 +301,6 @@ PathSubstitutionGoal::tryToRun(StorePath subPath, nix::ref<Store> sub, std::shar
     worker.updateProgress();
 
     co_return SubstitutionResult::Ok;
-}
-
-void PathSubstitutionGoal::cleanup()
-{
-    try {
-        if (thr.joinable()) {
-            // FIXME: signal worker thread to quit.
-            thr.join();
-            worker.childTerminated(this, JobCategory::Substitution);
-        }
-    } catch (...) {
-        ignoreExceptionInDestructor();
-    }
 }
 
 } // namespace nix

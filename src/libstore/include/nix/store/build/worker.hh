@@ -12,6 +12,7 @@
 
 #include <functional>
 #include <future>
+#include <atomic>
 #include <thread>
 #include <queue>
 
@@ -123,16 +124,6 @@ private:
     WeakGoals awake;
 
     /**
-     * Goals waiting for a build slot.
-     */
-    WeakGoals wantingToBuild;
-
-    /**
-     * Goals waiting for a substitution slot.
-     */
-    WeakGoals wantingToSubstitute;
-
-    /**
      * Child processes currently running.
      */
     std::list<Child> children;
@@ -162,16 +153,6 @@ private:
     std::map<DrvOutput, std::weak_ptr<DrvOutputSubstitutionGoal>> drvOutputSubstitutionGoals;
 
     /**
-     * Goals sleeping for a few seconds (polling a lock).
-     */
-    WeakGoals waitingForAWhile;
-
-    /**
-     * Goals awaiting completion callbacks.
-     */
-    WeakGoals waitingForCompletion;
-
-    /**
      * Last time the goals in `waitingForAWhile` were woken up.
      */
     steady_time_point lastWokenUp;
@@ -181,7 +162,13 @@ private:
      */
     std::map<StorePath, bool> pathContentsGoodCache;
 
-    class Waker
+public:
+
+    /**
+     * The goals whose wakers woke. The waker of a goal enqueues the goal
+     * here, from any thread, and `run` moves the goals to `awake`.
+     */
+    class WakeupQueue
     {
 #ifndef _WIN32
         /**
@@ -197,11 +184,21 @@ private:
          */
         Sync<std::queue<WeakGoalPtr>> wakeupQueue_;
 
+        /**
+         * The thread that runs the worker, set by `run`. A wake on that
+         * thread does not need to interrupt `waitForInput`, because the
+         * worker is not in it.
+         */
+        std::atomic<std::thread::id> owner = std::this_thread::get_id();
+
         friend class Worker;
 
+        /**
+         * Move the enqueued goals to `worker.awake`.
+         */
         void wakeAll(Worker & worker);
 
-        Waker()
+        WakeupQueue()
         {
 #ifndef _WIN32
             wakeupPipe.create();
@@ -210,14 +207,44 @@ private:
 
     public:
         void enqueue(WeakGoalPtr goal);
+
+        /**
+         * Make `waitForInput` return, from any thread.
+         */
+        void notify();
     };
+
+private:
 
     /**
      * This is behind a ref, so that other threads can take a weak_ptr to it.
      */
-    ref<Waker> wakerState;
+    ref<WakeupQueue> wakerState;
 
 public:
+
+    /**
+     * Goals waiting for a build slot.
+     */
+    WaitQueue wantingToBuild;
+
+    /**
+     * Goals waiting for a substitution slot.
+     */
+    WaitQueue wantingToSubstitute;
+
+    /**
+     * Goals sleeping for a few seconds (polling a lock).
+     */
+    WaitQueue waitingForAWhile;
+
+    /**
+     * The number of goals that are suspended on something that the worker
+     * does not wake itself, such as a transfer or a thread. While there
+     * are such goals, the worker waits for wakes when it has nothing else
+     * to do, instead of reporting a deadlock.
+     */
+    size_t nrGoalsSuspendedElsewhere = 0;
 
     const Activity act;
     const Activity actDerivations;
@@ -335,10 +362,10 @@ public:
     void wakeUp(GoalPtr goal);
 
     /**
-     * Get a weak reference to the goal waker. It can be used to safely enqueue Goals
+     * Get a weak reference to the wakeup queue. It can be used to safely enqueue Goals
      * for wakeup from other threads.
      */
-    std::weak_ptr<Waker> getCrossThreadWaker();
+    std::weak_ptr<WakeupQueue> getCrossThreadWaker();
 
     /**
      * Return the number of local build processes currently running (but not
@@ -379,23 +406,11 @@ public:
     void childTerminated(Goal * goal, JobCategory jobCategory);
 
     /**
-     * Put `goal` to sleep until a build slot becomes available (which
-     * might be right away).
+     * Whether a goal of `category` can take a build or substitution slot
+     * now. `Goal::waitForBuildSlot` waits in `wantingToBuild` or
+     * `wantingToSubstitute` if not.
      */
-    void waitForBuildSlot(GoalPtr goal);
-
-    /**
-     * Wait for a few seconds and then retry this goal.  Used when
-     * waiting for a lock held by another process.  This kind of
-     * polling is inefficient, but POSIX doesn't really provide a way
-     * to wait for multiple locks in the main select() loop.
-     */
-    void waitForAWhile(GoalPtr goal);
-
-    /**
-     * Wait until explicitly resumed by Waker::enqueue.
-     */
-    void waitForCompletion(GoalPtr goal);
+    bool slotAvailable(JobCategory category);
 
     /**
      * Loop until the specified top-level goals have finished.
