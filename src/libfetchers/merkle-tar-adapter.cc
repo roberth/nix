@@ -130,7 +130,17 @@ struct TarAdapterImpl : merkle::TarAdapter
      * are added.
      */
     static constexpr size_t chunkSize = 1024;
-    ChunkedVector<std::optional<Hash>, chunkSize, std::numeric_limits<uint32_t>::max() / chunkSize> results;
+
+    /**
+     * The most regular files in one archive: 64 Mi. `ChunkedVector`
+     * allocates and zeroes its array of chunk pointers up front, so the
+     * bound is memory that each unpacking holds: 512 KiB. With the bound
+     * of `uint32_t`, it was 32 MiB per unpacking, all of it written: 200
+     * concurrent fetches of small tarballs peaked at 4.7 GB of RSS.
+     */
+    static constexpr size_t maxFiles = 64 * 1024 * 1024;
+
+    ChunkedVector<std::optional<Hash>, chunkSize, maxFiles / chunkSize> results;
 
     /**
      * Whether the owner cancelled the parse. Empty if it cannot.
@@ -347,6 +357,9 @@ struct TarAdapterImpl : merkle::TarAdapter
             });
             callback(counter);
         }
+
+        if (results.size() >= maxFiles)
+            throw Error("the archive has more than %d regular files", maxFiles);
 
         enterBacklog(size);
 
