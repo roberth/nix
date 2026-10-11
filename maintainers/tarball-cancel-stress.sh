@@ -28,6 +28,11 @@
 #   `build/src/nix-functional-tests/test-http-server/test-http-server` by
 #   default (`ninja -C build src/nix-functional-tests/test-http-server/test-http-server`).
 # - SEED: the seed of the random delays, for a repeatable sequence.
+# - CONCURRENT: a number N. Each run then fetches N copies of TARBALL at
+#   once, under N names, with `nix-fetchers-tarball-bench`, and a completed
+#   run must report N fetched tarballs. The cache checks are the same.
+# - BENCH: that program,
+#   `build/src/libfetchers-tests/nix-fetchers-tarball-bench` by default.
 # - _NIX_FILE_TRANSFER_BACKEND: passed on to Nix, to test the `reactor` or
 #   the `thread` backend. Give MAX_DELAY_MS too when comparing the two, so
 #   that both get the same delays.
@@ -42,6 +47,8 @@ runs=${2:-50}
 maxDelay=${3:-}
 nix=${NIX:-nix}
 server=${TEST_HTTP_SERVER:-build/src/nix-functional-tests/test-http-server/test-http-server}
+concurrent=${CONCURRENT:-0}
+bench=${BENCH:-build/src/libfetchers-tests/nix-fetchers-tarball-bench}
 RANDOM=${SEED:-$$}
 
 # The signal must arrive after Nix sets up its signal handling: a
@@ -53,17 +60,50 @@ trap 'kill "$serverPid" 2>/dev/null || true; rm -rf "$work"' EXIT
 
 mkdir -p "$work/www"
 ln -s "$tarball" "$work/www/$(basename "$tarball")"
+for i in $(seq 1 "$concurrent"); do
+    ln -s "$tarball" "$work/www/copy$i-$(basename "$tarball")"
+done
 "$server" "$work/www" "$work/port" "$work/server.log" 0 &
 serverPid=$!
 while [[ ! -s $work/port ]]; do sleep 0.1; done
 url="http://127.0.0.1:$(cat "$work/port")/$(basename "$tarball")"
+urls=()
+for i in $(seq 1 "$concurrent"); do
+    urls+=("http://127.0.0.1:$(cat "$work/port")/copy$i-$(basename "$tarball")")
+done
 
 export NIX_CONFIG="experimental-features = nix-command flakes"
 store="dummy://?read-only=false"
 
-# Fetch into a fresh cache under $work/$1, and print the NAR hash.
+# Start a fetch into a fresh cache under $work/$1, with output to $work/out
+# and $work/err: one `nix flake prefetch`, or with CONCURRENT, the
+# benchmark with all copies at once.
+startFetch() {
+    mkdir -p "$work/$1/nix"
+    if (( concurrent > 0 )); then
+        XDG_CACHE_HOME=$work/$1 "$bench" "${urls[@]}" > "$work/out" 2> "$work/err" &
+    else
+        XDG_CACHE_HOME=$work/$1 "$nix" flake prefetch --store "$store" --json "tarball+$url" \
+            > "$work/out" 2> "$work/err" &
+    fi
+    pid=$!
+}
+
+# The result of a completed fetch: the NAR hash, or with CONCURRENT, the
+# number of fetched tarballs.
+result() {
+    if (( concurrent > 0 )); then
+        sed -n 's/^fetched \([0-9]*\) of .*/\1/p' "$work/out"
+    else
+        sed 's/.*"hash":"\([^"]*\)".*/\1/' "$work/out"
+    fi
+}
+
+# Fetch into a fresh cache under $work/$1, and print the result.
 fetch() {
-    XDG_CACHE_HOME=$work/$1 "$nix" flake prefetch --store "$store" --json "tarball+$url" | sed 's/.*"hash":"\([^"]*\)".*/\1/'
+    startFetch "$1"
+    wait "$pid"
+    result
 }
 
 # Check the invariants of the cache under $work/$1.
@@ -95,7 +135,7 @@ start=${EPOCHREALTIME/[.,]/}
 expected=$(fetch reference)
 end=${EPOCHREALTIME/[.,]/}
 referenceMs=$(( (end - start) / 1000 ))
-echo "expected hash: $expected; the fetch took $referenceMs ms"
+echo "expected result: $expected; the fetch took $referenceMs ms"
 rm -rf "$work/reference"
 if [[ -z $maxDelay ]]; then
     maxDelay=$(( referenceMs * 12 / 10 ))
@@ -108,9 +148,7 @@ times=()
 
 for run in $(seq 1 "$runs"); do
     delay=$(( minDelay + RANDOM % (maxDelay - minDelay) ))
-    XDG_CACHE_HOME=$work/run "$nix" flake prefetch --store "$store" --json "tarball+$url" \
-        > "$work/out" 2> "$work/err" &
-    pid=$!
+    startFetch run
 
     sleep "$(printf '%d.%03d' $(( delay / 1000 )) $(( delay % 1000 )))"
 
@@ -121,9 +159,9 @@ for run in $(seq 1 "$runs"); do
     end=${EPOCHREALTIME/[.,]/}
 
     if (( status == 0 )); then
-        hash=$(sed 's/.*"hash":"\([^"]*\)".*/\1/' "$work/out")
+        hash=$(result)
         if [[ $hash != "$expected" ]]; then
-            echo "run $run: completed with hash $hash, expected $expected" >&2
+            echo "run $run: completed with result $hash, expected $expected" >&2
             exit 1
         fi
         completed=$(( completed + 1 ))
