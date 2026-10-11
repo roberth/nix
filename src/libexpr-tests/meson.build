@@ -83,6 +83,18 @@ this_exe = executable(
   cpp_pch : do_pch ? [ 'pch/precompiled-headers.hh' ] : [],
 )
 
+# A measurement tool for evaluations on fibers; see the comment at the top
+# of `fiber-bench.cc`. Linux only, for `/proc/self`.
+if host_machine.system() == 'linux'
+  executable(
+    'nix-expr-fiber-bench',
+    files('fiber-bench.cc'),
+    dependencies : deps_private_subproject + deps_private + deps_private_no_pkgconfig,
+    include_directories : include_dirs,
+    install : true,
+  )
+endif
+
 test(
   meson.project_name(),
   this_exe,
