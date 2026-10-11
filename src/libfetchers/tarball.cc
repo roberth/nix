@@ -118,8 +118,8 @@ Task<void> transferInto(
     out = co_await fileTransfer->transferStreaming(std::move(request), std::move(stream));
 }
 
-Task<void>
-unpackInto(std::filesystem::path repoDir, ref<TransferStream> stream, bool isZip, std::optional<gix::UnpackedTree> & out)
+Task<void> unpackInto(
+    std::filesystem::path repoDir, ref<TransferStream> stream, bool isZip, std::optional<gix::UnpackedTree> & out)
 {
     out = co_await gix::unpackIntoTarballCache(std::move(repoDir), std::move(stream), isZip);
 }
@@ -279,8 +279,7 @@ static DownloadTarballResult downloadTarball_(
         infoAttrs = cached->value;
     } else {
         infoAttrs.insert_or_assign("etag", res.etag);
-        infoAttrs.insert_or_assign(
-            "treeHash", tarballCache->dereferenceSingletonDirectory(unpacked.treeHash).gitRev());
+        infoAttrs.insert_or_assign("treeHash", tarballCache->dereferenceSingletonDirectory(unpacked.treeHash).gitRev());
         infoAttrs.insert_or_assign("lastModified", uint64_t(unpacked.lastModified));
         if (res.immutableUrl)
             infoAttrs.insert_or_assign("immutableUrl", *res.immutableUrl);

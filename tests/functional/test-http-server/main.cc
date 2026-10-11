@@ -165,8 +165,7 @@ int main(int argc, char ** argv)
     addr.sin_family = AF_INET;
     addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     addr.sin_port = 0;
-    if (::bind(listener, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) != 0
-        || ::listen(listener, 64) != 0) {
+    if (::bind(listener, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) != 0 || ::listen(listener, 64) != 0) {
         std::perror("test-http-server: listening");
         return 1;
     }

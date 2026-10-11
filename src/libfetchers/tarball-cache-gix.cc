@@ -33,7 +33,8 @@ using Oid = std::array<uint8_t, 20>;
 Oid toOid(const Hash & hash)
 {
     if (hash.algo != HashAlgorithm::SHA1)
-        throw Error("the tarball cache supports only SHA-1 Git objects, not '%s'", hash.to_string(HashFormat::SRI, true));
+        throw Error(
+            "the tarball cache supports only SHA-1 Git objects, not '%s'", hash.to_string(HashFormat::SRI, true));
     Oid oid;
     std::memcpy(oid.data(), hash.hash, oid.size());
     return oid;
@@ -84,8 +85,7 @@ struct Hooks final : rs::TarballCacheHooks
 struct InterruptToken
 {
     ::rust::Box<rs::CancelToken> token = rs::cancel_token_new();
-    std::unique_ptr<InterruptCallback> callback =
-        createInterruptCallback([token = &*token]() { token->cancel(); });
+    std::unique_ptr<InterruptCallback> callback = createInterruptCallback([token = &*token]() { token->cancel(); });
 
     InterruptToken()
     {
@@ -349,8 +349,8 @@ struct Unpacker final : rs::TarballUnpacker
     {
     }
 
-    nix_exception * run(
-        const rs::TarballCacheWriter & writer,
+    nix_exception *
+    run(const rs::TarballCacheWriter & writer,
         const rs::CancelToken & cancel,
         rs::TarballUnpackResult & out) const noexcept override
     {
@@ -425,8 +425,8 @@ namespace nix::fetchers::gix {
 
 Task<UnpackedTree> unpackIntoTarballCache(std::filesystem::path repoDir, ref<TransferStream> stream, bool isZip)
 {
-    auto result = co_await awaitCFuture<rs::TarballUnpackResult>(rs::tarball_cache_unpack(
-        (repoDir / "objects").string(), std::make_unique<Unpacker>(std::move(stream), isZip)));
+    auto result = co_await awaitCFuture<rs::TarballUnpackResult>(
+        rs::tarball_cache_unpack((repoDir / "objects").string(), std::make_unique<Unpacker>(std::move(stream), isZip)));
     co_return UnpackedTree{
         .treeHash = toHash(result.tree),
         .lastModified = (time_t) result.last_modified,
