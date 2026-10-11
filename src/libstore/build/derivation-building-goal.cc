@@ -20,6 +20,7 @@
 #include "nix/store/globals.hh"
 #include "nix/util/current-process.hh"
 #include "nix/util/reactor.hh"
+#include "nix/util/task-thread.hh"
 
 #include <chrono>
 #include <algorithm>
@@ -115,6 +116,43 @@ struct LogSink : Sink
             currentLine += '\n';
             flushLine();
         }
+    }
+};
+
+/**
+ * Run a blocking step of a build on a thread of a pool of the worker
+ * (`Worker::blockingPool`, `Worker::builderStartPool`), so that the other
+ * goals run meanwhile.
+ *
+ * A pool and not `runInThread`, because the start of a build forks the
+ * builder, which dies with the thread that forked it.
+ *
+ * `fn` may refer to the frame of the goal, for example to the builder.
+ * That is safe because a drop of the goal cancels the step and waits for
+ * it in place, before the frame is gone. A drop waits in place only where
+ * there is no cleanup scope, as under `runBlocking`; with a scope, the
+ * wait would be deferred, and the step would outlive the frame.
+ */
+template<typename T, typename F>
+Task<T> inThread(BlockingPool & pool, F fn)
+{
+    assert(!CleanupScope::current());
+    co_return co_await pool.run<T>(std::move(fn));
+}
+
+/**
+ * Tells the worker that the child of the goal is gone, also when the goal
+ * is cancelled. `Worker::childTerminated` does nothing if it was told
+ * already.
+ */
+struct ChildRegistration
+{
+    Worker & worker;
+    Goal * goal;
+
+    ~ChildRegistration()
+    {
+        worker.childTerminated(goal, JobCategory::Build);
     }
 };
 
@@ -949,6 +987,12 @@ Task<DerivationBuildingGoal::LocalBuildOutcome> DerivationBuildingGoal::buildLoc
                 fun<void()> openLogFileFn;
                 fun<void()> closeLogFileFn;
 
+                /**
+                 * The thread of the goals. The `Worker` is not
+                 * thread-safe.
+                 */
+                std::thread::id goalThread = std::this_thread::get_id();
+
                 DerivationBuildingGoalCallbacks(
                     DerivationBuildingGoal & goal, fun<void()> openLogFileFn, fun<void()> closeLogFileFn)
                     : goal{goal}
@@ -961,8 +1005,16 @@ Task<DerivationBuildingGoal::LocalBuildOutcome> DerivationBuildingGoal::buildLoc
 
                 void childTerminated() override
                 {
-                    goal.worker.childTerminated(&goal, JobCategory::Build);
+                    /* On the thread of a blocking step (`inThread`), the
+                       goal tells the worker itself, when the step is
+                       done or dropped (`ChildRegistration`). */
+                    if (std::this_thread::get_id() == goalThread)
+                        goal.worker.childTerminated(&goal, JobCategory::Build);
                 }
+
+                /* `openLogFile` and `closeLogFile` can run on the thread
+                   of a blocking step: they touch only the frame of the
+                   goal, which waits for the step. */
 
                 void openLogFile() override
                 {
@@ -1063,7 +1115,10 @@ Task<DerivationBuildingGoal::LocalBuildOutcome> DerivationBuildingGoal::buildLoc
                             );
         }
 
-        if (!builder->startBuild()) {
+        /* Forks the builder, and waits until it has set up its
+           environment: milliseconds per build. */
+        if (!co_await inThread<std::optional<Descriptor>>(
+                worker.builderStartPool, [&builder]() { return builder->startBuild(); })) {
             if (!actLock)
                 actLock = std::make_unique<Activity>(
                     *logger,
@@ -1080,6 +1135,7 @@ Task<DerivationBuildingGoal::LocalBuildOutcome> DerivationBuildingGoal::buildLoc
     actLock.reset();
 
     worker.childStarted(shared_from_this(), {builder->logChannel()}, true, true);
+    ChildRegistration childRegistration{worker, this};
 
     started();
 
@@ -1109,11 +1165,19 @@ Task<DerivationBuildingGoal::LocalBuildOutcome> DerivationBuildingGoal::buildLoc
 
     trace("build done");
 
-    auto [status, diskFull] = builder->unprepareBuild();
+    /* Reaps the builder. */
+    auto [status, diskFull] =
+        co_await inThread<BuilderExit>(worker.blockingPool, [&builder]() { return builder->unprepareBuild(); });
+
+    /* `unprepareBuild` reaped the child, but did not tell the worker on
+       that thread. Free the build slot now, as before the step ran on a
+       thread. */
+    worker.childTerminated(this);
 
     /* Check the exit status. */
     if (!statusOk(status)) {
-        builder->cleanupBuild(false);
+        /* Deletes the build directory, unless `keep-failed`. */
+        co_await inThread<void>(worker.blockingPool, [&builder]() { builder->cleanupBuild(false); });
         builder.reset();
         outputLocks.unlock();
         co_return fixupBuilderFailureErrorMessage(
@@ -1131,10 +1195,17 @@ Task<DerivationBuildingGoal::LocalBuildOutcome> DerivationBuildingGoal::buildLoc
         /* Compute the FS closure of the outputs and register them as
            being valid. With builder-rpc-v0 the builder already submitted
            the outputs, so check those instead. */
-        builtOutputs = drvOptions.getRequiredSystemFeatures(*drv).count(std::string{drvFeatureBuilderRpcV0})
-                           ? builder->checkSubmittedOutputs(localBuildCap.localStore)
-                           : builder->registerOutputs(localBuildCap.localStore);
-        builder->cleanupBuild(true);
+        bool submitted = drvOptions.getRequiredSystemFeatures(*drv).count(std::string{drvFeatureBuilderRpcV0});
+        /* Hashes and scans the outputs, which takes as long as their
+           size, registers them in the database, and deletes the build
+           directory. */
+        builtOutputs = co_await inThread<SingleDrvOutputs>(
+            worker.blockingPool, [&builder, submitted, &localStore = localBuildCap.localStore]() {
+                auto outputs =
+                    submitted ? builder->checkSubmittedOutputs(localStore) : builder->registerOutputs(localStore);
+                builder->cleanupBuild(true);
+                return outputs;
+            });
     } catch (BuilderFailureError & e) {
         builder.reset();
         outputLocks.unlock();
@@ -1195,19 +1266,8 @@ Task<void> DerivationBuildingGoal::awaitPostBuildHook(const StorePathSet & outpu
 
     /* Unregister the hook also when the goal is cancelled while the hook
        runs. Otherwise the Worker polls the pipe of a goal that is gone. */
-    struct Registration
-    {
-        Worker & worker;
-        Goal * goal;
-
-        ~Registration()
-        {
-            worker.childTerminated(goal, JobCategory::Build);
-        }
-    };
-
     worker.childStarted(shared_from_this(), {hookState->out->readSide.get()}, false, false);
-    Registration registration{worker, this};
+    ChildRegistration registration{worker, this};
 
     while (true) {
         auto event = co_await waitForChildEvent();

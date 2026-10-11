@@ -9,6 +9,7 @@
 #include "nix/store/build-result.hh"
 #include "nix/store/realisation.hh"
 #include "nix/util/muxable-pipe.hh"
+#include "nix/util/task-thread.hh"
 
 #include <array>
 #include <chrono>
@@ -282,6 +283,26 @@ public:
      * Goals waiting for their turn with the build hook.
      */
     WaitQueue wantingBuildHook;
+
+    /**
+     * Threads for the blocking steps at the end of local builds: the
+     * reaping of the builder, the registration of the outputs, and the
+     * deletion of the build directory. The goals go on while a step runs,
+     * and the steps of several builds run at once.
+     */
+    BlockingPool blockingPool;
+
+    /**
+     * The thread that starts builders, one at a time, as the thread of the
+     * goals did. Starting several at once multiplied the system time of a
+     * build of many small derivations (from 9 to 31 s with 16 at once),
+     * and did not make it faster: the kernel serializes much of the setup
+     * of the namespaces of a sandbox.
+     *
+     * The thread lives as long as the worker, because a builder dies with
+     * the thread that forked it (`BlockingPool`).
+     */
+    BlockingPool builderStartPool;
 
     uint64_t expectedBuilds = 0;
     uint64_t doneBuilds = 0;

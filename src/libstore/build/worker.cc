@@ -34,6 +34,8 @@ Worker::Worker(Store & store, Store & evalStore)
     , getSubstituters{[] {
         return nix::settings.getWorkerSettings().useSubstitutes ? getDefaultSubstituters() : std::list<ref<Store>>{};
     }}
+    , blockingPool(settings.maxBuildJobs)
+    , builderStartPool(1)
 {
 #ifdef _WIN32
     if (!ioport)
