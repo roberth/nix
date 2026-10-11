@@ -17,7 +17,11 @@ Task<Goal::ExitCode> DrvOutputSubstitutionGoal::init()
     trace("init");
 
     /* If the derivation already exists, we’re done */
-    if ((outputInfo = worker.store.queryRealisation(id))) {
+    outputInfo = co_await callbackToTask<std::shared_ptr<const UnkeyedRealisation>>(
+        [this](Callback<std::shared_ptr<const UnkeyedRealisation>> cb) {
+            worker.store.queryRealisation(id, std::move(cb));
+        });
+    if (outputInfo) {
         co_return ecSuccess;
     }
 
