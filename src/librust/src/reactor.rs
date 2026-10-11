@@ -215,6 +215,70 @@ mod stats {
 
     pub static HOOK: OnceLock<cxx::UniquePtr<super::SlowPollHook>> = OnceLock::new();
 
+    /// What a poll ran.
+    #[derive(Clone, Copy)]
+    pub enum Kind {
+        Task,
+        Posted,
+        Timer,
+        FdWatch,
+        Cleanup,
+    }
+
+    impl Kind {
+        pub const ALL: [Kind; 5] = [Kind::Task, Kind::Posted, Kind::Timer, Kind::FdWatch, Kind::Cleanup];
+
+        pub fn name(self) -> &'static str {
+            match self {
+                Kind::Task => "task",
+                Kind::Posted => "posted function",
+                Kind::Timer => "timer",
+                Kind::FdWatch => "fd watch",
+                Kind::Cleanup => "cleanup",
+            }
+        }
+    }
+
+    // The details that `_NIX_REACTOR_STATS` prints: the polls, busy time
+    // and CPU time of each kind of poll, and the `poll(2)` calls of the
+    // level-triggered emulation of `FdWatch`, which runs outside the polls.
+    // The CPU time costs a system call per poll, so only `_NIX_REACTOR_STATS`
+    // turns it on.
+
+    #[allow(clippy::declare_interior_mutable_const)]
+    const ZERO: AtomicU64 = AtomicU64::new(0);
+    pub static KIND_POLLS: [AtomicU64; 5] = [ZERO; 5];
+    pub static KIND_BUSY_US: [AtomicU64; 5] = [ZERO; 5];
+    pub static KIND_CPU_US: [AtomicU64; 5] = [ZERO; 5];
+    pub static RECHECKS: AtomicU64 = AtomicU64::new(0);
+    pub static RECHECK_CPU_US: AtomicU64 = AtomicU64::new(0);
+
+    /// Whether `_NIX_REACTOR_STATS` is set.
+    pub fn detailed() -> bool {
+        static DETAILED: OnceLock<bool> = OnceLock::new();
+        *DETAILED.get_or_init(|| std::env::var_os("_NIX_REACTOR_STATS").is_some())
+    }
+
+    /// The CPU time of the current thread, if `detailed()`.
+    pub fn thread_cpu() -> Option<Duration> {
+        if !detailed() {
+            return None;
+        }
+        #[cfg(unix)]
+        {
+            let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+            // SAFETY: `ts` is a valid `timespec` for the call to fill in.
+            if unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut ts) } == 0 {
+                return Some(Duration::new(ts.tv_sec as u64, ts.tv_nsec as u32));
+            }
+        }
+        None
+    }
+
+    pub fn micros(d: Duration) -> u64 {
+        u64::try_from(d.as_micros()).unwrap_or(u64::MAX)
+    }
+
     /// The threshold of the watchdog: `_NIX_REACTOR_SLOW_POLL_MS`, 50 ms by
     /// default.
     pub fn threshold() -> Duration {
@@ -228,14 +292,20 @@ mod stats {
         })
     }
 
-    /// Record a poll of `what` that started at `start`. Called on the
-    /// reactor thread only.
-    pub fn record(what: &str, start: Instant) {
+    /// Record a poll of `kind` that started at `start`, and at the thread
+    /// CPU time `start_cpu`. Called on the reactor thread only.
+    pub fn record(kind: Kind, start: Instant, start_cpu: Option<Duration>) {
         let end = Instant::now();
-        let micros = u64::try_from((end - start).as_micros()).unwrap_or(u64::MAX);
+        let micros = micros(end - start);
         BUSY_US.fetch_add(micros, Relaxed);
         POLLS.fetch_add(1, Relaxed);
         MAX_POLL_US.fetch_max(micros, Relaxed);
+        KIND_POLLS[kind as usize].fetch_add(1, Relaxed);
+        KIND_BUSY_US[kind as usize].fetch_add(micros, Relaxed);
+        if let (Some(start_cpu), Some(end_cpu)) = (start_cpu, thread_cpu()) {
+            KIND_CPU_US[kind as usize].fetch_add(self::micros(end_cpu.saturating_sub(start_cpu)), Relaxed);
+        }
+        let what = kind.name();
 
         // Busy time per second of uptime, attributed to the second in which
         // the poll ended.
@@ -256,17 +326,20 @@ mod stats {
     }
 }
 
-/// Run `f` as one timed poll of `what`.
-fn timed<R>(what: &str, f: impl FnOnce() -> R) -> R {
+use stats::Kind;
+
+/// Run `f` as one timed poll of `kind`.
+fn timed<R>(kind: Kind, f: impl FnOnce() -> R) -> R {
+    let start_cpu = stats::thread_cpu();
     let start = Instant::now();
     let result = f();
-    stats::record(what, start);
+    stats::record(kind, start, start_cpu);
     result
 }
 
 /// A future whose polls are timed.
 struct Timed<F> {
-    what: &'static str,
+    kind: Kind,
     future: Pin<Box<F>>,
 }
 
@@ -275,13 +348,13 @@ impl<F: Future> Future for Timed<F> {
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<F::Output> {
         let this = self.get_mut();
-        timed(this.what, || this.future.as_mut().poll(cx))
+        timed(this.kind, || this.future.as_mut().poll(cx))
     }
 }
 
-fn timed_future<F: Future>(what: &'static str, future: F) -> Timed<F> {
+fn timed_future<F: Future>(kind: Kind, future: F) -> Timed<F> {
     Timed {
-        what,
+        kind,
         future: Box::pin(future),
     }
 }
@@ -319,8 +392,9 @@ fn print_stats_at_exit() {
             s.max_busy_per_second_us / 1000,
             s.slow_polls
         );
+        print_details();
     }
-    if std::env::var_os("_NIX_REACTOR_STATS").is_some() {
+    if stats::detailed() {
         // SAFETY: `print` is an `extern "C"` function without arguments,
         // which does not unwind: `eprintln!` panics only if stderr fails,
         // and a panic in an `extern "C"` function aborts.
@@ -330,6 +404,66 @@ fn print_stats_at_exit() {
 
 #[cfg(not(unix))]
 fn print_stats_at_exit() {}
+
+/// Print the details of `_NIX_REACTOR_STATS`: each kind of poll, the
+/// rechecks of `FdWatch`, and, on Linux, the CPU time and context switches
+/// of the whole reactor thread, which include the time outside the polls,
+/// such as `epoll_wait` and the wakes of other threads.
+#[cfg(unix)]
+fn print_details() {
+    use std::sync::atomic::Ordering::Relaxed;
+    for kind in Kind::ALL {
+        let i = kind as usize;
+        eprintln!(
+            "nix: reactor: {}: {} polls, busy {} ms, CPU {} ms",
+            kind.name(),
+            stats::KIND_POLLS[i].load(Relaxed),
+            stats::KIND_BUSY_US[i].load(Relaxed) / 1000,
+            stats::KIND_CPU_US[i].load(Relaxed) / 1000,
+        );
+    }
+    eprintln!(
+        "nix: reactor: fd watch rechecks: {}, CPU {} ms",
+        stats::RECHECKS.load(Relaxed),
+        stats::RECHECK_CPU_US.load(Relaxed) / 1000,
+    );
+    #[cfg(target_os = "linux")]
+    {
+        let tid = REACTOR_TID.load(Relaxed);
+        let stat = std::fs::read_to_string(format!("/proc/self/task/{tid}/stat")).unwrap_or_default();
+        let status = std::fs::read_to_string(format!("/proc/self/task/{tid}/status")).unwrap_or_default();
+        // The fields after the name, which is in parentheses and can
+        // contain spaces: utime and stime are fields 14 and 15 of the
+        // line, so 12 and 13 after the parenthesis.
+        let fields: Vec<&str> = stat
+            .rsplit_once(')')
+            .map_or("", |(_, rest)| rest)
+            .split_whitespace()
+            .collect();
+        // SAFETY: `sysconf` has no preconditions.
+        let ticks = u64::try_from(unsafe { libc::sysconf(libc::_SC_CLK_TCK) })
+            .unwrap_or(100)
+            .max(1);
+        let ms = |i: usize| fields.get(i).and_then(|f| f.parse::<u64>().ok()).unwrap_or(0) * 1000 / ticks;
+        let switches = |key: &str| {
+            status
+                .lines()
+                .find_map(|l| l.strip_prefix(key))
+                .map_or(0, |v| v.trim().parse::<u64>().unwrap_or(0))
+        };
+        eprintln!(
+            "nix: reactor: thread: user {} ms, system {} ms, {} voluntary and {} involuntary context switches",
+            ms(11),
+            ms(12),
+            switches("voluntary_ctxt_switches:"),
+            switches("nonvoluntary_ctxt_switches:"),
+        );
+    }
+}
+
+/// The thread id of the reactor thread, for `print_details`.
+#[cfg(target_os = "linux")]
+static REACTOR_TID: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 
 struct Reactor {
     handle: Handle,
@@ -359,11 +493,14 @@ fn start_reactor() -> Reactor {
         .name("nix-reactor".to_owned())
         .spawn(move || {
             unshare_filesystem();
+            // SAFETY: `gettid` has no preconditions.
+            #[cfg(target_os = "linux")]
+            REACTOR_TID.store(unsafe { libc::gettid() }, std::sync::atomic::Ordering::Relaxed);
             let _ = started.send(thread::current().id());
             // The sender is in a static, so this never returns.
             runtime.block_on(async move {
                 while let Some(callback) = received.recv().await {
-                    timed("posted function", || callback.run());
+                    timed(Kind::Posted, || callback.run());
                 }
             });
         })
@@ -477,7 +614,7 @@ impl CleanupScope {
         let hold = self.hold();
         reactor().handle.spawn(SCOPE.scope(
             self.clone(),
-            timed_future("cleanup", async move {
+            timed_future(Kind::Cleanup, async move {
                 cleanup.await;
                 drop(hold);
             }),
@@ -579,7 +716,7 @@ impl Future for Run {
             };
             let abort = reactor()
                 .handle
-                .spawn(SCOPE.scope(scope.clone(), timed_future("task", main)))
+                .spawn(SCOPE.scope(scope.clone(), timed_future(Kind::Task, main)))
                 .abort_handle();
             this.spawned = Some(Spawned {
                 scope,
@@ -685,7 +822,7 @@ fn reactor_timer(callback: UniquePtr<ReactorCallback>) -> Box<ReactorTimer> {
                     }
                     *current = None;
                 }
-                timed("timer", || callback.run());
+                timed(Kind::Timer, || callback.run());
             }
         })
     };
@@ -876,10 +1013,16 @@ fn reactor_watch_fd(fd: i32, callback: UniquePtr<FdCallback>) -> Result<Box<FdWa
                 let Some(ready) = ready else { return };
                 let Some((r, w)) = ready else { continue };
                 // Not under the lock: the callback can drop the watch.
-                timed("fd watch", || callback.ready(r, w));
+                timed(Kind::FdWatch, || callback.ready(r, w));
                 poll_fn(|cx| {
+                    let start_cpu = stats::thread_cpu();
                     if let Some(afd) = lock(&shared.afd).as_ref() {
                         fd::clear_stale(afd, cx, r, w);
+                    }
+                    if let (Some(start_cpu), Some(end_cpu)) = (start_cpu, stats::thread_cpu()) {
+                        use std::sync::atomic::Ordering::Relaxed;
+                        stats::RECHECKS.fetch_add(1, Relaxed);
+                        stats::RECHECK_CPU_US.fetch_add(stats::micros(end_cpu.saturating_sub(start_cpu)), Relaxed);
                     }
                     Poll::Ready(())
                 })
