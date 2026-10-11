@@ -1,184 +1,77 @@
 #pragma once
 ///@file
 
-#include <set>
-#include <future>
 #include "nix/util/fun.hh"
-#include "nix/util/sync.hh"
-#include "nix/util/async.hh"
-#include "nix/util/ref.hh"
+#include "nix/util/task.hh"
 
-#include <boost/asio/io_context.hpp>
-#include <boost/asio/post.hpp>
-#include <boost/asio/strand.hpp>
-#include <boost/asio/detached.hpp>
-#include <boost/asio/awaitable.hpp>
-#include <boost/asio/co_spawn.hpp>
-#include <boost/asio/bind_executor.hpp>
-#include <boost/asio/executor_work_guard.hpp>
-
+#include <cassert>
+#include <cstddef>
+#include <limits>
 #include <queue>
 #include <set>
 
 namespace nix {
 
+/**
+ * The edges from one element of a graph, as a task.
+ *
+ * The element stays valid until the task completes or is destroyed, so
+ * the task can keep a reference to it.
+ */
 template<typename T>
-using GetEdgesAsync = fun<asio::awaitable<std::set<T>>(const T & elt)>;
+using GetEdgesTask = fun<Task<std::set<T>>(const T & elt)>;
 
-template<typename T, typename CompletionToken>
-auto computeClosure(std::set<T> startElts, std::set<T> & res, GetEdgesAsync<T> getEdges, CompletionToken token)
+/**
+ * No limit on the number of edge tasks that `computeClosure` runs at the
+ * same time.
+ */
+constexpr size_t unboundedConcurrency = std::numeric_limits<size_t>::max();
+
+/**
+ * Compute the closure of `startElts` under `getEdges`, as a task.
+ *
+ * Calls `getEdges` once for each element of the closure that is not in
+ * `known`, and runs up to `maxConcurrent` of the resulting tasks at the
+ * same time. Returns `known` plus the closure. An element of `known` is
+ * not traversed: a caller can pass the result of an earlier traversal to
+ * avoid repeating it.
+ *
+ * If an edge task throws, `computeClosure` cancels the other edge tasks
+ * and rethrows. Destroying the task cancels the edge tasks that run.
+ */
+template<typename T>
+Task<std::set<T>>
+computeClosure(std::set<T> startElts, GetEdgesTask<T> getEdges, std::set<T> known = {}, size_t maxConcurrent = 1024)
 {
-    auto initiator = [&res, startElts = std::move(startElts), getEdges = std::move(getEdges)](auto handler) {
-        auto executor = asio::make_strand(asio::get_associated_executor(handler));
+    assert(maxConcurrent > 0);
 
-        using Executor = decltype(executor);
-        using Handler = decltype(handler);
+    /* `res` is declared before `running`, so it outlives the edge tasks,
+       which refer to its elements. The nodes of a `std::set` do not move. */
+    std::set<T> res = std::move(known);
+    std::queue<const T *> todo;
+    TaskSet<std::set<T>> running;
 
-        /* Hand-rolled dynamic async graph traversal. ASIO/Cobalt and standard
-         * C++ will get channels and task groups at some point, but this will
-         * have to suffice for now. */
-        struct State : std::enable_shared_from_this<State>
-        {
-            Executor executor;
-            GetEdgesAsync<T> getEdges;
-            Handler handler;
-            std::set<T> & res;
-            /**
-             * Needed to keep the ctx.run() alive because actual work might be happening on another thread
-             * (like with FileTransfer case).
-             */
-            asio::executor_work_guard<decltype(State::executor)> workGuard;
-            std::size_t pending = 0;
-            /**
-             * Amount of coroutines currently in flight.
-             */
-            std::size_t inFlight = 0;
-            /**
-             * Maximum number of concurrent coroutines. Implements primitive rate limiting.
-             */
-            std::size_t maxConcurrent = 1024;
-            /**
-             * Nodes to handle next.
-             */
-            std::queue<T> todo;
-            /**
-             * First error encountered from getEdges. Gets rethrown on `complete` when all coroutines have drained.
-             * It's only when all the coroutines have finished that we can release our work guard.
-             */
-            std::exception_ptr error;
-
-            State(Executor executor_, GetEdgesAsync<T> getEdges, Handler handler, std::set<T> & res)
-                : executor(executor_)
-                , getEdges(std::move(getEdges))
-                , handler(std::move(handler))
-                , res(res)
-                , workGuard(asio::make_work_guard(executor_))
-            {
-            }
-
-            void complete(std::exception_ptr ex)
-            {
-                workGuard.reset(); /* We are done and we can release the lock. */
-                asio::post(executor, [state = this->shared_from_this(), ex] { state->handler(ex); });
-            }
-
-            void fail(std::exception_ptr ex)
-            {
-                if (!error)
-                    error = ex;
-            }
-
-            void enqueue(const std::set<T> & elts)
-            {
-                for (const auto & elt : elts)
-                    enqueue(elt);
-            }
-
-            void spawnWorker(const T & elt)
-            {
-                ++inFlight;
-                asio::post(executor, [state = this->shared_from_this(), elt] {
-                    asio::co_spawn(
-                        state->executor,
-                        [state, elt]() -> asio::awaitable<void> {
-                            try {
-                                state->enqueue(co_await state->getEdges(elt));
-                            } catch (...) {
-                                state->fail(std::current_exception());
-                            }
-                            state->onWorkDone();
-                        },
-                        asio::detached);
-                });
-            }
-
-            void onWorkDone()
-            {
-                --inFlight;
-                --pending;
-
-                if (!todo.empty() && !error) {
-                    auto next = std::move(todo.front());
-                    todo.pop();
-                    asio::post(executor, [state = this->shared_from_this(), next = std::move(next)]() mutable {
-                        state->spawnWorker(next);
-                    });
-                } else {
-                    if (error) {
-                        /* Discard all remaining work in case we failed. */
-                        pending -= todo.size();
-                        todo = {};
-                    }
-
-                    if (pending == 0)
-                        complete(error);
-                }
-            }
-
-            void enqueue(const T & elt)
-            {
-                if (error)
-                    return;
-
-                if (!res.insert(elt).second)
-                    return;
-
-                ++pending;
-
-                if (inFlight < maxConcurrent) {
-                    spawnWorker(elt);
-                } else {
-                    todo.push(elt);
-                }
-            }
-        };
-
-        auto state = make_ref<State>(executor, std::move(getEdges), std::move(handler), res);
-        if (startElts.empty()) {
-            /* No work to do. */
-            state->complete(std::exception_ptr{});
-            return;
-        }
-
-        asio::post(executor, [state, startElts = std::move(startElts)] { state->enqueue(startElts); });
+    auto enqueue = [&](std::set<T> elts) {
+        for (auto & elt : elts)
+            if (auto [i, inserted] = res.insert(elt); inserted)
+                todo.push(&*i);
     };
 
-    return asio::async_initiate<CompletionToken, void(std::exception_ptr)>(std::move(initiator), token);
-}
+    enqueue(std::move(startElts));
 
-template<typename T>
-void computeClosure(std::set<T> startElts, std::set<T> & res, GetEdgesAsync<T> getEdges)
-{
-    asio::io_context ctx;
-    std::exception_ptr ex = nullptr;
-    computeClosure(
-        std::move(startElts),
-        res,
-        std::move(getEdges),
-        asio::bind_executor(ctx.get_executor(), [&](std::exception_ptr ex2) { ex = ex2; }));
-    ctx.run();
-    if (ex)
-        std::rethrow_exception(ex);
+    while (true) {
+        while (!todo.empty() && running.size() < maxConcurrent) {
+            running.push(getEdges(*todo.front()));
+            todo.pop();
+        }
+        auto edges = co_await running.next();
+        if (!edges)
+            break;
+        enqueue(std::move(*edges));
+    }
+
+    /* `running` is empty, so nothing refers to `res` any more. */
+    co_return std::move(res);
 }
 
 } // namespace nix

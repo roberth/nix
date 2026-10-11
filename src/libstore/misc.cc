@@ -10,7 +10,6 @@
 #include "nix/util/topo-sort.hh"
 #include "nix/util/callback.hh"
 #include "nix/util/closure.hh"
-#include "nix/util/task-asio.hh"
 #include "nix/store/filetransfer.hh"
 #include "nix/util/strings.hh"
 #include "nix/util/json-utils.hh"
@@ -26,9 +25,9 @@ void Store::computeFSClosure(
     bool includeOutputs,
     bool includeDerivers)
 {
-    std::function<asio::awaitable<StorePathSet>(const StorePath & path)> queryDeps;
+    std::function<Task<StorePathSet>(const StorePath & path)> queryDeps;
     if (flipDirection)
-        queryDeps = [this, includeOutputs, includeDerivers](const StorePath & path) -> asio::awaitable<StorePathSet> {
+        queryDeps = [this, includeOutputs, includeDerivers](const StorePath & path) -> Task<StorePathSet> {
             StorePathSet res;
             StorePathSet referrers;
             queryReferrers(path, referrers);
@@ -47,10 +46,9 @@ void Store::computeFSClosure(
             co_return res;
         };
     else
-        queryDeps = [this, includeOutputs, includeDerivers](const StorePath & path) -> asio::awaitable<StorePathSet> {
+        queryDeps = [this, includeOutputs, includeDerivers](const StorePath & path) -> Task<StorePathSet> {
             StorePathSet res;
-            auto info = co_await callbackToAwaitable<ref<const ValidPathInfo>>(
-                [this, path](Callback<ref<const ValidPathInfo>> cb) { queryPathInfo(path, std::move(cb)); });
+            auto info = co_await queryPathInfoAsync(path);
 
             for (auto & ref : info->references)
                 if (ref != path)
@@ -66,7 +64,9 @@ void Store::computeFSClosure(
             co_return res;
         };
 
-    computeClosure<StorePath>(startPaths, paths_, GetEdgesAsync<StorePath>(queryDeps));
+    /* Assign only on success, so that an error leaves `paths_` as it was
+       instead of half-filled. */
+    paths_ = runBlocking(computeClosure<StorePath>(startPaths, GetEdgesTask<StorePath>(std::move(queryDeps)), paths_));
 }
 
 void Store::computeFSClosure(
@@ -202,12 +202,12 @@ MissingPaths Store::queryMissing(const std::vector<DerivedPath> & targets)
             edges.insert(DerivedPath::Built{make_ref<SingleDerivedPath>(inputDrv), std::move(outputs)});
     };
 
-    GetEdgesAsync<DerivedPath> getEdges = [&](const DerivedPath & req) -> asio::awaitable<std::set<DerivedPath>> {
+    GetEdgesTask<DerivedPath> getEdges = [&](const DerivedPath & req) -> Task<std::set<DerivedPath>> {
         std::set<DerivedPath> edges;
 
         co_await std::visit(
             overloaded{
-                [&](const DerivedPath::Built & bfd) -> asio::awaitable<void> {
+                [&](const DerivedPath::Built & bfd) -> Task<void> {
                     auto drvPathP = std::get_if<DerivedPath::Opaque>(&*bfd.drvPath);
                     if (!drvPathP) {
                         // TODO make work in this case.
@@ -284,41 +284,29 @@ MissingPaths Store::queryMissing(const std::vector<DerivedPath> & targets)
 
                     if (knownOutputPaths && settings.getWorkerSettings().useSubstitutes
                         && drvOptions.substitutesAllowed(settings.getWorkerSettings())) {
-                        bool mustBuild = false;
-                        StorePathSet substitutable;
                         auto * cap = getDerivationCA(*drv);
 
-                        /* Query all outputs concurrently (but not in parallel,
-                           computeClosure runs on a strand). If any one is not
+                        /* Query all outputs concurrently. If any one is not
                            substitutable then discard all other outputs. */
-                        co_await forEachAsync(invalid, [&](const StorePath & outPath) -> asio::awaitable<void> {
-                            if (mustBuild)
-                                co_return;
+                        StorePathCAMap query;
+                        for (auto & outPath : invalid)
+                            query.emplace(outPath, cap ? std::optional{*cap} : std::nullopt);
+                        auto infos = co_await querySubstitutablePathInfosFromSubstituters(*this, std::move(query));
 
-                            auto infos = co_await taskToAwaitable(querySubstitutablePathInfosFromSubstituters(
-                                *this, {{outPath, cap ? std::optional{*cap} : std::nullopt}}));
-
-                            if (infos.empty())
-                                mustBuild = true;
-                            else
-                                substitutable.insert(outPath);
-                        });
-
-                        if (mustBuild)
+                        if (infos.size() != invalid.size())
                             mustBuildDrv(drvPath, *drv, edges);
                         else
-                            for (auto & path : substitutable)
+                            for (auto & path : invalid)
                                 edges.insert(DerivedPath::Opaque{path});
                     } else {
                         mustBuildDrv(drvPath, *drv, edges);
                     }
                 },
-                [&](const DerivedPath::Opaque & bo) -> asio::awaitable<void> {
+                [&](const DerivedPath::Opaque & bo) -> Task<void> {
                     if (isValidPath(bo.path))
                         co_return;
 
-                    auto infos = co_await taskToAwaitable(
-                        querySubstitutablePathInfosFromSubstituters(*this, {{bo.path, std::nullopt}}));
+                    auto infos = co_await querySubstitutablePathInfosFromSubstituters(*this, {{bo.path, std::nullopt}});
 
                     if (infos.empty()) {
                         res.unknown.insert(bo.path);
@@ -341,8 +329,7 @@ MissingPaths Store::queryMissing(const std::vector<DerivedPath> & targets)
     };
 
     std::set<DerivedPath> startElts(targets.begin(), targets.end());
-    std::set<DerivedPath> visited;
-    computeClosure(std::move(startElts), visited, std::move(getEdges));
+    runBlocking(computeClosure(std::move(startElts), std::move(getEdges)));
 
     return res;
 }
