@@ -1,13 +1,18 @@
 #include "nix/fetchers/merkle-tar-adapter.hh"
 #include "nix/util/chunked-vector.hh"
 #include "nix/util/signals.hh"
-#include "nix/util/thread-pool.hh"
 #include "nix/util/strings.hh"
 #include "nix/util/util.hh"
 
+#ifdef __linux__
+#  include "nix/util/linux-namespaces.hh"
+#endif
+
+#include <atomic>
 #include <cassert>
 #include <chrono>
 #include <condition_variable>
+#include <deque>
 #include <mutex>
 #include <map>
 #include <optional>
@@ -147,17 +152,26 @@ struct TarAdapterImpl : merkle::TarAdapter
      */
     std::function<bool()> isCancelled;
 
-    static constexpr size_t maxWorkers = 10;
-
-    static size_t numWorkers()
+    /**
+     * The default bound of the backlog in files: 2 files for each of 10
+     * writers, or fewer on a machine with fewer CPUs.
+     *
+     * The bound is also the number of files of one archive that are
+     * written at the same time. It stays what it was with a pool of 10
+     * writers per archive, because each file that is being written
+     * occupies a separate writer in the store, which is not necessarily
+     * free to have around: the libgit2 implementation writes a pack for
+     * each.
+     */
+    static size_t defaultMaxFiles()
     {
-        return std::max<size_t>(std::min<size_t>(std::thread::hardware_concurrency(), maxWorkers), 1);
+        return 2 * std::max<size_t>(std::min<size_t>(std::thread::hardware_concurrency(), 10), 1);
     }
 
     merkle::TarAdapterBacklog limits;
 
     /**
-     * The files that were parsed and handed to `workers`, but are not
+     * The files that were parsed and handed to `writers`, but are not
      * written yet, and their total size.
      *
      * Without a bound, the parse runs ahead of the writers whenever it is
@@ -171,10 +185,10 @@ struct TarAdapterImpl : merkle::TarAdapter
         uint64_t bytes = 0;
 
         /**
-         * A writer failed. `workers` has stopped, and the files that are
-         * still queued will not be written.
+         * The exception of the first writer that failed. The files that
+         * are still queued are not written.
          */
-        bool failed = false;
+        std::exception_ptr error;
     };
 
     std::mutex backlogMutex;
@@ -182,29 +196,69 @@ struct TarAdapterImpl : merkle::TarAdapter
     Backlog backlog;
 
     /**
+     * Whether a writer failed, or the adapter is being destroyed: the
+     * files that are still queued are not written. Atomic, so that the
+     * writers can check it without `backlogMutex`.
+     */
+    std::atomic<bool> stopWriting = false;
+
+    /**
      * Writes the files as they are parsed, so that hashing them overlaps
      * with parsing the rest of the archive.
-     *
-     * Bounded, because each worker occupies a separate writer in the
-     * store, which is not necessarily free to have around.
-     *
-     * Declared last, so that the workers are joined before anything they
-     * write into is destroyed.
      */
-    ThreadPool workers{numWorkers()};
+    merkle::TarWriterPool & writers;
 
     TarAdapterImpl(
         merkle::FileSinkBuilder & store,
         std::function<bool()> isCancelled,
-        std::optional<merkle::TarAdapterBacklog> backlog)
+        std::optional<merkle::TarAdapterBacklog> backlog,
+        merkle::TarWriterPool & writers)
         : store(store)
         , isCancelled(std::move(isCancelled))
         , limits(backlog.value_or(
               merkle::TarAdapterBacklog{
-                  .maxFiles = 2 * numWorkers(),
+                  .maxFiles = defaultMaxFiles(),
                   .maxBytes = 64 * 1024 * 1024,
               }))
+        , writers(writers)
     {
+    }
+
+    /**
+     * The writers refer to this adapter and to the sinks of `store`, so
+     * wait for them; the files that are still queued are skipped.
+     */
+    ~TarAdapterImpl()
+    {
+        stopWriting = true;
+        waitForWriters();
+    }
+
+    /**
+     * Wait until no file of this adapter is queued or being written.
+     *
+     * When the files are not to be written any more, take them out of the
+     * queue of the pool, which other adapters share, and skip them here:
+     * a cancellation then waits only for the files that a thread already
+     * writes, not for the files of other archives before ours.
+     */
+    void waitForWriters()
+    {
+        bool taken = false;
+        std::unique_lock lock(backlogMutex);
+        while (backlog.files != 0) {
+            if (!taken && (stopWriting || (isCancelled && isCancelled()))) {
+                taken = true;
+                lock.unlock();
+                for (auto & work : writers.takeQueued(this))
+                    work();
+                lock.lock();
+                continue;
+            }
+            /* Wake up regularly to see a cancellation, which does not
+               notify `backlogChanged`. */
+            backlogChanged.wait_for(lock, std::chrono::milliseconds(10));
+        }
     }
 
     void checkCancelled() const
@@ -217,19 +271,15 @@ struct TarAdapterImpl : merkle::TarAdapter
      * Wait until the backlog has room for a file of `size` bytes, and
      * count the file in it.
      *
-     * If a writer failed, rethrow its exception instead: the workers have
-     * stopped, so the backlog would never shrink.
+     * If a writer failed, rethrow its exception instead: the files after
+     * it are not written.
      */
     void enterBacklog(uint64_t size)
     {
         std::unique_lock lock(backlogMutex);
         while (true) {
-            if (backlog.failed) {
-                lock.unlock();
-                /* Rethrows the exception of the writer. */
-                workers.process();
-                unreachable();
-            }
+            if (backlog.error)
+                std::rethrow_exception(backlog.error);
             if (backlog.files == 0 || (backlog.files < limits.maxFiles && backlog.bytes + size <= limits.maxBytes))
                 break;
             /* Wake up regularly to see a cancellation, which does not
@@ -241,16 +291,52 @@ struct TarAdapterImpl : merkle::TarAdapter
         backlog.bytes += size;
     }
 
-    void leaveBacklog(uint64_t size, bool failed)
+    /**
+     * Take a file out of the backlog. This is the last access of a writer
+     * to the adapter: once the backlog is empty, the destructor or
+     * `flush()` returns, and the adapter can be gone. So notify under the
+     * lock, before the waiter can see the empty backlog.
+     */
+    void leaveBacklog(uint64_t size, std::exception_ptr error)
     {
-        {
-            std::lock_guard lock(backlogMutex);
-            backlog.files--;
-            backlog.bytes -= size;
-            if (failed)
-                backlog.failed = true;
+        std::lock_guard lock(backlogMutex);
+        backlog.files--;
+        backlog.bytes -= size;
+        if (error && !backlog.error) {
+            backlog.error = std::move(error);
+            stopWriting = true;
         }
         backlogChanged.notify_all();
+    }
+
+    /**
+     * Write one file, on a thread of `writers`.
+     */
+    void writeFile(
+        std::unique_ptr<merkle::RegularFileSinkWithFinalize> sink, std::optional<Hash> & hash, uint64_t size) noexcept
+    {
+        std::exception_ptr error;
+        /* A cancelled parse, a failed writer or the destruction of the
+           adapter skips the files that are still queued. */
+        if (!stopWriting && !(isCancelled && isCancelled())) {
+#ifndef _WIN32
+            /* Like a `ThreadPool`: a `checkInterrupt()` in the store stops
+               once another file failed. */
+            unix::interruptCheck = [this]() { return stopWriting.load(); };
+#endif
+            try {
+                hash = std::move(*sink).finalize();
+            } catch (...) {
+                error = std::current_exception();
+            }
+#ifndef _WIN32
+            unix::interruptCheck = nullptr;
+#endif
+        }
+        /* The sink belongs to `store`, which may be gone once the backlog
+           is empty. */
+        sink.reset();
+        leaveBacklog(size, std::move(error));
     }
 
     /**
@@ -369,29 +455,13 @@ struct TarAdapterImpl : merkle::TarAdapter
            soon as it is done. */
         auto & hash = results.add().first;
         try {
-            workers.enqueue([this, sink = std::move(sink), &hash, size]() {
-                /* A cancelled parse writes none of the files that are
-                   still queued. Skip the file instead of throwing: the
-                   pool prints every exception after the first, and
-                   `flush()` throws `Cancelled` once. */
-                if (isCancelled && isCancelled()) {
-                    leaveBacklog(size, false);
-                    return;
-                }
-                try {
-                    hash = std::move(*sink).finalize();
-                } catch (...) {
-                    leaveBacklog(size, true);
-                    throw;
-                }
-                leaveBacklog(size, false);
+            writers.enqueue(this, [this, sink = std::move(sink), &hash, size]() mutable noexcept {
+                writeFile(std::move(sink), hash, size);
             });
-        } catch (ThreadPoolShutDown &) {
-            /* A writer failed after `enterBacklog()`. Rethrow its
-               exception. */
-            leaveBacklog(size, true);
-            workers.process();
-            unreachable();
+        } catch (...) {
+            /* The pool could not start a thread. */
+            leaveBacklog(size, std::current_exception());
+            throw;
         }
 
         addNode(path, File{.hash = &hash, .executable = isExecutable});
@@ -445,12 +515,17 @@ struct TarAdapterImpl : merkle::TarAdapter
 
     merkle::TreeEntry flush() override
     {
-        /* Wait for the files to be written. An exception in a worker is
+        /* Wait for the files to be written. An exception in a writer is
            propagated here, so every hash below is filled in. A
-           cancellation stops the workers before their next file, and the
+           cancellation stops the writers before their next file, and the
            queue has at most `limits.maxFiles` files, so this does not
            wait for a backlog of files to drain. */
-        workers.process();
+        waitForWriters();
+        {
+            std::lock_guard lock(backlogMutex);
+            if (backlog.error)
+                std::rethrow_exception(backlog.error);
+        }
 
         /* Skipped files have no hash. */
         checkCancelled();
@@ -494,10 +569,137 @@ struct TarAdapterImpl : merkle::TarAdapter
 
 namespace nix::merkle {
 
-ref<TarAdapter>
-makeTarSink(FileSinkBuilder & store, std::function<bool()> isCancelled, std::optional<TarAdapterBacklog> backlog)
+struct TarWriterPool::State
 {
-    return make_ref<tar::TarAdapterImpl>(store, std::move(isCancelled), backlog);
+    size_t maxThreads;
+
+    std::mutex mutex;
+    std::condition_variable workAvailable;
+
+    struct Queued
+    {
+        const void * owner;
+        Work work;
+    };
+
+    std::deque<Queued> queue;
+    std::vector<std::thread> threads;
+
+    /**
+     * The threads that wait for work.
+     */
+    size_t idle = 0;
+
+    bool quit = false;
+
+    void run() noexcept
+    {
+#ifdef __linux__
+        /* The threads of the shared pool live as long as the process.
+           Like the other long-lived threads, they must not keep the main
+           thread from unsharing its mount namespace. */
+        try {
+            tryUnshareFilesystem();
+        } catch (...) {
+            ignoreExceptionInDestructor();
+        }
+#endif
+        /* Like a `ThreadPool`: a user interrupt reaches a writer that
+           waits in a system call. */
+        ReceiveInterrupts receiveInterrupts;
+
+        std::unique_lock lock(mutex);
+        while (true) {
+            if (queue.empty()) {
+                if (quit)
+                    return;
+                ++idle;
+                workAvailable.wait(lock, [&] { return quit || !queue.empty(); });
+                --idle;
+                continue;
+            }
+            {
+                auto work = std::move(queue.front().work);
+                queue.pop_front();
+                lock.unlock();
+                work();
+                /* `work` and what it owns go before the lock is taken
+                   again. */
+            }
+            lock.lock();
+        }
+    }
+};
+
+TarWriterPool::TarWriterPool(size_t maxThreads)
+    : state(std::make_unique<State>())
+{
+    state->maxThreads = std::max<size_t>(maxThreads, 1);
+}
+
+TarWriterPool::~TarWriterPool()
+{
+    std::vector<std::thread> threads;
+    {
+        std::lock_guard lock(state->mutex);
+        state->quit = true;
+        threads = std::move(state->threads);
+    }
+    state->workAvailable.notify_all();
+    for (auto & thread : threads)
+        thread.join();
+}
+
+TarWriterPool & TarWriterPool::shared()
+{
+    /* Never destroyed: an adapter can be in use while static destructors
+       run, and the threads would have to be joined at exit. */
+    static auto * pool = new TarWriterPool(std::thread::hardware_concurrency());
+    return *pool;
+}
+
+std::vector<TarWriterPool::Work> TarWriterPool::takeQueued(const void * owner)
+{
+    std::vector<Work> taken;
+    std::lock_guard lock(state->mutex);
+    std::erase_if(state->queue, [&](State::Queued & queued) {
+        if (queued.owner != owner)
+            return false;
+        taken.push_back(std::move(queued.work));
+        return true;
+    });
+    return taken;
+}
+
+void TarWriterPool::enqueue(const void * owner, Work work)
+{
+    {
+        std::lock_guard lock(state->mutex);
+        state->queue.push_back({owner, std::move(work)});
+        /* Start a thread when the idle threads cannot take all the work,
+           also when some of them have been notified and do not run yet. */
+        if (state->queue.size() > state->idle && state->threads.size() < state->maxThreads) {
+            try {
+                state->threads.emplace_back([s = state.get()]() { s->run(); });
+            } catch (...) {
+                /* Without any thread, the work would never run. */
+                if (state->threads.empty()) {
+                    state->queue.pop_back();
+                    throw;
+                }
+            }
+        }
+    }
+    state->workAvailable.notify_one();
+}
+
+ref<TarAdapter> makeTarSink(
+    FileSinkBuilder & store,
+    std::function<bool()> isCancelled,
+    std::optional<TarAdapterBacklog> backlog,
+    TarWriterPool & writers)
+{
+    return make_ref<tar::TarAdapterImpl>(store, std::move(isCancelled), backlog, writers);
 }
 
 } // namespace nix::merkle

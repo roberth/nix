@@ -5,10 +5,13 @@
 #include "nix/util/ref.hh"
 #include "nix/util/tarfile.hh"
 
+#include <boost/compat/move_only_function.hpp>
+
 #include <cstdint>
 #include <functional>
 #include <memory>
 #include <optional>
+#include <vector>
 
 namespace nix::merkle {
 
@@ -97,6 +100,61 @@ struct TarAdapterBacklog
 };
 
 /**
+ * The threads that write the files of tar adapters, in the order in which
+ * the adapters hand them over.
+ *
+ * All adapters of the process share one pool (`shared()`), so that the
+ * number of writer threads does not grow with the number of archives that
+ * are unpacked at once. With a pool per adapter, 200 concurrent fetches
+ * ran more than 1000 threads, and the threads made each write more
+ * expensive; see "Many fetches at once" in the developer documentation of
+ * the tarball cache.
+ */
+class TarWriterPool
+{
+public:
+    /**
+     * A pool of at most `maxThreads` threads, at least 1. It starts a
+     * thread when work is queued and no thread is idle.
+     */
+    explicit TarWriterPool(size_t maxThreads);
+
+    /**
+     * Waits for the threads, which finish the work that they have started.
+     * Every adapter that uses the pool must be destroyed before.
+     */
+    ~TarWriterPool();
+
+    /**
+     * The pool of the process: one thread per CPU. It is never destroyed,
+     * so its threads live as long as the process.
+     */
+    static TarWriterPool & shared();
+
+    /**
+     * Move-only, so that a work item can own the sink that it finishes.
+     */
+    using Work = boost::compat::move_only_function<void()>;
+
+    /**
+     * Run `work` on a thread of the pool, for `owner`. `work` must not
+     * throw.
+     */
+    void enqueue(const void * owner, Work work);
+
+    /**
+     * Remove the work of `owner` that no thread has started, and return
+     * it. An owner that stops runs the work itself, so that it does not
+     * wait for the work of other owners that is queued before its own.
+     */
+    std::vector<Work> takeQueued(const void * owner);
+
+private:
+    struct State;
+    std::unique_ptr<State> state;
+};
+
+/**
  * Create a TarSink that builds a merkle tree from path-based tar entries.
  *
  * @param store Factory for creating merkle sinks
@@ -107,12 +165,16 @@ struct TarAdapterBacklog
  * that are queued but not started are not written. Empty for a parse that
  * cannot be cancelled.
  *
- * @param backlog The bounds of the backlog. The default holds at most two
- * files per writer thread, and at most 64 MiB.
+ * @param backlog The bounds of the backlog. The default holds at most 20
+ * files and at most 64 MiB.
+ *
+ * @param writers The threads that write the files; by default the pool of
+ * the process. It must outlive the adapter.
  */
 ref<TarAdapter> makeTarSink(
     FileSinkBuilder & store,
     std::function<bool()> isCancelled = {},
-    std::optional<TarAdapterBacklog> backlog = std::nullopt);
+    std::optional<TarAdapterBacklog> backlog = std::nullopt,
+    TarWriterPool & writers = TarWriterPool::shared());
 
 } // namespace nix::merkle

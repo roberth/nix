@@ -129,9 +129,83 @@ TEST(TarAdapterCancel, theBacklogIsBoundedInBytes)
 }
 
 /**
- * Writing all files takes 200 × 100 ms / at most 10 writers ≥ 2 s. A
- * cancellation must not wait for that: neither for files that are still to
- * be parsed, nor for files that are queued.
+ * A pool of one thread is what a machine with one CPU gets. A full backlog
+ * must still drain: when the parse thread had to be one of the writers, the
+ * parse waited for room forever after the second file.
+ */
+TEST(TarAdapterCancel, onePoolThreadWritesAllFiles)
+{
+    SlowStore store(1ms);
+    TarWriterPool writers(1);
+    /* Ends a parse that hangs, so that the test fails instead. */
+    std::atomic<bool> cancelled = false;
+    auto adapter = makeTarSink(
+        store, [&]() { return cancelled.load(); }, TarAdapterBacklog{.maxFiles = 2, .maxBytes = 1 << 20}, writers);
+
+    auto result = parseOnThread(*adapter, 20);
+    if (result.wait_for(10s) != std::future_status::ready)
+        cancelled = true;
+
+    EXPECT_EQ(result.get(), "done");
+    EXPECT_EQ(store.written, 20);
+}
+
+/**
+ * Concurrent archives share the threads of one pool, and each waits only
+ * for its own files.
+ */
+TEST(TarAdapterCancel, adaptersShareAPool)
+{
+    TarWriterPool writers(2);
+    SlowStore store1(1ms);
+    SlowStore store2(1ms);
+    auto adapter1 = makeTarSink(store1, {}, std::nullopt, writers);
+    auto adapter2 = makeTarSink(store2, {}, std::nullopt, writers);
+
+    auto result1 = parseOnThread(*adapter1, 50);
+    auto result2 = parseOnThread(*adapter2, 30);
+
+    EXPECT_EQ(result1.get(), "done");
+    EXPECT_EQ(result2.get(), "done");
+    EXPECT_EQ(store1.written, 50);
+    EXPECT_EQ(store2.written, 30);
+}
+
+/**
+ * A cancelled archive does not wait for the files of another archive that
+ * are queued in the shared pool before its own.
+ */
+TEST(TarAdapterCancel, aCancellationDoesNotWaitForOtherArchives)
+{
+    TarWriterPool writers(1);
+    /* 10 queued files of 100 ms: 1 s of work before any file of `adapter`. */
+    SlowStore otherStore(100ms);
+    auto other = makeTarSink(otherStore, {}, TarAdapterBacklog{.maxFiles = 10, .maxBytes = 1 << 20}, writers);
+    auto otherResult = parseOnThread(*other, 10);
+    std::this_thread::sleep_for(50ms);
+
+    SlowStore store(1ms);
+    std::atomic<bool> cancelled = false;
+    auto adapter = makeTarSink(store, [&]() { return cancelled.load(); }, std::nullopt, writers);
+    auto result = parseOnThread(*adapter, 5);
+    std::this_thread::sleep_for(50ms);
+
+    auto start = std::chrono::steady_clock::now();
+    cancelled = true;
+    auto outcome = result.get();
+    auto elapsed = std::chrono::steady_clock::now() - start;
+
+    EXPECT_EQ(outcome, "Cancelled");
+    EXPECT_EQ(store.written, 0);
+    EXPECT_LT(elapsed, 300ms);
+    EXPECT_EQ(otherResult.get(), "done");
+    EXPECT_EQ(otherStore.written, 10);
+}
+
+/**
+ * Writing all files takes 200 × 100 ms / at most 20 files in the backlog
+ * ≥ 1 s. A cancellation must not wait for that: neither for files that are
+ * still to be parsed, nor for files that are queued.
  */
 TEST(TarAdapterCancel, aCancellationDoesNotWaitForTheQueuedFiles)
 {
