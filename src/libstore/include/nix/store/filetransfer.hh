@@ -595,6 +595,14 @@ ref<FileTransfer> getFileTransfer();
  */
 ref<FileTransfer> makeFileTransfer(const FileTransferSettings & settings = fileTransferSettings);
 
+/**
+ * Whether curl runs on the reactor (`nix/util/reactor.hh`), or on a thread
+ * of its own that polls. The environment variable
+ * `_NIX_FILE_TRANSFER_BACKEND` selects it: `reactor` (the default, except
+ * on Windows) or `thread`.
+ */
+bool fileTransferUsesReactor();
+
 class FileTransferError final : public CloneableError<FileTransferError, Error>
 {
 private:

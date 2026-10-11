@@ -7,6 +7,7 @@
 #include "nix/util/signals.hh"
 #include "nix/util/task-thread.hh"
 #include "nix/util/logging.hh"
+#include "nix/util/reactor.hh"
 #include "nix/util/util.hh"
 #include "nix/util/socket.hh"
 
@@ -28,6 +29,7 @@
 #include <algorithm>
 #include <array>
 #include <cstring>
+#include <future>
 #include <queue>
 #include <random>
 #include <thread>
@@ -164,9 +166,16 @@ bool curlSupportsHttp3()
 
 } // namespace
 
-struct curlFileTransfer : public FileTransfer
+struct curlFileTransfer : public FileTransfer, public std::enable_shared_from_this<curlFileTransfer>
 {
     const FileTransferSettings & settings;
+
+    /**
+     * What drives curl: a thread of its own that polls, or the reactor,
+     * which calls curl when a socket or the timer of curl is ready. See
+     * `fileTransferUsesReactor()`.
+     */
+    const bool onReactor = fileTransferUsesReactor();
 
     const bool http3Supported = curlSupportsHttp3();
 
@@ -1039,6 +1048,40 @@ struct curlFileTransfer : public FileTransfer
 
     std::thread workerThread;
 
+    /**
+     * The transfers that are in curl. Only the thread that drives curl
+     * uses it.
+     */
+    std::map<CURL *, std::shared_ptr<TransferItem>> items;
+
+    /**
+     * The state of the reactor backend. Only the reactor thread uses it.
+     */
+    struct OnReactor
+    {
+        /**
+         * The timer of curl (`CURLMOPT_TIMERFUNCTION`).
+         */
+        std::unique_ptr<ReactorTimer> curlTimer;
+
+        /**
+         * Starts queued transfers when their embargo ends, or when the
+         * queue had no room.
+         */
+        std::unique_ptr<ReactorTimer> queueTimer;
+
+        /**
+         * The sockets of curl (`CURLMOPT_SOCKETFUNCTION`).
+         */
+        std::map<curl_socket_t, std::unique_ptr<FdWatch>> sockets;
+
+        bool shutDown = false;
+    };
+
+    OnReactor reactor;
+
+    std::unique_ptr<InterruptCallback> interruptCallback;
+
     const size_t maxQueueSize;
 
     curlFileTransfer(const FileTransferSettings & settings)
@@ -1059,7 +1102,21 @@ struct curlFileTransfer : public FileTransfer
         curl_multi_setopt(curlm.get(), CURLMOPT_PIPELINING, CURLPIPE_MULTIPLEX);
         curl_multi_setopt(curlm.get(), CURLMOPT_MAX_TOTAL_CONNECTIONS, settings.httpConnections.get());
 
-        workerThread = std::thread([&]() { workerThreadEntry(); });
+        if (!onReactor) {
+            workerThread = std::thread([&]() { workerThreadEntry(); });
+            return;
+        }
+
+        curl_multi_setopt(curlm.get(), CURLMOPT_SOCKETFUNCTION, socketCallbackWrapper);
+        curl_multi_setopt(curlm.get(), CURLMOPT_SOCKETDATA, this);
+        curl_multi_setopt(curlm.get(), CURLMOPT_TIMERFUNCTION, timerCallbackWrapper);
+        curl_multi_setopt(curlm.get(), CURLMOPT_TIMERDATA, this);
+        reactor.curlTimer = std::make_unique<ReactorTimer>([this]() { socketAction(CURL_SOCKET_TIMEOUT, 0); });
+        reactor.queueTimer = std::make_unique<ReactorTimer>([this]() { pump(); });
+#ifndef _WIN32 // TODO need graceful async exit support on Windows?
+        /* Like the worker thread: stop on SIGINT. */
+        interruptCallback = createInterruptCallback([this]() { stopWorkerThread(); });
+#endif
     }
 
     ~curlFileTransfer() override;
@@ -1074,6 +1131,15 @@ struct curlFileTransfer : public FileTransfer
 
     void wakeupMulti(State & state)
     {
+        if (onReactor) {
+            /* One pending `pump()` takes all the work of the state. */
+            if (!std::exchange(state.work, true))
+                postToReactor([weak = weak_from_this()]() {
+                    if (auto self = weak.lock())
+                        self->pump();
+                });
+            return;
+        }
         state.work = true;
         if (auto ec = ::curl_multi_wakeup(curlm.get()))
             throw curlMultiError(ec);
@@ -1095,13 +1161,7 @@ struct curlFileTransfer : public FileTransfer
         }
 #endif
 
-        std::map<CURL *, std::shared_ptr<TransferItem>> items;
-
-        bool quit = false;
-
-        std::chrono::steady_clock::time_point nextWakeup;
-
-        while (!quit) {
+        while (true) {
             checkInterrupt();
 
             /* Let curl do its thing. */
@@ -1110,101 +1170,11 @@ struct curlFileTransfer : public FileTransfer
             if (mc != CURLM_OK)
                 throw nix::Error("unexpected error from curl_multi_perform(): %s", curl_multi_strerror(mc));
 
-            /* Set the promises of any finished requests. */
-            CURLMsg * msg;
-            int left;
-            while ((msg = curl_multi_info_read(curlm.get(), &left))) {
-                if (msg->msg == CURLMSG_DONE) {
-                    auto i = items.find(msg->easy_handle);
-                    assert(i != items.end());
-                    i->second->finish(msg->data.result);
-                    curl_multi_remove_handle(curlm.get(), i->second->req);
-                    i->second->active = false;
-                    items.erase(i);
-                }
-            }
+            finishTransfers();
 
-            nextWakeup = std::chrono::steady_clock::time_point();
-
-            std::vector<std::shared_ptr<TransferItem>> incoming;
-            std::vector<std::weak_ptr<Item>> unpause;
-            std::vector<std::shared_ptr<TransferItem>> cancelled;
-            auto now = std::chrono::steady_clock::now();
-            bool haveWork;
-
-            {
-                auto state(state_.lock());
-
-                /* Cancel before starting new transfers, so that a
-                   cancelled transfer that is still queued never starts. */
-                for (auto & weak : std::exchange(state->cancel, {}))
-                    if (auto item = std::static_pointer_cast<TransferItem>(weak.lock())) {
-                        item->cancelled = true;
-                        cancelled.push_back(std::move(item));
-                    }
-                if (!cancelled.empty()) {
-                    decltype(state->incoming) kept;
-                    for (; !state->incoming.empty(); state->incoming.pop())
-                        if (!state->incoming.top()->cancelled)
-                            kept.push(state->incoming.top());
-                    state->incoming = std::move(kept);
-                }
-
-                while (!state->incoming.empty()) {
-                    /* Limit the number of active curl handles, since curl doesn't scale well. */
-                    if (items.size() + incoming.size() >= maxQueueSize) {
-                        auto t = now + std::chrono::milliseconds(100);
-                        if (nextWakeup == std::chrono::steady_clock::time_point() || t < nextWakeup)
-                            nextWakeup = t;
-                        break;
-                    }
-                    auto item = state->incoming.top();
-                    if (item->embargo <= now) {
-                        incoming.push_back(item);
-                        state->incoming.pop();
-                    } else {
-                        if (nextWakeup == std::chrono::steady_clock::time_point() || item->embargo < nextWakeup)
-                            nextWakeup = item->embargo;
-                        break;
-                    }
-                }
-                unpause = std::exchange(state->unpause, {});
-                quit = state->isQuitting();
-                haveWork = std::exchange(state->work, false);
-            }
-
-            for (auto & item : cancelled) {
-                if (item->active) {
-                    debug("cancelling %s of '%s'", Uncolored(item->request.noun()), item->request.displayUri());
-                    curl_multi_remove_handle(curlm.get(), item->req);
-                    item->active = false;
-                    items.erase(item->req);
-                }
-                if (!item->done)
-                    item->failCancelled();
-            }
-
-            for (auto & item : incoming) {
-                debug("starting %s of '%s'", Uncolored(item->request.noun()), item->request.displayUri());
-                item->init();
-                curl_multi_add_handle(curlm.get(), item->req);
-                item->active = true;
-                items[item->req] = item;
-            }
-
+            auto [quit, haveWork, nextWakeup] = processQueues();
             if (quit)
                 break;
-
-            /* NOTE: Unpausing may invoke callbacks to flush all buffers. */
-            for (auto & item : unpause) {
-                /* The transfer might have completed (failed) between it getting
-                   enqueued for unpause and by the time the worker thread picked
-                   it up. */
-                auto ptr = item.lock();
-                if (!ptr)
-                    continue;
-                static_cast<TransferItem &>(*ptr).unpause();
-            }
 
             /* Wait for activity, including wakeup events. */
             long maxSleepTimeMs = items.empty() ? 10000 : 100;
@@ -1230,6 +1200,133 @@ struct curlFileTransfer : public FileTransfer
         debug("download thread shutting down");
     }
 
+    /**
+     * Give the transfers that curl finished to their callbacks.
+     */
+    void finishTransfers()
+    {
+        /* Set the promises of any finished requests. */
+        CURLMsg * msg;
+        int left;
+        while ((msg = curl_multi_info_read(curlm.get(), &left))) {
+            if (msg->msg == CURLMSG_DONE) {
+                auto i = items.find(msg->easy_handle);
+                assert(i != items.end());
+                i->second->finish(msg->data.result);
+                curl_multi_remove_handle(curlm.get(), i->second->req);
+                i->second->active = false;
+                items.erase(i);
+            }
+        }
+    }
+
+    struct Queues
+    {
+        bool quit;
+
+        /**
+         * Whether `wakeupMulti()` was called since the last time.
+         */
+        bool haveWork;
+
+        /**
+         * When a queued transfer can start, or the epoch if none waits.
+         */
+        std::chrono::steady_clock::time_point nextWakeup;
+    };
+
+    /**
+     * Cancel, start and unpause transfers, as other threads asked for
+     * in `state_`.
+     */
+    Queues processQueues()
+    {
+        std::chrono::steady_clock::time_point nextWakeup;
+
+        std::vector<std::shared_ptr<TransferItem>> incoming;
+        std::vector<std::weak_ptr<Item>> unpause;
+        std::vector<std::shared_ptr<TransferItem>> cancelled;
+        auto now = std::chrono::steady_clock::now();
+        bool haveWork;
+        bool quit;
+
+        {
+            auto state(state_.lock());
+
+            /* Cancel before starting new transfers, so that a
+               cancelled transfer that is still queued never starts. */
+            for (auto & weak : std::exchange(state->cancel, {}))
+                if (auto item = std::static_pointer_cast<TransferItem>(weak.lock())) {
+                    item->cancelled = true;
+                    cancelled.push_back(std::move(item));
+                }
+            if (!cancelled.empty()) {
+                decltype(state->incoming) kept;
+                for (; !state->incoming.empty(); state->incoming.pop())
+                    if (!state->incoming.top()->cancelled)
+                        kept.push(state->incoming.top());
+                state->incoming = std::move(kept);
+            }
+
+            while (!state->incoming.empty()) {
+                /* Limit the number of active curl handles, since curl doesn't scale well. */
+                if (items.size() + incoming.size() >= maxQueueSize) {
+                    auto t = now + std::chrono::milliseconds(100);
+                    if (nextWakeup == std::chrono::steady_clock::time_point() || t < nextWakeup)
+                        nextWakeup = t;
+                    break;
+                }
+                auto item = state->incoming.top();
+                if (item->embargo <= now) {
+                    incoming.push_back(item);
+                    state->incoming.pop();
+                } else {
+                    if (nextWakeup == std::chrono::steady_clock::time_point() || item->embargo < nextWakeup)
+                        nextWakeup = item->embargo;
+                    break;
+                }
+            }
+            unpause = std::exchange(state->unpause, {});
+            quit = state->isQuitting();
+            haveWork = std::exchange(state->work, false);
+        }
+
+        for (auto & item : cancelled) {
+            if (item->active) {
+                debug("cancelling %s of '%s'", Uncolored(item->request.noun()), item->request.displayUri());
+                curl_multi_remove_handle(curlm.get(), item->req);
+                item->active = false;
+                items.erase(item->req);
+            }
+            if (!item->done)
+                item->failCancelled();
+        }
+
+        for (auto & item : incoming) {
+            debug("starting %s of '%s'", Uncolored(item->request.noun()), item->request.displayUri());
+            item->init();
+            curl_multi_add_handle(curlm.get(), item->req);
+            item->active = true;
+            items[item->req] = item;
+        }
+
+        if (quit)
+            return {.quit = true, .haveWork = haveWork, .nextWakeup = nextWakeup};
+
+        /* NOTE: Unpausing may invoke callbacks to flush all buffers. */
+        for (auto & item : unpause) {
+            /* The transfer might have completed (failed) between it getting
+               enqueued for unpause and by the time the worker thread picked
+               it up. */
+            auto ptr = item.lock();
+            if (!ptr)
+                continue;
+            static_cast<TransferItem &>(*ptr).unpause();
+        }
+
+        return {.quit = false, .haveWork = haveWork, .nextWakeup = nextWakeup};
+    }
+
     void workerThreadEntry()
     {
         // Unwinding or because someone called `quit`.
@@ -1243,10 +1340,97 @@ struct curlFileTransfer : public FileTransfer
             normalExit = false;
         }
 
+        /* The transfers that are still in curl fail. */
+        items.clear();
+
         if (!normalExit) {
             auto state(state_.lock());
             state->quit();
         }
+    }
+
+    /* The reactor backend. Everything below runs on the reactor thread,
+       which serialises all calls into curl. */
+
+    /**
+     * Do what other threads asked for in `state_`, and arm the queue
+     * timer for the transfers that cannot start yet.
+     */
+    void pump()
+    {
+        if (reactor.shutDown)
+            return;
+        auto queues = processQueues();
+        if (queues.quit) {
+            shutDownOnReactor();
+            return;
+        }
+        if (queues.nextWakeup != std::chrono::steady_clock::time_point())
+            reactor.queueTimer->set(
+                std::chrono::ceil<std::chrono::milliseconds>(queues.nextWakeup - std::chrono::steady_clock::now()));
+    }
+
+    void socketAction(curl_socket_t socket, int events)
+    {
+        if (reactor.shutDown)
+            return;
+        int running;
+        if (auto mc = curl_multi_socket_action(curlm.get(), socket, events, &running); mc != CURLM_OK)
+            printError("unexpected error from curl_multi_socket_action(): %s", curl_multi_strerror(mc));
+        finishTransfers();
+        /* A finished transfer makes room in the queue. */
+        pump();
+    }
+
+    static int socketCallbackWrapper(CURL *, curl_socket_t socket, int what, void * userp, void *) noexcept
+    {
+        auto & self = *static_cast<curlFileTransfer *>(userp);
+        if (what == CURL_POLL_REMOVE) {
+            self.reactor.sockets.erase(socket);
+            return 0;
+        }
+        try {
+            auto & watch = self.reactor.sockets[socket];
+            if (!watch)
+                watch = std::make_unique<FdWatch>(socket, [&self, socket](bool readable, bool writable) {
+                    self.socketAction(socket, (readable ? CURL_CSELECT_IN : 0) | (writable ? CURL_CSELECT_OUT : 0));
+                });
+            watch->setInterest(what & CURL_POLL_IN, what & CURL_POLL_OUT);
+            return 0;
+        } catch (...) {
+            self.reactor.sockets.erase(socket);
+            ignoreExceptionInDestructor();
+            /* curl fails the transfers that use the socket. */
+            return -1;
+        }
+    }
+
+    static int timerCallbackWrapper(CURLM *, long timeoutMs, void * userp) noexcept
+    {
+        auto & self = *static_cast<curlFileTransfer *>(userp);
+        if (timeoutMs < 0)
+            self.reactor.curlTimer->cancel();
+        else
+            self.reactor.curlTimer->set(std::chrono::milliseconds(timeoutMs));
+        return 0;
+    }
+
+    /**
+     * Stop like the worker thread: the transfers that are still in curl
+     * fail. curl closes its sockets in `curl_multi_cleanup()`, and the
+     * watches of the sockets must go away on this thread, before the
+     * sockets close.
+     */
+    void shutDownOnReactor()
+    {
+        if (std::exchange(reactor.shutDown, true))
+            return;
+        debug("download reactor shutting down");
+        items.clear();
+        curlm.reset();
+        reactor.sockets.clear();
+        reactor.curlTimer.reset();
+        reactor.queueTimer.reset();
     }
 
     ItemHandle enqueueItem(ref<TransferItem> item)
@@ -1307,6 +1491,23 @@ struct curlFileTransfer : public FileTransfer
 
 curlFileTransfer::~curlFileTransfer()
 {
+    if (onReactor) {
+        interruptCallback.reset();
+        state_.lock()->quit();
+        if (onReactorThread())
+            shutDownOnReactor();
+        else {
+            /* The posted function runs before this one returns, so it
+               can refer to `this`. */
+            std::promise<void> done;
+            postToReactor([&]() {
+                shutDownOnReactor();
+                done.set_value();
+            });
+            done.get_future().wait();
+        }
+        return;
+    }
     try {
         stopWorkerThread();
     } catch (...) {
@@ -1335,6 +1536,26 @@ ref<FileTransfer> getFileTransfer()
 ref<FileTransfer> makeFileTransfer(const FileTransferSettings & settings)
 {
     return makeCurlFileTransfer(settings);
+}
+
+bool fileTransferUsesReactor()
+{
+    static const bool onReactor = [] {
+#ifdef _WIN32
+        /* The reactor cannot watch sockets on Windows. */
+        auto backend = getEnv("_NIX_FILE_TRANSFER_BACKEND").value_or("thread");
+#else
+        auto backend = getEnv("_NIX_FILE_TRANSFER_BACKEND").value_or("reactor");
+#endif
+        if (backend == "thread")
+            return false;
+#ifndef _WIN32
+        if (backend == "reactor")
+            return true;
+#endif
+        throw Error("_NIX_FILE_TRANSFER_BACKEND must be 'reactor' or 'thread', not '%s'", backend);
+    }();
+    return onReactor;
 }
 
 std::string FileTransferRequest::displayUri() const
