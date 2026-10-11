@@ -31,15 +31,37 @@ scope: {
     (pkgs.boehmgc.override {
       enableLargeConfig = true;
     }).overrideAttrs
-      (attrs: {
-        # Increase the initial mark stack size to avoid stack
-        # overflows, since these inhibit parallel marking (see
-        # GC_mark_some()). To check whether the mark stack is too
-        # small, run Nix with GC_PRINT_STATS=1 and look for messages
-        # such as `Mark stack overflow`, `No room to copy back mark
-        # stack`, and `Grew mark stack to ... frames`.
-        env.NIX_CFLAGS_COMPILE = "-DINITIAL_MARK_STACK_SIZE=1048576";
-      });
+      (
+        attrs:
+        lib.optionalAttrs (!stdenv.hostPlatform.isWindows) {
+          # The fork of Determinate Systems adds client-registered stacks
+          # (`GC_register_stack`, `GC_current_stack`), so that the
+          # collector scans the stacks of suspended evaluator fibers
+          # (`nix/util/fiber.hh`). DeterminateSystems/nix-src uses the
+          # same revision as a flake input. A fixed-output fetch here
+          # keeps the source pinned without a new flake input, which the
+          # non-flake entry points (`default.nix`) would also have to
+          # pass down. The fork has no client-registered stacks with
+          # Win32 threads, so Windows keeps the release of Nixpkgs, and
+          # its evaluator does not suspend on fibers.
+          version = "8.3.0-unstable-2026-09-21";
+          src = pkgs.fetchFromGitHub {
+            owner = "DeterminateSystems";
+            repo = "bdwgc";
+            rev = "373957929b9ca3b2ae69a3e16b830c44c15b42ca";
+            hash = "sha256-bPVosUgucJR0hGSap3tJW84AR6eGYegVROV+O8VYX5A=";
+          };
+        }
+        // {
+          # Increase the initial mark stack size to avoid stack
+          # overflows, since these inhibit parallel marking (see
+          # GC_mark_some()). To check whether the mark stack is too
+          # small, run Nix with GC_PRINT_STATS=1 and look for messages
+          # such as `Mark stack overflow`, `No room to copy back mark
+          # stack`, and `Grew mark stack to ... frames`.
+          env.NIX_CFLAGS_COMPILE = "-DINITIAL_MARK_STACK_SIZE=1048576";
+        }
+      );
 
   curl = pkgs.curl.override {
     http3Support = !pkgs.stdenv.hostPlatform.isWindows;

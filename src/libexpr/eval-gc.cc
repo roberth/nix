@@ -74,8 +74,10 @@ static inline void initGCReal()
 
     GC_set_oom_fn(oomHandler);
 
-    /* Funnel boehm warnings into debug logs. */
-    GC_set_warn_proc([](char * msg, GC_word word) noexcept {
+    /* Funnel boehm warnings into debug logs. The message is `char *`
+       before bdwgc 8.3 and `const char *` from 8.3 on; the generic
+       lambda converts to either. */
+    GC_set_warn_proc([](auto * msg, GC_word word) noexcept {
         std::array<char, 4096> buffer{};
         auto res = snprintf(buffer.data(), buffer.size(), msg, word);
         /* Ignore garbage. */
