@@ -88,7 +88,12 @@ Two consequences:
   The thread starts on the first poll.
   Dropping the task makes `checkInterrupt()` on that thread throw `Interrupted`, calls the callbacks that the thread registered with `onThreadCancelled`, and then joins the thread, on the reactor as a cleanup of the run (see [Asynchronous drop](#asynchronous-drop)).
   A blocking wait registers such a callback to wake up; `FileTransfer::download(request, sink)` cancels its transfer in it.
+  On Unix, `nix::read` and `nix::write` on such a thread `poll` the descriptor together with a pipe that the cancellation closes, so a read from a stalled connection (`FdSource`, the daemon and SSH protocols) ends at once on a drop.
+  A write to a pipe or a socket is then limited to `PIPE_BUF` bytes per call, because `poll` promises room for no more; writes to files skip the wait.
   The cancellation is per task: it does not set the global interrupt flag.
+  The thread ends with the function, and Linux kills a child that the thread forked with `dieWithParent` (`PR_SET_PDEATHSIG`) then: the signal follows the thread, not the process.
+- `BlockingPool` runs blocking functions as tasks on threads that it keeps until it is destroyed, with the cancellation of `runInThread`; a function that did not start when its task is dropped does not run.
+  Use it for a function that forks a process which must outlive the function, such as the start of a builder.
 
 There is no detached spawn.
 A task always has an owner, so its lifetime is visible in the code.
@@ -108,10 +113,12 @@ The waker of a goal puts the goal in a queue of the `Worker`, from any thread, a
 
 The goals run on the thread that polls `runGoals`, and never on the reactor thread:
 
-- Goal code still makes blocking store calls: SQLite queries, the registration and hashing of outputs, the build hook protocol, `copyClosure`.
+- Goal code still makes blocking calls: SQLite queries, `copyClosure`, `writeDerivation`, the hashing of `pathContentsGood`, and drops that kill and reap processes.
   A blocked reactor thread would stop all transfers and timers of the process.
+  [Blocking calls of the goals](#blocking-calls-of-the-goals) lists them, and says which ones moved off the thread of the goals.
 - Goal code keeps thread-local state across suspensions: the current activity of the logger, and the interrupt check.
   So one thread creates, runs and drops the goals of a build.
+- The blocking steps of a build refer to the frame of their goal (see below), which a deferred drop would destroy too early.
 
 The waits for the outside world go to the [reactor](#the-reactor), which wakes the goals on their thread:
 
@@ -120,8 +127,26 @@ The waits for the outside world go to the [reactor](#the-reactor), which wakes t
 | `waitForChildEvent()` | The reactor: `waitFd` on the channels of the goal's child, and `sleepFor` until its first deadline (`max-silent-time`, `timeout`). |
 | `waitForAWhile()` | The reactor: `sleepFor(poll-interval)`. |
 | `waitForBuildSlot()` | A free build or substitution slot. The goal waits in a `WaitQueue` of the `Worker`. |
+| `waitForBuildHook()` | The end of the turn of the goal that talks to the build hook (`Worker::wantingBuildHook`). |
 | `yield()` | The goal itself, so that the other awake goals run first. |
 | `await(goals)` | The completion of the goals. Without `--keep-going`, the first failure ends the wait. |
+| `waitFd` in `tryBuildHook`, `buildWithHook` | The reactor: the pipes to and from the build hook. |
+| A step on `Worker::builderStartPool` or `Worker::blockingPool` | A thread of the worker: the start of a builder, its reaping, the registration of its outputs. |
+
+The exchange with the build hook is a task: it writes to a non-blocking pipe and reads the reply one byte at a time, and waits with `waitFd` whenever the pipe is full or empty.
+One goal at a time talks to the hook, as when the exchange blocked; otherwise the goals that ask together start a hook each.
+A goal that is dropped in the middle of the exchange destroys the hook, whose state is then unknown.
+
+The blocking steps of a local build run on threads of the worker (`inThread` in `derivation-building-goal.cc`):
+
+- `startBuild` forks the builder and waits until it has set up its sandbox, on one thread (`builderStartPool`).
+  Starting several builders at once multiplied the system time (below) and did not make the build faster.
+- `unprepareBuild`, `registerOutputs` and `cleanupBuild` run on up to `max-jobs` threads (`blockingPool`).
+- The threads stay alive as long as the `Worker` (`BlockingPool`), because a builder dies with the thread that forked it.
+- A step refers to the frame of the goal, for example to the builder.
+  A drop cancels the step and waits for it in place, which is safe only while the goals run without a cleanup scope; `inThread` asserts that.
+- The `Worker` is not thread-safe.
+  `unprepareBuild` reports the end of the child through a callback, which does nothing off the thread of the goals; the goal frees the build slot after the step, or `ChildRegistration` does if the goal is dropped.
 
 When a wait for a child fires, the goal reads once from every channel of the child that is ready, in the order of the descriptors, as the poll loop of the `Worker` did.
 Reading only the channel that woke gave the EOF of the builder's channel before the log that waited on the build hook's channel.
@@ -147,7 +172,7 @@ The functional test `build-drop` checks this with a task under `runOnReactor` th
   Only such a goal can make progress without the help of another goal.
   When no goal is awake and the count is 0, `runGoals` throws.
   The reactor is shared with other tasks of the process, so "the reactor has no work" says nothing about the goals; the count does.
-- The goals cannot run on the reactor, so a task that awaits a build costs a thread.
+- The goals do not run on the reactor (see [Should the goals run on the reactor?](#should-the-goals-run-on-the-reactor)), so a task that awaits a build costs a thread.
 
 ### Cancellation
 
@@ -160,6 +185,12 @@ The functional test `build-drop` checks this with a task under `runOnReactor` th
   The functional test `substitute-cancel` checks this.
   In three runs, the build ended 165 to 176 ms after it started.
   With the previous `Worker` and `stalled-download-timeout` set to 20 s, it ended after 26 s.
+- A substitution from an SSH store (`ssh-ng://`, the daemon protocol, and `ssh://`) reads the connection in `nix::read`, which the drop wakes.
+  The functional test `substitute-cancel-ssh` stalls the remote program after 100 kB of the NAR; the build ended 89 to 98 ms (`ssh-ng`) and 192 to 202 ms (`ssh`) after it started.
+  Before, it waited until the remote program exited: the test did not end within 60 s.
+- A goal that waits for the reply of the build hook is dropped at once.
+  The functional test `build-hook-cancel` uses a hook that never answers; the build ended 64 ms after it started, and the hook was killed.
+  Before, the whole `Worker` waited in the read of the reply, and the test did not end within 60 s.
 
 ## Migrating code to tasks
 
@@ -203,31 +234,97 @@ The cost, in lines added and removed per component, for the commits of this migr
 
 The tests are not in the table: they add 741 lines and remove 28 lines of the old closure test.
 
+### Blocking calls of the goals
+
+The calls that goal code makes on the thread of the goals, and what happens to them.
+Paths are relative to `src/libstore/build/`.
+
+| Call | Where | Kind | Now |
+|------|-------|------|-----|
+| `isValidPath`, `queryPartialDerivationOutputMap`, `queryDerivationOutputMap`, `queryRealisation`, `readDerivation` | `derivation-goal.cc:256,348,373,379,442,452`, `derivation-building-goal.cc:399,1509,1539,1546`, `derivation-trampoline-goal.cc:104,141`, `substitution-goal.cc:40,196` | SQLite reads, a file read | On the thread of the goals. Tens of microseconds; a read waits for the lock of the database while another thread writes. |
+| `registerDrvOutput`, `writeDerivation` | `derivation-goal.cc:109,289,461`, `derivation-building-goal.cc:1556` | SQLite writes | On the thread of the goals. Rare: CA derivations and resolved derivations. |
+| `addTempRoot` | `substitution-goal.cc:37`, `derivation-goal.cc:73`, `derivation-trampoline-goal.cc:131`, `derivation-building-goal.cc:54` | A write to the file of temporary roots | On the thread of the goals; short. |
+| `startBuild`: fork, sandbox setup, wait for the builder | `derivation-building-goal.cc:1121` | Processes, waits | `Worker::builderStartPool`. |
+| `unprepareBuild`, `registerOutputs`, `cleanupBuild` | `derivation-building-goal.cc:1170,1180,1205` | Waits, hashing, SQLite writes, deletion | `Worker::blockingPool`. |
+| The build hook protocol (`tryBuildHook`, the machine name, the inputs) | `derivation-building-goal.cc` (`tryBuildHook`, `buildWithHook`) | Protocol I/O on pipes | A task with `waitFd`. |
+| The start of the hook (`HookInstance`), the post-build hook (`startProcess`), `Pid::kill` of the hook | `derivation-building-goal.cc:860,1304,1391` | Fork, wait for an exiting process | On the thread of the goals: about a millisecond. |
+| `copyClosure` from the eval store | `derivation-goal.cc:285`, `derivation-building-goal.cc:395` | Copies NARs | On the thread of the goals. Only with `--eval-store`. Not converted. |
+| `pathContentsGood` | `worker.cc:660` | Hashing | On the thread of the goals. Only with `--repair` and `--check`. Not converted. |
+| `lockPaths(…, wait = false)`, `deletePath` of an invalid output | `derivation-building-goal.cc:555,594` | File locks, deletion | On the thread of the goals. The lock does not wait. |
+| `LocalStore::autoGC(false)` | `worker.cc:424` | `statvfs` every 5 s; the collection itself runs on a thread of its own | On the thread of the goals. |
+| `getSubstituters()` | `substitution-goal.cc:51`, `drv-output-substitution-goal.cc:28` | Opens the substituters on first use, which can fetch `nix-cache-info` | On the thread of the goals. On the reactor thread this would wait for the reactor itself. |
+| The copy of a substitution | `substitution-goal.cc` | Network and disk | `runInThread`; a drop wakes its reads (above). |
+| `queryRealisation` of a substituter | `drv-output-substitution-goal.cc:38` | Network | `callbackToTask`; blocks for a daemon or an SSH store, whose callback version is synchronous. |
+| The drop of a goal: `DerivationBuilder` kills and reaps the builder, `HookInstance` kills the hook (up to `build-hook-kill-timeout`), a step on a pool is waited for | Destructors | Waits | In place, on the thread of the goals. |
+
+The SQLite reads stay synchronous.
+A thread hop per query would cost more than the query, and a dedicated thread for the database would serialize the reads behind the writes that now run on the pools, which is what makes the rare long poll today.
+
+### Measurements
+
+Release builds of `nix-cli`, private stores, a machine with 32 cores and a load average of 7 to 28 from other work.
+"base" is 49264de7a, "head" this branch.
+
+1000 trivial derivations and one that depends on them, in a chroot store (which builds in namespaces), `max-jobs = 16`, 6 interleaved rounds with the order rotated each round.
+"before" is fae4111a0, before the goals were tasks; "s11-base" is 5a45e1e97, which another round measured about 5 % slower than "before".
+Wall, user and system seconds of `nix-store -r`, builders included:
+
+| Variant | Median wall (range) | Median sys |
+|---------|---------------------|------------|
+| before | 9.15 s (8.84–9.70) | 8.40 s |
+| s11-base | 9.26 s (8.95–9.71) | 8.65 s |
+| base | 9.21 s (8.98–9.58) | 8.46 s |
+| head | 9.28 s (8.11–9.81) | 8.82 s |
+
+The 5 % did not show again: the ranges overlap.
+The reactor was busy for 0.19 to 0.35 s of each build, so the registration of the descriptors of a child for each wait cannot account for more than that; it is not changed.
+The system time is close to the wall time, with or without a free thread of the goals: the kernel work for the namespaces of the builders bounds this build.
+
+The polls of the goals in the same build, from `_NIX_REACTOR_STATS`, with a `debugoptimized` build of the branch at each step (one run each):
+
+| Step | Busy | Polls ≥ 1 / 10 / 50 ms | Longest poll |
+|------|------|------------------------|--------------|
+| Before the pools | 10.3 s of 11.4 s | 1492 / 116 / 0 | 27 ms |
+| Starts on 16 threads | 4.2 s of 12.3 s | 500 / 88 / 4 | 63 ms |
+| Starts on 1 thread, the rest on 16 | 0.9 s of 8.6 s | 12 / 3 / 0 | 26 ms |
+
+Before the pools, the goals were the bottleneck: about 10 ms per build in blocking calls (`strace` of the thread: 4.1 s in `read` waiting for the builders to set up, 2.2 s in `wait4`, 0.9 s in `clone`).
+Starting builders on several threads multiplied the system time (9 s with one start at a time, 18 s with 4, 31 s with 16).
+
+Substitution of 3008 paths (3000 small, 8 of 32 MiB) from a local HTTP binary cache with `nix-store -r`, 3 interleaved rounds:
+
+| `http-connections`, `max-substitution-jobs` | base | head | Polls of the goals (head) |
+|------|------|------|------|
+| 25, 16 | 13.06 s (13.06–14.81) | 13.04 s (12.96–14.81) | busy 0.11 to 0.73 s; longest 0.2 to 2 ms, once 230 ms at a load of 28 |
+| 100, 64 | 3.42 s (3.39–3.45) | 3.48 s (3.40–3.49) | busy 0.12 s; longest 0.9 to 1.2 ms |
+
+In one more run of each, the reactor was busy for 715 ms of 3.4 s and 717 ms of 12.9 s, with a longest poll of 7 and 1.8 ms and no poll over 10 ms.
+
+A remote build (the functional test `build-remote-input-addressed`, through `ssh-ng://localhost`): the longest poll of a goal was 25 to 27 ms, from `Pid::kill` of the hook, whose kill timer slept in steps of 25 ms.
+With the timer on a condition variable it is below 2 ms, and the busy time of the goals went from 113 ms to 9 to 15 ms per build.
+
+### Should the goals run on the reactor?
+
+Not yet; the numbers do not ask for it, and the move is not safe:
+
+- The thread of the goals is now idle for most of a build (busy 0.1 to 0.9 s in the runs above), so it costs a thread, not throughput.
+  None of the three workloads waits for it: the namespaces of the builders bound the many small builds, the transfers bound the substitution.
+- Most polls are short, but not all: a few polls of 10 to 26 ms remain in the many small builds, behind the lock of the database or a fork, and one 230 ms poll under load.
+  On the reactor, each would stop all transfers of the process.
+- Drops wait in place: a builder is killed and reaped, the hook is killed with a timeout, a step on a pool is waited for.
+  On the reactor these must become cleanups of the run, and a step that refers to the frame of its goal must then own what it uses; `inThread` asserts that there is no cleanup scope until then.
+- `getSubstituters()` can fetch `nix-cache-info` synchronously through the reactor, and the `queryRealisation` of a daemon or SSH store blocks; both would wait for the reactor thread on itself.
+- Goal code keeps thread-local state of the logger across suspensions.
+
 ### What remains for the Worker
 
-- The goals run on a thread that may block, not on the reactor, because goal code still calls blocking store operations, which stop all goals of the build while they run:
-  `isValidPath`, `queryPartialDerivationOutputMap` and other SQLite queries, the registration of outputs, the hashing in `pathContentsGood`, the build hook protocol (`tryBuildHook`, the reads of the machine name), `copyClosure`, `writeDerivation`, and `LocalStore::autoGC`.
-  Each needs a task version, or `runInThread`, before the goals can run on a shared executor.
-  `computeFSClosure` has a task version now (`computeFSClosureAsync`, virtual, because `LegacySSHStore` computes a closure in one request that blocks), and goal code awaits it.
-  The local `queryRealisation` of `DrvOutputSubstitutionGoal` goes through `callbackToTask`; for the stores of Nix today, its callback version still completes before it returns.
-- Only `FileTransfer::download` registers with `onThreadCancelled`.
-  A substitution from an SSH store or a daemon blocks in a socket read, which a drop does not interrupt; the drop then waits until the read returns.
+- The table above: `copyClosure`, `writeDerivation`, `pathContentsGood`, `getSubstituters()`, the drops.
 - `queryRealisation` has no cancellable version: `callbackToTask` discards its result on a drop but does not stop it.
-- A wait for a child registers its descriptors with the reactor again for each chunk of output (`waitFd` per wait).
-  The measurements below show no difference beyond the noise; a persistent registration (`FdWatch`) would have to run its callback on the reactor thread and wake the goal from there.
+- A wait for a child registers its descriptors with the reactor again for each chunk of output (`waitFd` per wait); see the measurements.
 - Windows has no `waitFd`, so a goal there polls the completion port of the children every 50 ms.
   It compiles and links in the cross build `nix-store-x86_64-w64-mingw32`, but no test ran on Windows.
-
-Measured with the release builds of `nix-cli` at 6bbb87ad7 (before) and of this branch (after), in a private store without sandbox, on a machine with 32 cores and a load average of 11 to 30 from other work, interleaved, 6 runs each.
-"many" builds 1000 trivial derivations and one that depends on them, with `max-jobs = 16`; "log" builds one derivation that writes 50 MB of log.
-The times are wall, user and system seconds of `nix build`, builders included.
-
-| Case | Before: median wall (range) | After: median wall (range) | Lowest user + sys, before / after |
-|------|------|------|------|
-| many | 2.53 s (2.38–4.08) | 2.85 s (2.44–5.60) | 3.91 / 4.02 s |
-| log  | 7.22 s (6.46–10.87) | 7.25 s (6.78–7.92) | 6.37 / 6.63 s |
-
-The ranges overlap; the noise of the machine is larger than any difference.
+  On Windows, `unprepareBuild` of the Unix builder does not run, but the pools do; no test covers them there.
+- Only `ssh-ng://` and `ssh://` substituters have a drop test; a daemon socket uses the same `RemoteStore` code and `nix::read`.
 
 ## Tasks and Rust futures
 
@@ -323,6 +420,10 @@ It reports after the fact; to find the code inside a slow task, use a profiler.
 
 The busy time alone does not show what limits a run.
 With 200 tarball fetches at once, the reactor thread was busy for about half of the run, but most of the run was spent in the unpacking threads, which the reactor does not see; see [Many fetches at once](./tarball-cache.md#many-fetches-at-once).
+
+The `Worker` times the polls of its goals in the same way, because a poll of a goal is what would block the reactor if the goals ran there.
+With `_NIX_REACTOR_STATS`, it prints the number of polls, their busy time, the longest poll with its goal, and the number of polls of at least 1, 10 and 50 ms (`nix: goals:`).
+A poll longer than `_NIX_REACTOR_SLOW_POLL_MS` is logged at the debug level with the name of the goal.
 
 `nix-fetchers-tarball-bench`, in the tests of libfetchers, fetches many tarballs at once through the task path, and `maintainers/tarball-cancel-stress.sh` interrupts it with `CONCURRENT=N`.
 [The tarball cache on gitoxide](./tarball-cache.md#many-fetches-at-once) has the measurements under load.
