@@ -20,7 +20,7 @@ The C++ libraries call Rust, and Rust calls back up into C++, for example to che
 The upward calls must not become link-time references from `libnixrust` to the libraries above it.
 Such a reference makes a cycle in the library graph: a static link then depends on the link order, and a shared build on Darwin needs `-undefined dynamic_lookup`.
 
-Rust code therefore calls upward only through virtual functions of abstract C++ classes that `libnixrust` declares, for example `nix::rs::Callback` in `nix/rust/boundary.hh`.
+Rust code therefore calls upward only through virtual functions of abstract C++ classes that `libnixrust` declares, for example `nix::rs::Callback` in `nix/rust/boundary.hh`, or `nix::rs::TarballUnpacker` in `nix/rust/tarball-cache.hh`, which libfetchers implements with libarchive.
 The libraries above implement the classes and pass instances down.
 The call goes through the vtable at run time, so `libnixrust` has no undefined symbols of other Nix libraries.
 Two other kinds of upward call follow the same rule:
@@ -82,6 +82,9 @@ fn fetch_something(url: &str) -> NixFuture {
 ```
 
 C++ awaits it with `co_await awaitCFuture<rust::String>(rs::fetch_something(url))`.
+
+An upward call whose C++ exception must keep its type returns it as a `nix_exception *` instead of using cxx's `Result`, which keeps only `what()`.
+`TarballUnpacker::run` does so: it catches the exception, returns `rs::currentException()`, and Rust adopts it with `Error::from_exception`, so that the exception reaches the C++ code that awaits the future with its dynamic type.
 In the other direction, a bridge function takes a `nix_future` that C++ made with `toCFuture(task)`, and Rust awaits `CxxFuture::<T>::new(future)`.
 See [Asynchronous code](./async.md#tasks-and-rust-futures) for the semantics.
 

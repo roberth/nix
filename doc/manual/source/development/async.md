@@ -105,6 +105,23 @@ Both sides have the same semantics, so a chain of `co_await` and `.await` can cr
 A `CxxFuture` is `Send`, so a C++ task that crosses into Rust can be polled on any thread, one thread at a time.
 A task that keeps thread-local state across a `co_await`, such as a `PushActivity`, is therefore not fit to cross.
 
+### Example: fetching a tarball
+
+A tarball fetch is a task from end to end; [The tarball cache on gitoxide](./tarball-cache.md#fetching-a-tarball-as-a-task) describes it.
+It shows the patterns that a migration of other code can use:
+
+- Blocking work behind a future.
+  The Rust future starts a thread on its first poll, and the thread wakes the future when it is done.
+  Dropping the future sets a cancellation token, wakes the thread from a blocking read, and joins it.
+- A stream between two concurrent tasks.
+  `FileTransfer::transferStreaming` writes the body of a transfer into a `TransferStream`, which a blocking reader on another thread reads.
+  The owner closes the stream to wake the reader when it cancels both.
+- A cancellation token per operation, instead of the global interrupt flag.
+  `runBlocking` turns a user interrupt into the destruction of the task, and the destruction reaches the operation through its owner.
+- An exception that a C library swallows.
+  libarchive turns an exception of its input into a message.
+  The code that calls libarchive remembers the exception and rethrows it, so that it keeps its type.
+
 ### What remains for a Rust executor
 
 Today C++ drives every chain: `runBlocking` or the Asio runner polls the outermost task, and Rust futures run inside it.
@@ -115,3 +132,6 @@ To run a chain on tokio, for example for network code in Rust, the following is 
 - A C++ entry point that submits a `nix_future` to the runtime and returns a task that completes with it, so that C++ code can wait for tokio without blocking an Asio thread.
 - Interrupt handling: `runBlocking` turns a user interrupt into a drop of the task, and a tokio-driven chain needs the same, for example by racing it against an interrupt future.
 - A decision about which reactor owns the curl multi handle, which is the same question for C++ code with or without Rust.
+- An asynchronous drop for futures that own a thread.
+  The tarball unpacking joins its thread when it is dropped, which blocks the thread that drops it until the unpacking stops.
+  Under `runBlocking` that is acceptable, but an executor thread must not block; a drop would have to hand the thread to a task that joins it.

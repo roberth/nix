@@ -39,14 +39,74 @@ The gitoxide writer also compresses each object on the thread that writes it, so
 3. It moves the pack, then the index, to their final names, `pack-<checksum>.{pack,idx}`.
    A reader finds a pack through its index, so a reader never sees a partial pack.
 
-An interrupt during the flush removes the temporary files, and the writer keeps the objects for a later flush.
-Calls from Rust into Nix, such as the interrupt check, go through the abstract class `nix::rs::TarballCacheHooks`, as [Rust](./rust.md) describes.
+A cancelled flush removes the temporary files, and the writer keeps the objects for a later flush.
+The owner of a write cancels it with a `CancelToken`, which the flush checks; see [Fetching a tarball as a task](#fetching-a-tarball-as-a-task).
+Calls from Rust into Nix, such as logging, go through the abstract classes in `nix/rust/tarball-cache.hh`, as [Rust](./rust.md) describes.
 
 `TarballCacheReader` (Rust) reads trees and blobs.
 `TarballCacheAccessor` (C++) is a `SourceAccessor` on top of it.
 Each accessor has its own reader, because a gitoxide object handle has caches that are not thread-safe.
 
 The libgit2 repository functions still create the cache, so that the format of a new cache does not depend on the implementation.
+
+## Fetching a tarball as a task
+
+`fetchTarball`, `fetchTree { type = "tarball"; }`, and the tarball and GitHub-style flake inputs unpack through `downloadIntoTarballCache()` (`src/libfetchers/tarball.cc`).
+With the gitoxide implementation, the function runs one task with `runBlocking()`.
+The task owns the whole chain:
+
+```
+runBlocking
+└─ downloadIntoGixTarballCache                     C++ task
+   └─ whenAll
+      ├─ FileTransfer::transferStreaming           C++ task; the transfer runs on the curl thread
+      │     └─ writes the body into a TransferStream
+      └─ unpackIntoTarballCache                    C++ task
+         └─ tarball_cache_unpack                   Rust future
+            └─ a thread of its own:
+               ├─ Unpacker::run                    C++: libarchive reads the TransferStream,
+               │                                   the tar adapter writes with the writer
+               └─ TarballCacheWriter::flush        Rust: one pack
+```
+
+The download and the unpacking run at the same time.
+The `TransferStream` connects them: the curl thread appends the data, and the unpacking thread reads it.
+When the buffer exceeds `download-buffer-size`, the transfer pauses until the unpacking has taken the data.
+
+The unpacking runs on a thread of the Rust future, because its work blocks: libarchive pulls its input with blocking reads, and gitoxide writes synchronously.
+No Rust executor exists in Nix yet (see [Asynchronous code](./async.md#what-remains-for-a-rust-executor)), so the future starts the thread on its first poll, and the thread wakes the future when it is done.
+libarchive stays, because it reads all the archive formats that Nix accepts.
+A Rust reader would have to match them, and the tar adapter, which both implementations share, would have to move to Rust too.
+
+### Cancellation
+
+Destroying the task cancels the whole chain.
+`runBlocking()` destroys it on a user interrupt; a combinator such as `whenAll` or `race` destroys it when another task fails or wins.
+
+- The transfer task removes the transfer from curl.
+- Dropping the Rust future sets the `CancelToken` of its thread, closes the `TransferStream` so that a blocked read returns, and joins the thread.
+  The thread checks the token at each read of the stream, between the entries of the archive, and in the flush, up to the moment before the pack and its index are renamed into place.
+
+After the drop, no thread of the fetch runs, nothing writes to the cache, and the cache has no new pack and no temporary file.
+`tarball-cancel.sh` tests this for an interrupt during the download, the unpacking and the flush.
+`maintainers/tarball-cancel-stress.sh` interrupts many fetches at random times and checks the cache after each.
+
+The token replaces a global interrupt check in the writer.
+A global check stops every write in the process at once, and cannot stop the one write whose owner gave up on it, for example the loser of a `race`.
+
+If one of the two tasks fails, `whenAll` cancels the other: a failed download stops the unpacking, and an archive that libarchive rejects stops the download.
+An error keeps its type through both languages.
+libarchive turns an exception of its input into a message, so the unpacker remembers the exception that the stream threw, for example the `FileTransferError` of the download, and returns that one.
+
+The limits of the guarantee:
+
+- Joining the thread blocks the thread that drops the future until the unpacking thread reaches its next check.
+  The longest wait is the time to write one file of the archive: the tar adapter writes files on a pool of threads, and the pool waits for the files that it is writing.
+  A future executor would need an asynchronous drop instead, for example a task that joins the thread.
+- After the pack and its index are in place, a cancellation does not remove them.
+  The pack is complete and valid, and the next fetch of the same tarball finds its objects.
+- The libgit2 implementation (`_NIX_TARBALL_CACHE_BACKEND=libgit2`) does not run as a task.
+  It unpacks on the calling thread, and stops only where its code checks for a user interrupt.
 
 ## Gaps
 
@@ -92,3 +152,35 @@ Inferences, not measured separately:
 
 Deltas between revisions of the same repository would make the cache smaller: a repack of both revisions with `git pack-objects` and path names gives about 67 MB instead of 80 MB.
 Neither implementation does that today.
+
+### The task against the synchronous unpacking
+
+The gitoxide implementation unpacked synchronously on the calling thread before it ran as a task.
+This comparison builds both versions of Nix in the same configuration, with the method above (7 runs after 1 warm-up, empty cache).
+
+| Input | Synchronous | Task |
+|---|---|---|
+| rev1, uncompressed tar | 2.76 s (2.72–2.84), 4.8 s user | 2.81 s (2.74–2.88), 4.8 s user |
+| rev1, gzip | 3.01 s (2.95–3.03), 5.3 s user | 3.00 s (2.98–3.05), 5.2 s user |
+
+The ranges overlap, so the task costs no measurable time.
+The download and the unpacking already overlapped before: a `sinkToSource` coroutine fed libarchive.
+
+### Interrupts at random times
+
+`maintainers/tarball-cancel-stress.sh` fetched the gzipped rev1 over HTTP from a local server 50 times (`SEED=42`), each into an empty cache, and sent SIGINT after a random delay of 0.2 to 3.7 s.
+The reference fetch took 3.1 s.
+In the runs, the pack was in place from a delay of about 1.2 s on; the rest of the time goes to hashing the tree.
+
+- 12 fetches completed before the signal, with the expected hash.
+- 38 were interrupted: 17 before the pack was in place, 21 after.
+- After each run, the cache had no temporary file, each pack had its index, and `git fsck --full` accepted it.
+
+| Time from SIGINT to exit | Interrupted before the pack was in place (17) | After (21) |
+|---|---|---|
+| Median | 53 ms | 19 ms |
+| Range | 9–478 ms | 13–28 ms |
+
+The slow exits, 66 to 478 ms, all came from signals between 0.55 and 1.0 s, during the unpacking.
+That matches the limit that [Cancellation](#cancellation) describes: the drop waits for the files that the tar adapter is writing, and a revision of Nixpkgs has files of several megabytes.
+This is an inference; the time was not measured per phase.
