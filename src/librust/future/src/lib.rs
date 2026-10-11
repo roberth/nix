@@ -125,6 +125,8 @@ unsafe extern "C" {
     fn nix_exception_free(exception: *mut NixException);
     fn nix_exception_what(exception: *const NixException) -> *const c_char;
     fn nix_exception_from_rust(message: *const c_char, length: usize, value: NixRustValue) -> *mut NixException;
+    #[cfg(feature = "cxx")]
+    fn nix_exception_take_kept(message: *const c_char, length: usize) -> *mut NixException;
     fn nix_exception_take_rust_value(
         exception: *const NixException,
         owner: *const c_void,
@@ -461,10 +463,23 @@ impl fmt::Debug for Error {
 
 impl std::error::Error for Error {}
 
+/// The exception of an upward call with `Result`. cxx gives Rust only the
+/// message; the `trycatch` of `nix/rust/boundary.hh` kept the exception on
+/// this thread, and this takes it back, so that it keeps its type and
+/// identity. A `nix::RustPanic` of this copy resumes the panic here; see
+/// [`Error::from_exception`].
 #[cfg(feature = "cxx")]
 impl From<cxx::Exception> for Error {
     fn from(exception: cxx::Exception) -> Self {
-        Error::msg(exception.what())
+        let what = exception.what();
+        // SAFETY: `what` is valid for `len()` bytes during the call.
+        let kept = unsafe { nix_exception_take_kept(what.as_ptr().cast(), what.len()) };
+        if kept.is_null() {
+            return Error::msg(what);
+        }
+        // SAFETY: `nix_exception_take_kept` gives up the ownership of a
+        // non-null exception.
+        unsafe { Error::from_exception(kept) }
     }
 }
 

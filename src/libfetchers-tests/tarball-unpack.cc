@@ -171,6 +171,36 @@ struct PauseInPhase
     }
 };
 
+/**
+ * Throw `exception` from the hook when a write reaches `phase`, for the
+ * duration of a test.
+ */
+struct ThrowInPhase
+{
+    ThrowInPhase(std::string phase, std::exception_ptr exception)
+    {
+        setTarballCachePhaseHook(
+            [phase = std::move(phase), exception](std::string_view reached, const std::function<bool()> &) {
+                if (reached == phase)
+                    std::rethrow_exception(exception);
+            });
+    }
+
+    ~ThrowInPhase()
+    {
+        setTarballCachePhaseHook({});
+    }
+};
+
+std::exception_ptr interruptedByTheTest()
+{
+    try {
+        throw Interrupted("interrupted by the test");
+    } catch (...) {
+        return std::current_exception();
+    }
+}
+
 TEST_F(TarballUnpackTest, unpacksTheTarballIntoOnePack)
 {
     auto tree = runBlocking(downloadAndUnpack());
@@ -216,6 +246,40 @@ TEST_F(TarballUnpackTest, cancellingWhileFlushingLeavesTheCacheAsItWas)
     });
 
     EXPECT_LT(elapsed, std::chrono::seconds(5));
+    EXPECT_EQ(packFiles(), std::vector<std::string>{});
+}
+
+TEST_F(TarballUnpackTest, anExceptionOfAHookComesBackFromAFlushUnchanged)
+{
+    auto writer = openTarballWriter(repoDir);
+    writer->makeSymlink("target");
+
+    /* The hook is an upward call from Rust. Its exception crosses into
+       Rust as an `Err`, and comes back out of the bridge function `flush`
+       as the same exception object. */
+    auto original = interruptedByTheTest();
+    ThrowInPhase hook("flush", original);
+    try {
+        writer->flush();
+        FAIL() << "the flush did not fail";
+    } catch (const Interrupted &) {
+        EXPECT_EQ(std::current_exception(), original);
+    }
+    EXPECT_EQ(packFiles(), std::vector<std::string>{});
+}
+
+TEST_F(TarballUnpackTest, anExceptionOfAHookComesBackFromAnUnpackUnchanged)
+{
+    /* As above, through the thread of the unpack future and the error of
+       the future. */
+    auto original = interruptedByTheTest();
+    ThrowInPhase hook("flush", original);
+    try {
+        runBlocking(downloadAndUnpack());
+        FAIL() << "the unpack did not fail";
+    } catch (const Interrupted &) {
+        EXPECT_EQ(std::current_exception(), original);
+    }
     EXPECT_EQ(packFiles(), std::vector<std::string>{});
 }
 

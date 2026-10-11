@@ -124,6 +124,13 @@ nix_exception *
 nix_exception_from_rust(const char * message, size_t length, nix_rust_value value) NIX_FUTURE_ABI_NOEXCEPT;
 
 /**
+ * Take the C++ exception that the last failed upward call with `Result`
+ * kept on this thread (`nix/rust/boundary.hh`), if its `what()` is
+ * `message`. Otherwise return null.
+ */
+nix_exception * nix_exception_take_kept(const char * message, size_t length) NIX_FUTURE_ABI_NOEXCEPT;
+
+/**
  * Take the error that the last failed bridge function of libnixrust kept
  * on this thread, as an exception, if its message is `message`. Otherwise
  * return null. `nix::rs::call` calls it; see `nix_rust_future::bridge`.

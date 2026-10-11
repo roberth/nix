@@ -43,6 +43,9 @@ public:
      *
      * The write checks `cancel` right after the call. A test can block
      * here until `cancel` is set, to interrupt the write in this phase.
+     *
+     * Both functions may throw. The exception stops the write, and the
+     * caller of the write gets it unchanged.
      */
     virtual void reachedPhase(::rust::Str phase, const CancelToken & cancel) const = 0;
 };

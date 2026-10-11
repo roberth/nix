@@ -1,9 +1,11 @@
 #include "nix/rust/future-abi.hh"
+#include "nix/rust/boundary.hh"
 
 #include <atomic>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <utility>
 
 /* The C functions of `future-abi.h` that concern exceptions. They are in
    libnixrust because both the Rust code in libnixrust and the C++ libraries
@@ -74,6 +76,34 @@ RustException::RustException(const std::string & message, nix_rust_value value)
 
 RustException::~RustException() = default;
 
+namespace {
+
+/**
+ * The exception that the last failed upward call kept, with its message.
+ */
+struct KeptException
+{
+    std::exception_ptr exception;
+    std::string message;
+};
+
+thread_local KeptException kept;
+
+} // namespace
+
+std::string keepCurrentException() noexcept
+{
+    kept.exception = std::current_exception();
+    try {
+        std::rethrow_exception(kept.exception);
+    } catch (const std::exception & e) {
+        kept.message = e.what();
+    } catch (...) {
+        kept.message = "unknown C++ exception";
+    }
+    return kept.message;
+}
+
 void rethrowRustError(const ::rust::Error & error)
 {
     std::string_view message = error.what();
@@ -117,6 +147,15 @@ nix_exception * nix_exception_from_rust(const char * message, size_t length, nix
     if (value.kind == NIX_RUST_PANIC)
         text = "Rust panic: " + text;
     return new nix_exception{std::make_exception_ptr(nix::rs::RustException(text, value))};
+}
+
+nix_exception * nix_exception_take_kept(const char * message, size_t length) noexcept
+{
+    auto & kept = nix::rs::kept;
+    auto exception = std::exchange(kept.exception, nullptr);
+    if (!exception || kept.message != std::string_view(message, length))
+        return nullptr;
+    return new nix_exception{std::move(exception)};
 }
 
 bool nix_exception_take_rust_value(const nix_exception * exception, const void * owner, nix_rust_value * out) noexcept

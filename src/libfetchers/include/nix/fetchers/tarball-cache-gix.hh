@@ -67,7 +67,9 @@ Task<UnpackedTree> unpackIntoTarballCache(std::filesystem::path repoDir, ref<Tra
 /**
  * A function that a write to the tarball cache calls when it reaches a
  * phase, on the thread of the write. `isCancelled` tells whether the write
- * is cancelled; the write checks it again right after the call. Phases:
+ * is cancelled; the write checks it again right after the call. An
+ * exception from the hook stops the write, and reaches the caller of the
+ * write unchanged, also through the Rust code. Phases:
  *
  * - `unpack`: after the first file of an archive.
  * - `flush`: the pack is on disk under a temporary name, and its index is

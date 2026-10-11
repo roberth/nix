@@ -80,13 +80,18 @@ mod ffi {
 
         type TarballCacheHooks;
 
+        // The upward calls that may throw return `Result`: cxx catches the
+        // exception, and `From<cxx::Exception> for Error` gets the original
+        // back (`nix/rust/boundary.hh`). `cancel` and `hooks` are
+        // `noexcept` in C++.
+
         #[cxx_name = "logDebug"]
-        fn log_debug(self: &TarballCacheHooks, message: &str);
+        fn log_debug(self: &TarballCacheHooks, message: &str) -> Result<()>;
 
         /// A write reached `phase`. A test can hold the write still here
-        /// until `cancel` is set.
+        /// until `cancel` is set, or throw to stop it.
         #[cxx_name = "reachedPhase"]
-        fn reached_phase(self: &TarballCacheHooks, phase: &str, cancel: &CancelToken);
+        fn reached_phase(self: &TarballCacheHooks, phase: &str, cancel: &CancelToken) -> Result<()>;
 
         /// Reads an archive and writes its contents with a writer. Runs on
         /// the thread of a `tarball_cache_unpack` future.
@@ -406,7 +411,7 @@ impl TarballCacheWriter {
         self.lock().entries.len()
     }
 
-    fn flush(&self, cancel: &CancelToken, hooks: &TarballCacheHooks) -> Result<(), String> {
+    fn flush(&self, cancel: &CancelToken, hooks: &TarballCacheHooks) -> Result<(), Error> {
         let entries = std::mem::take(&mut self.lock().entries);
         if entries.is_empty() {
             return Ok(());
@@ -417,7 +422,7 @@ impl TarballCacheWriter {
                 hooks.log_debug(&format!(
                     "wrote {} objects to the tarball cache as {name}.{{pack,idx}}",
                     entries.len()
-                ));
+                ))?;
                 Ok(())
             }
             Err(e) => {
@@ -470,7 +475,7 @@ fn write_pack(
     entries: &[PackEntry],
     cancel: &CancelToken,
     hooks: &TarballCacheHooks,
-) -> Result<String, String> {
+) -> Result<String, Error> {
     let io_error = |what: &str| {
         let what = what.to_owned();
         move |e: std::io::Error| format!("{what} in '{}': {e}", pack_dir.display())
@@ -531,7 +536,7 @@ fn write_pack(
     };
 
     // The pack is on disk under a temporary name, and its index is not.
-    hooks.reached_phase("flush", cancel);
+    hooks.reached_phase("flush", cancel)?;
     cancel.check()?;
 
     let mut index_file = tempfile::Builder::new()
@@ -801,7 +806,7 @@ fn unpack(
         return Err(unsafe { Error::from_exception(exception as *mut NixException) });
     }
 
-    writer.flush(cancel, unpacker.hooks()).map_err(Error::msg)?;
+    writer.flush(cancel, unpacker.hooks())?;
     Ok(out)
 }
 
@@ -932,7 +937,7 @@ impl TarballCacheWriter {
     }
 
     fn bridge_flush(&self, cancel: &CancelToken, hooks: &TarballCacheHooks) -> Result<(), BridgeError> {
-        bridge(|| Ok(self.flush(cancel, hooks)?))
+        bridge(|| self.flush(cancel, hooks))
     }
 
     fn bridge_pending_objects(&self) -> Result<usize, BridgeError> {
