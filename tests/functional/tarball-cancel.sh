@@ -56,8 +56,10 @@ fetchExpr() {
 # Interrupt a fetch of URL $1 in PHASE $2, once the file $3 contains the
 # text $4. A phase other than the empty one needs the plugin in
 # `tarball-cache-pause-plugin`, which holds the write still in that phase.
+# With $5 = fiber, `nix-instantiate` evaluates on a fiber
+# (`_NIX_EVAL_ON_FIBER`), which suspends in the fetch.
 interruptFetch() {
-    local url=$1 phase=$2 file=$3 text=$4
+    local url=$1 phase=$2 file=$3 text=$4 mode=${5:-}
     rm -rf "$TEST_HOME/.cache"
     local err=$TEST_ROOT/nix-$phase.err
     : > "$err"
@@ -66,8 +68,12 @@ interruptFetch() {
     if [[ -n $phase ]]; then
         pluginArgs=(--option plugin-files "$_NIX_TEST_TARBALL_CACHE_PAUSE_PLUGIN")
     fi
-    _NIX_TEST_TARBALL_CACHE_PAUSE=$phase \
-        nix "${pluginArgs[@]}" eval --impure --raw --expr "$(fetchExpr "$url")" 2> "$err" &
+    if [[ $mode == fiber ]]; then
+        _NIX_EVAL_ON_FIBER=1 nix-instantiate --eval --expr "$(fetchExpr "$url")" 2> "$err" &
+    else
+        _NIX_TEST_TARBALL_CACHE_PAUSE=$phase \
+            nix "${pluginArgs[@]}" eval --impure --raw --expr "$(fetchExpr "$url")" 2> "$err" &
+    fi
     local pid=$!
 
     waitForText "$file" "$text"
@@ -85,7 +91,7 @@ interruptFetch() {
     wait "$pid" || status=$?
     end=${EPOCHREALTIME/[.,]/}
 
-    echo "interrupted in phase '$phase'; exited with $status after $(( (end - start) / 1000 )) ms"
+    echo "interrupted in phase '$phase'${mode:+ on a $mode}; exited with $status after $(( (end - start) / 1000 )) ms"
     (( status != 0 ))
     (( end - start < 5000000 ))
     grepQuiet "interrupted by the user" "$err"
@@ -105,6 +111,12 @@ for backend in reactor thread; do
     # During the download: the server stalls after 500 kB, while the
     # unpacking waits for more data. The interrupt also stops the transfer.
     interruptFetch "http://127.0.0.1:$port/stall/tree.tar.gz" "" "$serverLog" "stalled tree.tar.gz"
+    waitForText "$serverLog" "closed by client tree.tar.gz 500000"
+
+    # The same, with the evaluation on a fiber. The interrupt drops the
+    # evaluation while it is suspended in the fetch, which drops the fetch.
+    : > "$serverLog"
+    interruptFetch "http://127.0.0.1:$port/stall/tree.tar.gz" "" "$serverLog" "stalled tree.tar.gz" fiber
     waitForText "$serverLog" "closed by client tree.tar.gz 500000"
 
     # A static Nix cannot load the plugin. The unit tests in

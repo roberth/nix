@@ -11,6 +11,8 @@
 #include "nix/store/local-fs-store.hh"
 #include "nix/cmd/common-eval-args.hh"
 #include "nix/cmd/legacy.hh"
+#include "nix/util/environment-variables.hh"
+#include "nix/util/fiber.hh"
 #include "man-pages.hh"
 
 #include <iostream>
@@ -188,19 +190,29 @@ static int main_nix_instantiate(int argc, char ** argv)
             return 0;
         }
 
-        if (readStdin) {
-            Expr * e = state->parseStdin();
-            processExpr(
-                *state, attrPaths, parseOnly, strict, autoArgs, evalOnly, outputKind, xmlOutputSourceLocation, e);
-        } else if (files.empty() && !fromArgs)
-            files.push_back("./default.nix");
+        auto evaluate = [&]() {
+            if (readStdin) {
+                Expr * e = state->parseStdin();
+                processExpr(
+                    *state, attrPaths, parseOnly, strict, autoArgs, evalOnly, outputKind, xmlOutputSourceLocation, e);
+            } else if (files.empty() && !fromArgs)
+                files.push_back("./default.nix");
 
-        for (auto & i : files) {
-            Expr * e = fromArgs ? state->parseExprFromString(i, state->rootPath("."))
-                                : state->parseExprFromFile(resolveExprPath(lookupFileArg(*state, i)));
-            processExpr(
-                *state, attrPaths, parseOnly, strict, autoArgs, evalOnly, outputKind, xmlOutputSourceLocation, e);
-        }
+            for (auto & i : files) {
+                Expr * e = fromArgs ? state->parseExprFromString(i, state->rootPath("."))
+                                    : state->parseExprFromFile(resolveExprPath(lookupFileArg(*state, i)));
+                processExpr(
+                    *state, attrPaths, parseOnly, strict, autoArgs, evalOnly, outputKind, xmlOutputSourceLocation, e);
+            }
+        };
+
+        /* A switch for development: run the evaluation on a fiber, so
+           that it suspends in a tarball fetch and a user interrupt
+           cancels it there (`runOnFiber`). */
+        if (getEnv("_NIX_EVAL_ON_FIBER") == "1")
+            runBlocking(runOnFiber(evaluate));
+        else
+            evaluate();
 
         state->maybePrintStats();
 
