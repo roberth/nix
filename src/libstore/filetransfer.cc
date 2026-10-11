@@ -1076,6 +1076,12 @@ struct curlFileTransfer : public FileTransfer, public std::enable_shared_from_th
         std::map<curl_socket_t, std::unique_ptr<FdWatch>> sockets;
 
         bool shutDown = false;
+
+        /**
+         * Whether a function that handles a timeout of 0 ms is posted and
+         * has not run.
+         */
+        bool timeoutPosted = false;
     };
 
     OnReactor reactor;
@@ -1410,7 +1416,20 @@ struct curlFileTransfer : public FileTransfer, public std::enable_shared_from_th
         auto & self = *static_cast<curlFileTransfer *>(userp);
         if (timeoutMs < 0)
             self.reactor.curlTimer->cancel();
-        else
+        else if (timeoutMs == 0) {
+            /* "As soon as possible": a posted function, not a timer, whose
+               expiry tokio rounds up to the next millisecond. curl asks for
+               this at each step of a transfer. Not called here: curl must
+               not be reentered from its callback. */
+            self.reactor.curlTimer->cancel();
+            if (!std::exchange(self.reactor.timeoutPosted, true))
+                postToReactor([weak = self.weak_from_this()]() {
+                    if (auto self = weak.lock()) {
+                        self->reactor.timeoutPosted = false;
+                        self->socketAction(CURL_SOCKET_TIMEOUT, 0);
+                    }
+                });
+        } else
             self.reactor.curlTimer->set(std::chrono::milliseconds(timeoutMs));
         return 0;
     }
