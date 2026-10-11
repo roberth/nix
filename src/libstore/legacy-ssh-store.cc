@@ -413,6 +413,19 @@ void LegacySSHStore::computeFSClosure(
         out.insert(i);
 }
 
+Task<StorePathSet> LegacySSHStore::computeFSClosureAsync(
+    StorePathSet paths, StorePathSet known, bool flipDirection, bool includeOutputs, bool includeDerivers)
+{
+    if (flipDirection || includeDerivers)
+        co_return co_await Store::computeFSClosureAsync(
+            std::move(paths), std::move(known), flipDirection, includeOutputs, includeDerivers);
+
+    /* One request to the remote side, which blocks. The protocol has no
+       way to cancel it. */
+    computeFSClosure(paths, known, flipDirection, includeOutputs, includeDerivers);
+    co_return known;
+}
+
 StorePathSet LegacySSHStore::queryValidPaths(const StorePathSet & paths, SubstituteFlag maybeSubstitute)
 {
     auto conn(connections->get());

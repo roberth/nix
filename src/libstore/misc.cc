@@ -25,6 +25,14 @@ void Store::computeFSClosure(
     bool includeOutputs,
     bool includeDerivers)
 {
+    /* Assign only on success, so that an error leaves `paths_` as it was
+       instead of half-filled. */
+    paths_ = runBlocking(computeFSClosureAsync(startPaths, paths_, flipDirection, includeOutputs, includeDerivers));
+}
+
+Task<StorePathSet> Store::computeFSClosureAsync(
+    StorePathSet startPaths, StorePathSet known, bool flipDirection, bool includeOutputs, bool includeDerivers)
+{
     std::function<Task<StorePathSet>(const StorePath & path)> queryDeps;
     if (flipDirection)
         queryDeps = [this, includeOutputs, includeDerivers](const StorePath & path) -> Task<StorePathSet> {
@@ -64,9 +72,8 @@ void Store::computeFSClosure(
             co_return res;
         };
 
-    /* Assign only on success, so that an error leaves `paths_` as it was
-       instead of half-filled. */
-    paths_ = runBlocking(computeClosure<StorePath>(startPaths, GetEdgesTask<StorePath>(std::move(queryDeps)), paths_));
+    co_return co_await computeClosure<StorePath>(
+        std::move(startPaths), GetEdgesTask<StorePath>(std::move(queryDeps)), std::move(known));
 }
 
 void Store::computeFSClosure(

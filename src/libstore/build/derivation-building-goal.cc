@@ -326,8 +326,7 @@ Task<DerivationBuildingGoal::Result> DerivationBuildingGoal::tryToBuild()
 
     /* Determine the full set of input paths. */
 
-    StorePathSet inputPaths;
-    worker.store.computeFSClosure(drv->inputs, inputPaths);
+    StorePathSet inputPaths = co_await worker.store.computeFSClosureAsync(drv->inputs);
 
     debug("added input paths %s", concatMapStringsSep(", ", inputPaths, [&](auto & p) {
               return "'" + worker.store.printStorePath(p) + "'";
@@ -934,8 +933,9 @@ Task<DerivationBuildingGoal::LocalBuildOutcome> DerivationBuildingGoal::buildLoc
             for (auto & i : defaultPathsInChroot)
                 try {
                     if (worker.store.isInStore(i.second.source.string()))
-                        worker.store.computeFSClosure(
-                            worker.store.toStorePath(i.second.source.string()).first, closure);
+                        /* Copy `closure`, so that an error keeps it. */
+                        closure = co_await worker.store.computeFSClosureAsync(
+                            {worker.store.toStorePath(i.second.source.string()).first}, closure);
                 } catch (InvalidPath & e) {
                 } catch (Error & e) {
                     e.addTrace({}, "while processing sandbox path %s", PathFmt(i.second.source));

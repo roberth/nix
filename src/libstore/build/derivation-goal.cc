@@ -356,7 +356,7 @@ Task<BuildResult> DerivationGoal::repairClosure()
 
     StorePathSet outputClosure;
     if (auto * mPath = get(outputs, wantedOutput)) {
-        worker.store.computeFSClosure(*mPath, outputClosure);
+        outputClosure = co_await worker.store.computeFSClosureAsync({*mPath});
     }
 
     /* Filter out our own outputs (which we have already checked). */
@@ -371,7 +371,7 @@ Task<BuildResult> DerivationGoal::repairClosure()
     /* If we're working from an in-memory derivation with no in-store
        `*.drv` file, we cannot do this part. */
     if (worker.store.isValidPath(drvPath))
-        worker.store.computeFSClosure(drvPath, inputClosure);
+        inputClosure = co_await worker.store.computeFSClosureAsync({drvPath});
 
     std::map<StorePath, StorePath> outputsToDrv;
     for (auto & i : inputClosure)

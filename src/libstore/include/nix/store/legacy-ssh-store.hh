@@ -158,6 +158,13 @@ public:
         bool includeOutputs = false,
         bool includeDerivers = false) override;
 
+    Task<StorePathSet> computeFSClosureAsync(
+        StorePathSet paths,
+        StorePathSet known = {},
+        bool flipDirection = false,
+        bool includeOutputs = false,
+        bool includeDerivers = false) override;
+
     StorePathSet queryValidPaths(const StorePathSet & paths, SubstituteFlag maybeSubstitute = NoSubstitute) override;
 
     /**
