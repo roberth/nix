@@ -2,6 +2,7 @@
 
 #include "nix/util/error.hh"
 #include "nix/util/reactor.hh"
+#include "nix/util/task-thread.hh"
 #include "nix/util/signals.hh"
 
 #include <chrono>
@@ -383,5 +384,49 @@ TEST(Reactor, anInterruptCancelsTheRunAndWaitsForItsCleanups)
 }
 
 #endif
+
+TEST(Reactor, aDroppedThreadTaskDefersItsJoinToTheRun)
+{
+    ReactorTestLog log;
+    std::atomic<bool> started = false;
+
+    /* The function takes 500 ms to stop after its cancellation, like a
+       blocking call that checks rarely. */
+    auto slowToStop = runInThread<void>([&]() {
+        auto callback = onThreadCancelled([&]() { log.add("thread cancelled"); });
+        started = true;
+        while (log.get().empty())
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        log.add("thread done");
+    });
+    auto whenStarted = [](const std::atomic<bool> & started) -> Task<void> {
+        while (!started)
+            co_await sleepFor(std::chrono::milliseconds(1));
+    };
+
+    std::thread runner([&]() {
+        /* The race cancels the thread task on the reactor thread. */
+        runOnReactor(race(std::move(slowToStop), whenStarted(started)));
+        log.add("runOnReactor returned");
+    });
+
+    while (log.get().empty())
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    auto start = ReactorClock::now();
+    onReactor([&]() { log.add("reactor is free"); });
+    auto latency = ReactorClock::now() - start;
+    runner.join();
+
+    EXPECT_LT(latency, std::chrono::milliseconds(250));
+    EXPECT_EQ(
+        log.get(),
+        (std::vector<std::string>{
+            "thread cancelled",
+            "reactor is free",
+            "thread done",
+            "runOnReactor returned",
+        }));
+}
 
 } // namespace nix

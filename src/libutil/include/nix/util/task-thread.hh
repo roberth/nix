@@ -5,12 +5,14 @@
  * Blocking code on its own thread, as a task.
  */
 
+#include "nix/util/reactor.hh"
 #include "nix/util/task.hh"
 #include "nix/util/signals.hh"
 
 #include <atomic>
 #include <list>
 #include <mutex>
+#include <optional>
 #include <thread>
 #include <variant>
 
@@ -29,10 +31,12 @@ namespace nix {
  * the destruction until it returns. The thread also receives user
  * interrupts, as `ReceiveInterrupts` describes.
  *
- * The destruction blocks the thread that destroys the task. That is
- * acceptable for a thread that does nothing else while it waits, such as
- * the build `Worker`, but not for an executor thread that other tasks
- * share.
+ * Outside of a run on the reactor, the destruction blocks the thread that
+ * destroys the task. That is acceptable for a thread that does nothing
+ * else while it waits, such as the build `Worker`. In a run on the reactor
+ * (`runOnReactor`), the wait is a cleanup of the run instead, so that the
+ * reactor thread does not block; see "Asynchronous drop" in
+ * `doc/manual/source/development/async.md`.
  */
 template<typename T, typename F>
 Task<T> runInThread(F fn);
@@ -117,6 +121,61 @@ struct ThreadState
     std::shared_ptr<ThreadCancellation> cancellation = std::make_shared<ThreadCancellation>();
 };
 
+/**
+ * Completes when the thread of `state` has stored its result, and is about
+ * to end.
+ */
+template<typename T>
+struct ThreadDoneLeaf : LeafAwaiter
+{
+    std::shared_ptr<ThreadState<T>> state;
+
+    explicit ThreadDoneLeaf(std::shared_ptr<ThreadState<T>> state)
+        : state(std::move(state))
+    {
+    }
+
+    nix_poll pollLeaf(const Waker & waker) override
+    {
+        Waker old;
+        std::lock_guard lock(state->mutex);
+        if (state->result.index() != 0)
+            return NIX_POLL_READY;
+        replaceWaker(state->waker, waker, old);
+        return NIX_POLL_PENDING;
+    }
+
+    void await_resume() noexcept {}
+};
+
+/**
+ * Joins a thread when it is destroyed, also if the task that owns it is
+ * dropped before the thread ended.
+ */
+struct JoinOnDestruction
+{
+    std::thread thread;
+
+    ~JoinOnDestruction()
+    {
+        if (thread.joinable())
+            thread.join();
+    }
+};
+
+/**
+ * The wait of a dropped `ThreadLeaf`, as a cleanup of the run on the
+ * reactor.
+ */
+template<typename T>
+Task<void> joinWhenDone(std::shared_ptr<ThreadState<T>> state, std::thread thread)
+{
+    JoinOnDestruction joiner{std::move(thread)};
+    co_await ThreadDoneLeaf<T>(std::move(state));
+    /* `joiner` joins the thread, which has stored its result and returns
+       at once. */
+}
+
 template<typename T, typename F>
 struct ThreadLeaf : LeafAwaiter
 {
@@ -124,6 +183,12 @@ struct ThreadLeaf : LeafAwaiter
     std::shared_ptr<ThreadState<T>> state = std::make_shared<ThreadState<T>>();
     std::thread thread;
     bool started = false;
+
+    /**
+     * The cleanup scope of the run on the reactor that polled this leaf
+     * first, if any.
+     */
+    std::optional<CleanupScope> scope;
 
     explicit ThreadLeaf(F fn)
         : fn(std::move(fn))
@@ -142,7 +207,10 @@ struct ThreadLeaf : LeafAwaiter
                 old = std::move(state->waker);
             }
             state->cancellation->cancel();
-            thread.join();
+            if (scope && *scope)
+                scope->defer(joinWhenDone<T>(state, std::move(thread)));
+            else
+                thread.join();
         }
     }
 
@@ -150,6 +218,7 @@ struct ThreadLeaf : LeafAwaiter
     {
         if (!started) {
             started = true;
+            scope.emplace(CleanupScope::current());
             thread = std::thread([state = state, fn = std::move(fn)]() mutable {
                 ThreadCancellation::enter(state->cancellation);
                 ReceiveInterrupts receiveInterrupts;
