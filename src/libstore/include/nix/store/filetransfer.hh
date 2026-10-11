@@ -5,6 +5,10 @@
 #include <cstdint>
 #include <string>
 #include <future>
+#include <condition_variable>
+#include <exception>
+#include <functional>
+#include <mutex>
 
 #include "nix/util/logging.hh"
 #include "nix/util/types.hh"
@@ -411,6 +415,76 @@ struct FileTransferResult
 
 class Store;
 
+/**
+ * The body of a transfer that is in progress, as a `Source` for a thread
+ * other than the one that drives the transfer. See
+ * `FileTransfer::transferStreaming()`.
+ *
+ * A reader blocks until data arrives. When the buffer is full, the
+ * transfer pauses until the reader has taken the data, so that a slow
+ * reader does not make the buffer grow without limit.
+ */
+class TransferStream final : public Source
+{
+public:
+    /**
+     * Read the next bytes of the body. Blocks until at least one byte is
+     * available. At the end of the body, throws `EndOfFile`. If the
+     * transfer fails, throws its error, with its dynamic type. After
+     * `close()`, throws `Cancelled`.
+     */
+    size_t read(char * data, size_t len) override;
+
+    /**
+     * Make the current and all later reads throw `Cancelled`. A reader
+     * that the owner of the transfer stops uses this to wake up from a
+     * blocking read. Thread-safe.
+     */
+    void close();
+
+private:
+    friend struct FileTransfer;
+
+    struct State
+    {
+        std::string data;
+
+        /**
+         * The number of bytes at the start of `data` that a reader has
+         * taken already.
+         */
+        size_t taken = 0;
+
+        bool finished = false;
+        std::exception_ptr error;
+        bool closed = false;
+        bool paused = false;
+
+        /**
+         * Unpause the transfer. Set when the transfer is enqueued.
+         */
+        std::function<void()> unpause;
+    };
+
+    std::mutex mutex;
+    std::condition_variable available;
+    State state;
+
+    /**
+     * Append data that arrived, and say whether the transfer must pause
+     * because the buffer is full. Called on the transfer thread.
+     */
+    PauseTransfer push(std::string_view data);
+
+    /**
+     * Mark the end of the body, with the error of the transfer if it
+     * failed.
+     */
+    void finish(std::exception_ptr error);
+
+    void setUnpause(std::function<void()> unpause);
+};
+
 struct FileTransfer
 {
 protected:
@@ -463,6 +537,21 @@ public:
      * This `FileTransfer` must outlive the task.
      */
     Task<FileTransferResult> transfer(FileTransferRequest request);
+
+    /**
+     * A data transfer as a task, whose body goes to `stream` while the
+     * transfer runs, for a reader on another thread. The task completes
+     * when the transfer does. The reader sees the end of the body, or the
+     * error of the transfer, after the last data.
+     *
+     * Destroying the task before it completes cancels the transfer, like
+     * `transfer()`. It does not close `stream`: a reader that the owner of
+     * the task stops at the same time must be woken with
+     * `TransferStream::close()`.
+     *
+     * `request.dataCallback` must be empty: the task sets it.
+     */
+    Task<FileTransferResult> transferStreaming(FileTransferRequest request, ref<TransferStream> stream);
 
     std::future<FileTransferResult> enqueueFileTransfer(const FileTransferRequest & request);
 

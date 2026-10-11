@@ -50,6 +50,7 @@ sources = files(
   'filetransfer-cancel.cc',
   'filetransfer-request.cc',
   'filetransfer-retry.cc',
+  'filetransfer-stream.cc',
   'http-binary-cache-store.cc',
   'legacy-ssh-store.cc',
   'local-binary-cache-store.cc',

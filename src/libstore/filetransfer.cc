@@ -1402,6 +1402,130 @@ Task<FileTransferResult> FileTransfer::transfer(FileTransferRequest request)
         });
 }
 
+size_t TransferStream::read(char * data, size_t len)
+{
+    std::function<void()> unpause;
+    size_t n;
+
+    {
+        std::unique_lock lock(mutex);
+        available.wait(lock, [&] { return state.closed || state.taken < state.data.size() || state.finished; });
+
+        if (state.closed)
+            throw Cancelled("reading the body of a transfer was cancelled");
+
+        if (state.taken == state.data.size()) {
+            /* `finished` is set and all data is taken. */
+            if (state.error)
+                std::rethrow_exception(state.error);
+            throw EndOfFile("end of the body of the transfer");
+        }
+
+        n = std::min(len, state.data.size() - state.taken);
+        std::memcpy(data, state.data.data() + state.taken, n);
+        state.taken += n;
+
+        if (state.taken == state.data.size()) {
+            state.data.clear();
+            state.taken = 0;
+            /* The buffer is empty, so let the transfer continue. */
+            if (state.paused && state.unpause) {
+                state.paused = false;
+                unpause = state.unpause;
+            }
+        }
+    }
+
+    /* Outside the lock: unpausing takes the lock of the transfer thread,
+       which may be waiting in `push()` for ours. */
+    if (unpause)
+        unpause();
+
+    return n;
+}
+
+void TransferStream::close()
+{
+    {
+        std::lock_guard lock(mutex);
+        state.closed = true;
+    }
+    available.notify_all();
+}
+
+PauseTransfer TransferStream::push(std::string_view data)
+{
+    {
+        std::lock_guard lock(mutex);
+        if (state.closed)
+            /* Nobody reads any more; the owner cancels the transfer. */
+            return PauseTransfer::No;
+        state.data.append(data);
+    }
+    available.notify_all();
+
+    std::lock_guard lock(mutex);
+    if (state.data.size() - state.taken <= fileTransferSettings.downloadBufferSize)
+        return PauseTransfer::No;
+    state.paused = true;
+    return PauseTransfer::Yes;
+}
+
+void TransferStream::finish(std::exception_ptr error)
+{
+    {
+        std::lock_guard lock(mutex);
+        state.finished = true;
+        state.error = std::move(error);
+    }
+    available.notify_all();
+}
+
+void TransferStream::setUnpause(std::function<void()> unpause)
+{
+    bool unpauseNow = false;
+    {
+        std::lock_guard lock(mutex);
+        state.unpause = unpause;
+        /* The reader may have emptied the buffer before the transfer was
+           enqueued completely, and found no way to unpause it. */
+        if (state.paused && state.taken == state.data.size()) {
+            state.paused = false;
+            unpauseNow = true;
+        }
+    }
+    if (unpauseNow)
+        unpause();
+}
+
+Task<FileTransferResult> FileTransfer::transferStreaming(FileTransferRequest request, ref<TransferStream> stream)
+{
+    assert(!request.dataCallback);
+    request.dataCallback = [stream](std::string_view data) { return stream->push(data); };
+
+    co_return co_await callbackToTask<FileTransferResult>(
+        [this, request = std::move(request), stream](Callback<FileTransferResult> callback) {
+            auto handle = enqueueFileTransfer(
+                request,
+                {[stream, callback = std::make_shared<Callback<FileTransferResult>>(std::move(callback))](
+                     std::future<FileTransferResult> fut) {
+                    /* Tell the reader before the task completes, so that a
+                       reader never waits for data after its transfer
+                       ended. */
+                    try {
+                        auto result = fut.get();
+                        stream->finish(nullptr);
+                        (*callback)(std::move(result));
+                    } catch (...) {
+                        stream->finish(std::current_exception());
+                        callback->rethrow();
+                    }
+                }});
+            stream->setUnpause([this, handle]() { unpauseTransfer(handle); });
+            return [this, handle]() { cancelTransfer(handle); };
+        });
+}
+
 FileTransferResult FileTransfer::download(const FileTransferRequest & request)
 {
     return enqueueFileTransfer(request).get();
