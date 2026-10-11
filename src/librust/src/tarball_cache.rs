@@ -39,6 +39,7 @@ use gix_hash::ObjectId;
 use gix_object::WriteTo as _;
 
 use crate::future::{AbiType, Error, NixException, NixFuture, export_future};
+use crate::reactor::CleanupScope;
 
 #[cxx::bridge(namespace = "nix::rs")]
 mod ffi {
@@ -627,8 +628,9 @@ fn make_read_only(path: &Path) -> std::io::Result<()> {
 // Unpacking as a future.
 //
 // The future runs the blocking work, parsing and writing, on a thread of
-// its own, because no Rust executor exists in Nix: C++ polls the future
-// (`runBlocking`). The thread wakes the future when it is done.
+// its own, because the work blocks, and the thread that polls the future
+// must not block: it can be the reactor thread. The thread wakes the
+// future when it is done.
 
 /// What the thread of an unpack future shares with the future.
 struct UnpackShared {
@@ -647,6 +649,12 @@ struct UnpackJob {
     shared: Arc<UnpackShared>,
     unpacker: Arc<UniquePtr<TarballUnpacker>>,
     thread: Option<thread::JoinHandle<()>>,
+    /// Receives a message when the thread is about to end, so that a wait
+    /// for the thread can be a future.
+    finished: Option<tokio::sync::oneshot::Receiver<()>>,
+    /// The cleanup scope of the run on the reactor that polls the future,
+    /// if any. The drop gives its wait to the scope.
+    scope: Option<CleanupScope>,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -660,11 +668,23 @@ impl Drop for UnpackJob {
         };
         self.shared.cancel.cancel();
         self.unpacker.cancel();
-        // Wait for the thread. After the drop, nothing writes to the cache
+        // Wait for the thread. After the wait, nothing writes to the cache
         // and no temporary file is left. The thread checks the token while
         // it waits for data, between the entries of the archive, and
-        // during the flush, so the wait is short.
-        let _ = thread.join();
+        // during the flush, so the wait is short, but it is a wait: on the
+        // reactor thread, it is a cleanup of the run, which completes only
+        // after it (`reactor.rs`).
+        match (&self.scope, self.finished.take()) {
+            (Some(scope), Some(finished)) => scope.defer(async move {
+                let _ = finished.await;
+                // The thread sent its last message, so this returns at
+                // once.
+                let _ = thread.join();
+            }),
+            _ => {
+                let _ = thread.join();
+            }
+        }
     }
 }
 
@@ -675,7 +695,11 @@ fn tarball_cache_unpack(objects_dir: &str, unpacker: UniquePtr<TarballUnpacker>)
     export_future(poll_fn(move |cx| {
         // Lazy, like any future: the thread starts on the first poll.
         let job = job.get_or_insert_with(|| {
-            start_unpack(objects_dir.clone(), unpacker.take().expect("the unpacker is used once"))
+            start_unpack(
+                objects_dir.clone(),
+                unpacker.take().expect("the unpacker is used once"),
+                CleanupScope::current(),
+            )
         });
         // Store the waker before looking for the result. The thread stores
         // the result before it takes the waker, so either this poll sees
@@ -694,13 +718,14 @@ fn tarball_cache_unpack(objects_dir: &str, unpacker: UniquePtr<TarballUnpacker>)
     }))
 }
 
-fn start_unpack(objects_dir: String, unpacker: UniquePtr<TarballUnpacker>) -> UnpackJob {
+fn start_unpack(objects_dir: String, unpacker: UniquePtr<TarballUnpacker>, scope: Option<CleanupScope>) -> UnpackJob {
     let shared = Arc::new(UnpackShared {
         cancel: Arc::new(CancelToken(AtomicBool::new(false))),
         result: Mutex::new(None),
         waker: Mutex::new(None),
     });
     let unpacker = Arc::new(unpacker);
+    let (finish, finished) = tokio::sync::oneshot::channel();
 
     let spawned = {
         let shared = shared.clone();
@@ -713,6 +738,8 @@ fn start_unpack(objects_dir: String, unpacker: UniquePtr<TarballUnpacker>) -> Un
             if let Some(waker) = waker {
                 waker.wake();
             }
+            drop((shared, unpacker));
+            let _ = finish.send(());
         })
     };
 
@@ -730,6 +757,8 @@ fn start_unpack(objects_dir: String, unpacker: UniquePtr<TarballUnpacker>) -> Un
         shared,
         unpacker,
         thread,
+        finished: Some(finished),
+        scope,
     }
 }
 
