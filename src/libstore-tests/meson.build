@@ -75,6 +75,7 @@ sources = files(
   'store-open.cc',
   'store-reference.cc',
   'uds-remote-store.cc',
+  'wait-queue.cc',
   'worker-protocol.cc',
   'worker-substitution.cc',
 )
