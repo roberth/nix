@@ -100,9 +100,15 @@ libarchive turns an exception of its input into a message, so the unpacker remem
 
 The limits of the guarantee:
 
-- Joining the thread blocks the thread that drops the future until the unpacking thread reaches its next check.
-  The longest wait is the time to write one file of the archive: the tar adapter writes files on a pool of threads, and the pool waits for the files that it is writing.
+- Joining the thread blocks the thread that drops the future until the unpacking threads reach their next check.
+  The tar adapter writes files on a pool of at most 10 threads.
+  After a cancellation, a pool thread skips the files that are still queued, and the writer stops the file that it is hashing or compressing before its next piece of 1 MiB (`CHUNK` in `tarball_cache.rs`).
+  The wait is therefore bounded by the time to hash and compress 1 MiB on each pool thread, plus 10 ms for the parse to notice while it waits for room in the backlog.
   A future executor would need an asynchronous drop instead, for example a task that joins the thread.
+- The backlog of the tar adapter, the files that are parsed but not yet written, holds at most 2 files per pool thread and 64 MiB; the parse waits when it is full.
+  The parse is often faster than the writers, for example in a debug build or on a machine with few cores.
+  Without the bound, it parsed the whole archive ahead of the writers, with the contents of all queued files in memory, and a cancellation waited until the writers had drained the queue: up to 7.9 s in a debug build.
+  A single file that is larger than 64 MiB is admitted when the backlog is empty, so the memory in the backlog is at most 64 MiB or one file.
 - After the pack and its index are in place, a cancellation does not remove them.
   The pack is complete and valid, and the next fetch of the same tarball finds its objects.
 - The libgit2 implementation (`_NIX_TARBALL_CACHE_BACKEND=libgit2`) does not run as a task.
@@ -156,15 +162,30 @@ Neither implementation does that today.
 ### The task against the synchronous unpacking
 
 The gitoxide implementation unpacked synchronously on the calling thread before it ran as a task.
-This comparison builds both versions of Nix in the same configuration, with the method above (7 runs after 1 warm-up, empty cache).
+This comparison builds three versions of Nix in the same configuration: the synchronous unpacking, the first version of the task, and the task with the bounded backlog and the cancellation checks of the tar adapter.
+The method is the one above (mean of 7 runs after 1 warm-up, empty cache; the range is the minimum and maximum).
 
-| Input | Synchronous | Task |
-|---|---|---|
-| rev1, uncompressed tar | 2.76 s (2.72–2.84), 4.8 s user | 2.81 s (2.74–2.88), 4.8 s user |
-| rev1, gzip | 3.01 s (2.95–3.03), 5.3 s user | 3.00 s (2.98–3.05), 5.2 s user |
+| Input | Synchronous | Task, first version | Task, bounded backlog |
+|---|---|---|---|
+| rev1, uncompressed tar | 2.78 s (2.73–2.83) | 2.85 s (2.81–2.88) | 2.93 s (2.88–2.96) |
+| rev1, gzip | 3.05 s (2.97–3.12) | 3.05 s (3.01–3.10) | 3.07 s (3.02–3.13) |
 
-The ranges overlap, so the task costs no measurable time.
+With gzip, as Nix fetches tarballs in practice, the three are equal within the noise: decompression, not writing, limits the speed.
+The uncompressed tar shows a cost of about 5 % for the task with the bounded backlog.
+An experiment with the backlog bound removed, and the cancellation checks kept, gave 2.89 s against 2.84 s for the first version, so the bound accounts for part of the cost; the differences are close to the noise (a standard deviation of about 0.04 s).
 The download and the unpacking already overlapped before: a `sinkToSource` coroutine fed libarchive.
+
+### Memory
+
+The peak memory of an unpack of the gzipped rev1 (3 runs each, in MB; the dummy store keeps the NAR of the tree in memory, so the absolute numbers are higher than in a normal run):
+
+| Build | Unbounded backlog | Bounded backlog |
+|---|---|---|
+| `debugoptimized` | 532, 520, 503 | 534, 521, 521 |
+| `debug` (`-O0`) | 485, 483, 484 | 438, 418, 418 |
+
+In the optimized build, the bound changes nothing measurable, which suggests that the writers keep up with the parse there.
+In the debug build, the bound saves about 50 to 65 MB, which is the inferred size of the queued file contents.
 
 ### Interrupts at random times
 
@@ -182,5 +203,15 @@ In the runs, the pack was in place from a delay of about 1.2 s on; the rest of t
 | Range | 9–478 ms | 13–28 ms |
 
 The slow exits, 66 to 478 ms, all came from signals between 0.55 and 1.0 s, during the unpacking.
-That matches the limit that [Cancellation](#cancellation) describes: the drop waits for the files that the tar adapter is writing, and a revision of Nixpkgs has files of several megabytes.
-This is an inference; the time was not measured per phase.
+These runs used the first version of the task, whose tar adapter neither bounded its backlog nor checked the cancellation in its writers.
+
+A debug build (`-O0`) showed that this version did not bound the time to exit: its parse runs far ahead of the writers, and the drop waited until they had written every queued file.
+The same script, `SEED=1234`, 30 runs each, against the gzipped rev1 (a reference fetch takes 22.6 s in the debug build, and 3.1 s in the optimized one):
+
+| Build | Version | Interrupted | Time from SIGINT to exit: min, median, p90, max |
+|---|---|---|---|
+| `debug` | first version | 26 | 7, 57, 6267, 7944 ms |
+| `debug` | bounded backlog | 27 | 7, 30, 85, 125 ms |
+| `debugoptimized` | bounded backlog | 26 | 10, 18, 24, 31 ms |
+
+In all runs, the cache kept its invariants.
