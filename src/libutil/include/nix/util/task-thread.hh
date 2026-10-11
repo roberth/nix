@@ -9,6 +9,7 @@
 #include "nix/util/signals.hh"
 
 #include <atomic>
+#include <list>
 #include <mutex>
 #include <thread>
 #include <variant>
@@ -24,8 +25,9 @@ namespace nix {
  * Destroying the task before it completes asks `fn` to stop, and then
  * waits for the thread to end. From then on, `checkInterrupt()` on that
  * thread throws `Interrupted`, so `fn` stops at its next check. A blocking
- * call that does not check delays the destruction until it returns. The
- * thread also receives user interrupts, as `ReceiveInterrupts` describes.
+ * call that neither checks nor registers with `onThreadCancelled` delays
+ * the destruction until it returns. The thread also receives user
+ * interrupts, as `ReceiveInterrupts` describes.
  *
  * The destruction blocks the thread that destroys the task. That is
  * acceptable for a thread that does nothing else while it waits, such as
@@ -37,13 +39,82 @@ Task<T> runInThread(F fn);
 
 namespace detail {
 
+/**
+ * The cancellation of one `runInThread` thread.
+ */
+struct ThreadCancellation
+{
+    std::atomic<bool> cancelled{false};
+    std::mutex mutex;
+    std::list<fun<void()>> callbacks;
+
+    /**
+     * Set `cancelled` and call the callbacks.
+     */
+    void cancel();
+
+    /**
+     * Make `checkInterrupt()` and `onThreadCancelled()` on the current
+     * thread refer to `cancellation`.
+     */
+    static void enter(std::shared_ptr<ThreadCancellation> cancellation);
+};
+
+} // namespace detail
+
+/**
+ * A callback that `onThreadCancelled` registered. Destroying it
+ * unregisters the callback.
+ */
+class ThreadCancelledCallback
+{
+    std::shared_ptr<detail::ThreadCancellation> cancellation;
+    std::list<fun<void()>>::iterator pos;
+
+public:
+    ThreadCancelledCallback() = default;
+
+    ThreadCancelledCallback(
+        std::shared_ptr<detail::ThreadCancellation> cancellation, std::list<fun<void()>>::iterator pos) noexcept
+        : cancellation(std::move(cancellation))
+        , pos(pos)
+    {
+    }
+
+    ThreadCancelledCallback(ThreadCancelledCallback && other) noexcept
+        : cancellation(std::move(other.cancellation))
+        , pos(other.pos)
+    {
+    }
+
+    ThreadCancelledCallback & operator=(ThreadCancelledCallback &&) = delete;
+    ThreadCancelledCallback(const ThreadCancelledCallback &) = delete;
+    ThreadCancelledCallback & operator=(const ThreadCancelledCallback &) = delete;
+
+    ~ThreadCancelledCallback();
+};
+
+/**
+ * Call `callback` when the task of `runInThread` that runs the current
+ * thread is destroyed before it completes. The callback runs on the
+ * thread that destroys the task, before that thread waits for this one.
+ *
+ * A blocking operation uses this to wake up, for example by cancelling
+ * the transfer that it waits for. On a thread that `runInThread` does not
+ * run, or after the returned object is destroyed, the callback is never
+ * called. If the task is cancelled already, the callback runs at once.
+ */
+[[nodiscard]] ThreadCancelledCallback onThreadCancelled(fun<void()> callback);
+
+namespace detail {
+
 template<typename T>
 struct ThreadState
 {
     std::mutex mutex;
     std::variant<std::monostate, std::conditional_t<std::is_void_v<T>, std::monostate, T>, std::exception_ptr> result;
     Waker waker;
-    std::atomic<bool> cancelled{false};
+    std::shared_ptr<ThreadCancellation> cancellation = std::make_shared<ThreadCancellation>();
 };
 
 template<typename T, typename F>
@@ -70,7 +141,7 @@ struct ThreadLeaf : LeafAwaiter
                 std::lock_guard lock(state->mutex);
                 old = std::move(state->waker);
             }
-            state->cancelled = true;
+            state->cancellation->cancel();
             thread.join();
         }
     }
@@ -80,9 +151,7 @@ struct ThreadLeaf : LeafAwaiter
         if (!started) {
             started = true;
             thread = std::thread([state = state, fn = std::move(fn)]() mutable {
-#ifndef _WIN32
-                unix::interruptCheck = [state]() { return state->cancelled.load(); };
-#endif
+                ThreadCancellation::enter(state->cancellation);
                 ReceiveInterrupts receiveInterrupts;
                 decltype(state->result) result;
                 try {

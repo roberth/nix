@@ -4,6 +4,8 @@
 #include "nix/util/task-thread.hh"
 #include "nix/util/error.hh"
 
+#include <condition_variable>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -560,6 +562,47 @@ TEST(Task, runInThreadDropInterruptsTheFunction)
     EXPECT_EQ(isInterrupted(), false);
 }
 #endif
+
+TEST(Task, runInThreadDropCallsCancellationCallback)
+{
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool registered = false;
+    bool woken = false;
+
+    /* A blocking wait that does not check for interrupts. Only the
+       cancellation callback ends it. */
+    auto task = runInThread<void>([&]() {
+        auto callback = onThreadCancelled([&]() {
+            std::lock_guard lock(mutex);
+            woken = true;
+            cv.notify_all();
+        });
+        std::unique_lock lock(mutex);
+        registered = true;
+        cv.notify_all();
+        cv.wait(lock, [&] { return woken; });
+    });
+
+    auto target = makeWakeTarget<CountingTarget>();
+    EXPECT_EQ(task.poll(target->waker()), NIX_POLL_PENDING);
+    {
+        std::unique_lock lock(mutex);
+        cv.wait(lock, [&] { return registered; });
+    }
+
+    task.reset();
+    EXPECT_EQ(woken, true);
+}
+
+TEST(Task, cancellationCallbackOutsideRunInThreadIsNotCalled)
+{
+    bool called = false;
+    {
+        auto callback = onThreadCancelled([&]() { called = true; });
+    }
+    EXPECT_EQ(called, false);
+}
 
 /* A waker implemented only in terms of the C ABI, as Rust would. */
 namespace {

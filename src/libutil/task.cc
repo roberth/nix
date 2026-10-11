@@ -1,6 +1,8 @@
 #include "nix/util/task.hh"
+#include "nix/util/task-thread.hh"
 #include "nix/util/signals.hh"
 #include "nix/util/error.hh"
+#include "nix/util/util.hh"
 
 #include <condition_variable>
 #include <cstdio>
@@ -148,6 +150,60 @@ void blockOn(std::function<bool(const Waker &)> run)
     }
 }
 
+namespace {
+
+/**
+ * The cancellation of the `runInThread` task that runs this thread.
+ */
+thread_local std::shared_ptr<ThreadCancellation> currentThreadCancellation;
+
+} // namespace
+
+void ThreadCancellation::cancel()
+{
+    std::lock_guard lock(mutex);
+    cancelled = true;
+    for (auto & callback : callbacks) {
+        try {
+            callback();
+        } catch (...) {
+            ignoreExceptionInDestructor();
+        }
+    }
+}
+
+void ThreadCancellation::enter(std::shared_ptr<ThreadCancellation> cancellation)
+{
+#ifndef _WIN32
+    unix::interruptCheck = [cancellation]() { return cancellation->cancelled.load(); };
+#endif
+    currentThreadCancellation = std::move(cancellation);
+}
+
 } // namespace detail
+
+ThreadCancelledCallback::~ThreadCancelledCallback()
+{
+    if (cancellation) {
+        std::lock_guard lock(cancellation->mutex);
+        cancellation->callbacks.erase(pos);
+    }
+}
+
+ThreadCancelledCallback onThreadCancelled(fun<void()> callback)
+{
+    auto cancellation = detail::currentThreadCancellation;
+    if (!cancellation)
+        return {};
+
+    std::lock_guard lock(cancellation->mutex);
+    if (cancellation->cancelled) {
+        /* Too late to wait for the cancellation. */
+        callback();
+        return {};
+    }
+    auto pos = cancellation->callbacks.insert(cancellation->callbacks.end(), std::move(callback));
+    return {cancellation, pos};
+}
 
 } // namespace nix
