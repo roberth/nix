@@ -305,6 +305,17 @@ The rules for code that runs on the reactor thread:
 - Do not call `runOnReactor`; await the task instead.
 - A drop must not block either; see [Asynchronous drop](#asynchronous-drop).
 
+### Measuring the reactor
+
+The reactor times each poll of its tasks and each posted function (`reactorStats()` in `nix/util/reactor.hh`):
+the busy time, the longest single poll, and the busy time of the busiest second.
+A watchdog logs each poll that is longer than `_NIX_REACTOR_SLOW_POLL_MS` (50 ms by default) at the debug level, with its kind (task, posted function, timer, fd watch, cleanup).
+It reports after the fact; to find the code inside a slow task, use a profiler.
+`_NIX_REACTOR_STATS` prints the numbers to stderr when the process exits.
+
+`nix-fetchers-tarball-bench`, in the tests of libfetchers, fetches many tarballs at once through the task path, and `maintainers/tarball-cancel-stress.sh` interrupts it with `CONCURRENT=N`.
+[The tarball cache on gitoxide](./tarball-cache.md#many-fetches-at-once) has the measurements under load.
+
 ## Asynchronous drop
 
 Some drops must wait: a future that owns a thread joins it, a writer flushes a pack, a process must be killed and reaped.

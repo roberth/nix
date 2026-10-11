@@ -266,3 +266,60 @@ The same script on a later release build, with the goals as tasks and the `runIn
 | `thread` | 38 | 10, 28, 45, 65 ms |
 
 All runs kept the invariants of the cache.
+
+### Many fetches at once
+
+No evaluator path awaits several tarball fetches at once yet, so these measurements use `nix-fetchers-tarball-bench` (in the tests of libfetchers), which fetches all its URLs with one `whenAll` of `downloadIntoGixTarballCache()`, with `runOnReactor()` or, with `_NIX_FILE_TRANSFER_BACKEND=thread`, with `runBlocking()`.
+Release builds, the machine above, a local `test-http-server`, an empty cache for each run; 3 rounds after the fixes below, with each command started at a load average below 6.
+Each cell is the median, with the minimum and maximum in parentheses.
+
+| Workload | Backend | Wall clock | CPU | Peak RSS | Threads | Reactor busy | Longest poll |
+|---|---|---|---|---|---|---|---|
+| 50 tarballs of 1 MB | `reactor` | 0.11 s | 1.1 s | 144 MB | 64 | 81 ms | 13 ms |
+| 50 tarballs of 1 MB | `thread` | 0.15 s | 1.7 s | 225 MB | 175 | | |
+| 200 tarballs of 1 MB | `reactor` | 0.90 s (0.82-0.91) | 14.6 s | 744 MB | 1137 | 401 ms | 28 ms |
+| 200 tarballs of 1 MB | `thread` | 0.71 s (0.68-0.74) | 12.9 s | 643 MB | 992 | | |
+| 4 copies of rev1, 53 MB each | `reactor` | 1.68 s (1.65-1.73) | 20.5 s | 521 MB | 43 | 112 ms | 11 ms |
+| 4 copies of rev1, 53 MB each | `thread` | 1.70 s (1.67-1.74) | 20.5 s | 521 MB | 43 | | |
+
+The measurements found three problems, which separate commits fix:
+
+- curl asks for a timeout of 0 ms at most steps of a transfer, and a tokio timer rounds it up to the next millisecond.
+  `nix copy --from` of 3008 paths took 20.8 s on the reactor and 12.2 s with the curl thread; now 12.2 s and 11.8 s.
+- The tar adapter allocated and zeroed 32 MiB for each unpacking. 200 fetches peaked at 4.7 GB of RSS; now 0.8 GB.
+- With `CURLOPT_PIPEWAIT`, concurrent transfers to one plain HTTP server waited for the whole first transfer, because the reactor adds them in one go. 4 copies of rev1 took 2.3 s on the reactor and 1.7 s with the curl thread; now 1.7 s with both.
+
+What remains:
+
+- With 200 small tarballs, the reactor is about 25 % slower than the curl thread.
+  The reactor thread is busy for about 45 % of the run, with curl, the copies into the `TransferStream`, and the polls of the tasks on one thread.
+  Reserving the buffer of the `TransferStream` did not change its busy time, so it is not in the branch.
+- The first fetch on the reactor initializes libgit2 and OpenSSL in `initTarballCache()` on the reactor thread: about 10 ms, below the threshold of the watchdog.
+  The longest polls under load were 10 to 30 ms, and in one run 56 ms (one slow poll).
+- Each unpacking has a pool of up to 10 threads, so 200 fetches run more than 1000 threads with either backend.
+
+Substitution from a local HTTP binary cache of 3008 small paths and 8 paths of 32 MiB, zstd-compressed, into an empty local store (3 rounds, median):
+
+| Command | http-connections, max-substitution-jobs | `reactor` | `thread` |
+|---|---|---|---|
+| `nix copy --from` | 5, 4 | 51.9 s | 52.3 s |
+| `nix copy --from` | 25, 16 | 12.5 s | 12.4 s |
+| `nix copy --from` | 100, 64 | 7.7 s | 7.3 s |
+| `nix-store -r` | 5, 4 | 58.8 s | 58.8 s |
+| `nix-store -r` | 25, 16 | 13.7 s | 13.6 s |
+| `nix-store -r` | 100, 64 | 3.7 s | 3.7 s |
+
+Peak RSS stayed between 88 and 165 MB, with 22 to 82 threads, in all of them.
+In one run of `nix-store -r` each, the reactor thread was busy for 1668 ms of 13.4 s (25, 16) and 1098 ms of 3.5 s (100, 64), with a longest poll of 2 and 20 ms.
+
+`maintainers/tarball-cancel-stress.sh` with `CONCURRENT`, 30 runs per backend, `SEED=7`.
+The load average was below 6 at the start of each set of runs, and rose to between 16 and 23 during them.
+
+| Workload | Backend | Interrupted | Time from SIGINT to exit: min, median, p90, max |
+|---|---|---|---|
+| 16 copies of rev1 | `reactor` | 16 | 25, 91, 110, 128 ms |
+| 16 copies of rev1 | `thread` | 15 | 33, 144, 280, 355 ms |
+| 200 copies of a tarball of 8 MB | `reactor` | 5 | 30, 32, 37, 37 ms |
+| 200 copies of a tarball of 8 MB | `thread` | 10 | 25, 89, 105, 111 ms |
+
+After each run, the cache had no temporary file, each pack had its index, and `git fsck --full` accepted it; each completed run fetched all its tarballs.
