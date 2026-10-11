@@ -11,8 +11,9 @@
 //!   `nix::toCFuture()`.
 //! - [`waker_from_nix`] and [`nix_waker_from_rust`] convert wakers. A
 //!   waker that crosses the boundary twice is unwrapped, not wrapped twice.
-//! - [`Error`] carries a C++ exception opaquely, so that it keeps its
-//!   dynamic type when it goes back to C++, or a Rust error message.
+//! - [`Error`] carries a C++ exception, a Rust error, or a Rust panic
+//!   across the boundary, and gives back the same value when it crosses
+//!   back.
 //!
 //! The output of a future crosses the boundary by value, in storage that
 //! the receiver provides. Only types with an [`AbiType`] name can cross;
@@ -24,6 +25,7 @@
 //! `nix-rust-test-support`, can use it and still share the C functions of
 //! `libnixrust`.
 
+use std::any::Any;
 use std::ffi::{CStr, c_char, c_void};
 use std::fmt;
 use std::future::Future;
@@ -32,6 +34,7 @@ use std::mem::{ManuallyDrop, MaybeUninit};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::pin::Pin;
 use std::ptr::NonNull;
+use std::sync::atomic::AtomicU8;
 use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 
 /// `nix_waker_vtable`.
@@ -75,10 +78,19 @@ pub struct NixException {
 
 /// `nix_rust_error_kind`.
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum NixRustErrorKind {
     Error = 0,
     Panic = 1,
+}
+
+/// `nix_rust_value`: a Rust value that a C++ exception owns.
+#[repr(C)]
+struct NixRustValue {
+    kind: NixRustErrorKind,
+    data: *mut c_void,
+    drop: unsafe extern "C" fn(data: *mut c_void),
+    owner: *const c_void,
 }
 
 /// `nix_future_vtable`.
@@ -112,7 +124,23 @@ unsafe impl cxx::ExternType for NixFuture {
 unsafe extern "C" {
     fn nix_exception_free(exception: *mut NixException);
     fn nix_exception_what(exception: *const NixException) -> *const c_char;
-    fn nix_exception_from_rust(kind: NixRustErrorKind, message: *const c_char, length: usize) -> *mut NixException;
+    fn nix_exception_from_rust(message: *const c_char, length: usize, value: NixRustValue) -> *mut NixException;
+    fn nix_exception_take_rust_value(
+        exception: *const NixException,
+        owner: *const c_void,
+        out: *mut NixRustValue,
+    ) -> bool;
+}
+
+/// Identifies this copy of the crate in `nix_rust_value::owner`. A process
+/// can contain more than one copy of the Rust standard library, for
+/// example `libnixrust` and `libnix-rust-test-support`; a value that one
+/// copy made must not be taken apart by another, whose types are not the
+/// same. An atomic, so that the compiler gives it an address of its own.
+static OWNER: AtomicU8 = AtomicU8::new(0);
+
+fn owner() -> *const c_void {
+    &OWNER as *const AtomicU8 as *const c_void
 }
 
 /// The name of the Rust type of a future's output, in
@@ -159,53 +187,93 @@ unsafe impl AbiType for Vec<u8> {
     const NAME: &'static CStr = c"Vec<u8>";
 }
 
+/// The error of Rust code, as [`Error`] holds it.
+pub type RustError = Box<dyn std::error::Error + Send + Sync + 'static>;
+
+/// The payload of a Rust panic, as `catch_unwind` returns it.
+pub type PanicPayload = Box<dyn Any + Send + 'static>;
+
 /// An error that crosses the boundary in either direction.
 ///
-/// A C++ exception stays a C++ exception: Rust holds it opaquely and gives
-/// it back unchanged, so C++ rethrows it with its dynamic type. An error
-/// that starts in Rust becomes a `nix::Error` when it reaches C++.
+/// The value keeps its identity on the way through the other language:
+///
+/// - A C++ exception stays a C++ exception: Rust holds it opaquely and
+///   gives it back unchanged, so C++ rethrows the same exception object,
+///   with its dynamic type.
+/// - A Rust error goes to C++ inside an exception that owns it
+///   (`nix::RustError`), and comes back out as the same Rust value.
+/// - A Rust panic goes to C++ inside an exception that owns the payload
+///   (`nix::RustPanic`). When that exception comes back into Rust,
+///   [`Error::from_exception`] resumes the panic with the same payload.
 pub struct Error(Repr);
 
 enum Repr {
     Cxx(NonNull<NixException>),
-    Message(String),
-    Panic(String),
+    Rust(RustError),
+    Panic(PanicPayload),
 }
 
 // SAFETY: A `std::exception_ptr` refers to an immutable exception object,
 // and libstdc++ and libc++ count its references atomically, so it can move
-// to another thread.
+// to another thread. The Rust error and the panic payload are `Send`.
 unsafe impl Send for Error {}
-// SAFETY: `&Error` gives access only to `what()` of the exception, which
-// does not change the exception object.
-unsafe impl Sync for Error {}
 
 impl Error {
     /// An error with a message.
     pub fn msg(message: impl Into<String>) -> Self {
-        Error(Repr::Message(message.into()))
+        Error(Repr::Rust(message.into().into()))
+    }
+
+    /// A Rust error, which keeps its type across the boundary.
+    pub fn new(error: impl std::error::Error + Send + Sync + 'static) -> Self {
+        Error(Repr::Rust(Box::new(error)))
+    }
+
+    /// A boxed Rust error, which keeps its type and its box across the
+    /// boundary.
+    pub fn from_rust(error: RustError) -> Self {
+        Error(Repr::Rust(error))
     }
 
     /// An error for the payload of a panic that `catch_unwind` caught.
-    pub fn from_panic(payload: Box<dyn std::any::Any + Send>) -> Self {
-        let message = if let Some(s) = payload.downcast_ref::<&str>() {
-            (*s).to_owned()
-        } else if let Some(s) = payload.downcast_ref::<String>() {
-            s.clone()
-        } else {
-            "a panic with a payload that is not a string".to_owned()
-        };
-        Error(Repr::Panic(message))
+    pub fn from_panic(payload: PanicPayload) -> Self {
+        Error(Repr::Panic(payload))
     }
 
     /// Adopt an exception that C++ gave up.
+    ///
+    /// If the exception carries a Rust error that this copy of the crate
+    /// made, the result is that Rust error. If it carries the payload of a
+    /// Rust panic that this copy made, the panic resumes here, with the
+    /// original payload: a panic stays a panic in Rust.
     ///
     /// # Safety
     ///
     /// `exception` must be a non-null `nix_exception` that nothing else
     /// owns.
     pub unsafe fn from_exception(exception: *mut NixException) -> Self {
-        Error(Repr::Cxx(NonNull::new(exception).expect("a nix_exception is not null")))
+        let exception = NonNull::new(exception).expect("a nix_exception is not null");
+        let mut value = MaybeUninit::<NixRustValue>::uninit();
+        // SAFETY: The caller passes a valid exception, and `value` is
+        // storage for the result.
+        if !unsafe { nix_exception_take_rust_value(exception.as_ptr(), owner(), value.as_mut_ptr()) } {
+            return Error(Repr::Cxx(exception));
+        }
+        // SAFETY: The function returned true, so it wrote the value.
+        let value = unsafe { value.assume_init() };
+        // SAFETY: The caller owns the exception, which no longer owns the
+        // value.
+        unsafe { nix_exception_free(exception.as_ptr()) };
+        match value.kind {
+            // SAFETY: This copy made the value in `into_exception`, as a box
+            // of a `RustError`, and the exception gave up its ownership.
+            NixRustErrorKind::Error => Error(Repr::Rust(*unsafe { Box::from_raw(value.data as *mut RustError) })),
+            NixRustErrorKind::Panic => {
+                // SAFETY: As above, for a box of a `PanicPayload`.
+                let payload = *unsafe { Box::from_raw(value.data as *mut PanicPayload) };
+                std::panic::resume_unwind(payload)
+            }
+        }
     }
 
     /// Whether this error is a C++ exception, as opposed to an error that
@@ -214,21 +282,91 @@ impl Error {
         matches!(self.0, Repr::Cxx(_))
     }
 
-    /// Give the error to C++, as an exception.
+    /// The Rust error, if this error started in Rust and is not a panic.
+    pub fn rust_error(&self) -> Option<&(dyn std::error::Error + Send + Sync + 'static)> {
+        match &self.0 {
+            Repr::Rust(error) => Some(error.as_ref()),
+            _ => None,
+        }
+    }
+
+    /// The panic payload, if this error is a caught panic.
+    pub fn into_panic(self) -> Result<PanicPayload, Self> {
+        let this = ManuallyDrop::new(self);
+        // SAFETY: `this` is never dropped, so the field is moved out once.
+        match unsafe { std::ptr::read(&this.0) } {
+            Repr::Panic(payload) => Ok(payload),
+            repr => Err(Error(repr)),
+        }
+    }
+
+    /// Give the error to C++, as an exception. A Rust error or panic
+    /// payload goes inside the exception, so that it can come back.
     pub fn into_exception(self) -> *mut NixException {
         let this = ManuallyDrop::new(self);
         // SAFETY: `this` is never dropped, so the field is moved out once.
         match unsafe { std::ptr::read(&this.0) } {
             Repr::Cxx(exception) => exception.as_ptr(),
-            // SAFETY: The message is valid for `len()` bytes during the call.
-            Repr::Message(message) => unsafe {
-                nix_exception_from_rust(NixRustErrorKind::Error, message.as_ptr().cast(), message.len())
-            },
-            // SAFETY: As above.
-            Repr::Panic(message) => unsafe {
-                nix_exception_from_rust(NixRustErrorKind::Panic, message.as_ptr().cast(), message.len())
-            },
+            Repr::Rust(error) => {
+                let message = error.to_string();
+                wrap_rust_value(&message, NixRustErrorKind::Error, Box::new(error))
+            }
+            Repr::Panic(payload) => {
+                let message = panic_message(&payload);
+                wrap_rust_value(&message, NixRustErrorKind::Panic, Box::new(payload))
+            }
         }
+    }
+}
+
+/// The message of a panic payload, as `std` prints it.
+fn panic_message(payload: &PanicPayload) -> String {
+    if let Some(s) = payload.downcast_ref::<&str>() {
+        (*s).to_owned()
+    } else if let Some(s) = payload.downcast_ref::<String>() {
+        s.clone()
+    } else {
+        "a panic with a payload that is not a string".to_owned()
+    }
+}
+
+/// Make a C++ exception with `message` that owns `value`.
+fn wrap_rust_value<T: Send + 'static>(message: &str, kind: NixRustErrorKind, value: Box<T>) -> *mut NixException {
+    let value = NixRustValue {
+        kind,
+        data: Box::into_raw(value) as *mut c_void,
+        drop: drop_rust_value::<T>,
+        owner: owner(),
+    };
+    // SAFETY: The message is valid for `len()` bytes during the call, and
+    // `value` follows the rules of `nix_rust_value`.
+    unsafe { nix_exception_from_rust(message.as_ptr().cast(), message.len(), value) }
+}
+
+/// `nix_rust_value::drop` for a value of type `T`.
+unsafe extern "C" fn drop_rust_value<T>(data: *mut c_void) {
+    // SAFETY: `wrap_rust_value` made `data` from a `Box<T>`, and C++ drops
+    // it once.
+    let value = unsafe { Box::from_raw(data as *mut T) };
+    if let Err(payload) = catch_unwind(AssertUnwindSafe(move || drop(value))) {
+        report_lost_panic("dropping a Rust value that a C++ exception owned", &payload);
+    }
+}
+
+/// Report a panic that has nowhere to go: it happened while Rust code
+/// dropped a value for C++, and no caller waits for a result. The panic
+/// hook of `std` already printed the panic, unless it was resumed with
+/// `resume_unwind`, so say where it was lost.
+fn report_lost_panic(context: &str, payload: &PanicPayload) {
+    eprintln!(
+        "nix: a Rust panic while {context} was ignored: {}",
+        panic_message(payload)
+    );
+}
+
+impl From<String> for Error {
+    fn from(message: String) -> Self {
+        Error::msg(message)
     }
 }
 
@@ -250,8 +388,8 @@ impl fmt::Display for Error {
                 let what = unsafe { CStr::from_ptr(nix_exception_what(exception.as_ptr())) };
                 f.write_str(&what.to_string_lossy())
             }
-            Repr::Message(message) => f.write_str(message),
-            Repr::Panic(message) => write!(f, "Rust panic: {message}"),
+            Repr::Rust(error) => fmt::Display::fmt(error, f),
+            Repr::Panic(payload) => write!(f, "Rust panic: {}", panic_message(payload)),
         }
     }
 }
@@ -260,7 +398,7 @@ impl fmt::Debug for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.0 {
             Repr::Cxx(_) => write!(f, "Error::Cxx({self})"),
-            Repr::Message(_) => write!(f, "Error::Message({self})"),
+            Repr::Rust(_) => write!(f, "Error::Rust({self})"),
             Repr::Panic(_) => write!(f, "Error::Panic({self})"),
         }
     }

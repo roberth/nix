@@ -22,6 +22,7 @@
  * dropped on any thread.
  */
 
+#include <stdbool.h>
 #include <stddef.h>
 
 /* Rust calls the functions of this header, and the functions in the
@@ -91,20 +92,50 @@ typedef enum nix_rust_error_kind {
 } nix_rust_error_kind;
 
 /**
- * Make an exception from a Rust error message. The message is UTF-8 and
- * need not be null-terminated.
- *
- * The exception has the type that the registered factory gives it
- * (`nix::Error` once libutil registered its factory), and
- * `std::runtime_error` otherwise.
+ * A Rust value that crosses into C++ inside an exception: the error of a
+ * Rust `Err`, or the payload of a panic. C++ holds it opaquely, and gives
+ * it back unchanged when the exception crosses back into Rust.
  */
-nix_exception *
-nix_exception_from_rust(nix_rust_error_kind kind, const char * message, size_t length) NIX_FUTURE_ABI_NOEXCEPT;
+typedef struct nix_rust_value
+{
+    nix_rust_error_kind kind;
+    /** The value, opaque to C++. */
+    void * data;
+    /** Drops `data`. */
+    void (*drop)(void * data);
+    /**
+     * The copy of the Rust code that made the value. A process can contain
+     * more than one copy of the Rust standard library; only the copy that
+     * made the value can take it back.
+     */
+    const void * owner;
+} nix_rust_value;
 
 /**
- * A factory for `nix_exception_from_rust`. It must not throw.
+ * Make an exception that owns a Rust value, with a message for C++. The
+ * message is UTF-8 and need not be null-terminated.
+ *
+ * The exception has the type that the registered factory gives it
+ * (`nix::RustError` or `nix::RustPanic` once libutil registered its
+ * factory), and `nix::rs::RustException` otherwise. Either way it derives
+ * from `nix::rs::RustValue` (`future-abi.hh`).
  */
-typedef nix_exception * (*nix_rust_error_factory)(nix_rust_error_kind kind, const char * message, size_t length);
+nix_exception *
+nix_exception_from_rust(const char * message, size_t length, nix_rust_value value) NIX_FUTURE_ABI_NOEXCEPT;
+
+/**
+ * A factory for `nix_exception_from_rust`. It must not throw, and the
+ * exception must derive from `nix::rs::RustValue` and own `value`.
+ */
+typedef nix_exception * (*nix_rust_error_factory)(const char * message, size_t length, nix_rust_value value);
+
+/**
+ * If `exception` owns a Rust value that `owner` made, move the value to
+ * `out` and return true. The exception keeps its type and message, but no
+ * longer owns the value. Otherwise return false.
+ */
+bool nix_exception_take_rust_value(const nix_exception * exception, const void * owner, nix_rust_value * out)
+    NIX_FUTURE_ABI_NOEXCEPT;
 
 /**
  * Set the function that `nix_exception_from_rust` uses. A library above

@@ -2,6 +2,7 @@
 #include "nix/util/task-thread.hh"
 #include "nix/util/signals.hh"
 #include "nix/util/error.hh"
+#include "nix/util/rust-error.hh"
 #include "nix/util/util.hh"
 
 #include <condition_variable>
@@ -10,6 +11,10 @@
 #include <string>
 
 namespace nix {
+
+void RustError::anchor() {}
+
+void RustPanic::anchor() {}
 
 const nix_waker_vtable WakeTarget::vtable = {
     .clone = &WakeTarget::cloneFn,
@@ -65,16 +70,15 @@ void WhenAllChild::wake() noexcept
     parent.wakeByRef();
 }
 
-static nix_exception * makeRustError(nix_rust_error_kind kind, const char * message, size_t length) noexcept
+/* `noexcept`: see `nix_exception_from_rust`. */
+static nix_exception * makeRustError(const char * message, size_t length, nix_rust_value value) noexcept
 {
     std::string text(message, length);
-    try {
-        /* A single string argument is the literal message, not a format
-           string. */
-        throw Error(kind == NIX_RUST_PANIC ? "Rust panic: " + text : text);
-    } catch (...) {
-        return rs::currentException();
-    }
+    /* A single string argument is the literal message, not a format
+       string. */
+    if (value.kind == NIX_RUST_PANIC)
+        return new nix_exception{std::make_exception_ptr(RustPanic("Rust panic: " + text, value))};
+    return new nix_exception{std::make_exception_ptr(RustError(text, value))};
 }
 
 void registerRustErrorFactory()

@@ -59,6 +59,25 @@ size_t nix_rust_test_wake_threads_running(void);
 void nix_rust_test_waker_roundtrip(const nix_waker * waker, nix_rust_test_string_sink sink, void * context);
 
 /**
+ * A future that fails with a Rust error `probe error <id>`.
+ */
+nix_future nix_rust_test_future_probe_error(uint64_t id);
+
+/**
+ * A future that panics with the message `probe panic <id>`.
+ */
+nix_future nix_rust_test_future_probe_panic(uint64_t id);
+
+/**
+ * A future of a `rust::String` that awaits `inner`, a future without a
+ * value, and describes how it failed: `same Rust error <id>` for the error
+ * of the last `nix_rust_test_future_probe_error`, the same allocation;
+ * `same panic: probe panic <id>` for the panic of the last
+ * `nix_rust_test_future_probe_panic`, resumed with the same payload.
+ */
+nix_future nix_rust_test_future_identify(nix_future inner);
+
+/**
  * The version of the Rust compiler that built the library, for example
  * `1.95.0`. The same compiler builds `libnixrust`.
  */

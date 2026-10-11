@@ -25,6 +25,8 @@
 //! would leave one of them aborts the process, as for every `extern "C"`
 //! function since Rust 1.81. The futures turn a panic into an error.
 
+pub mod identity;
+
 use nix_rust_future::{
     CxxFuture, Error, NixFuture, NixWaker, export_future, nix_waker_from_rust, waker_from_nix, with_borrowed_nix_waker,
 };

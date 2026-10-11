@@ -71,6 +71,7 @@ sources = files(
   'reactor.cc',
   'ref.cc',
   'rust-future.cc',
+  'rust-identity.cc',
   'rust.cc',
   'serialise.cc',
   'sort.cc',

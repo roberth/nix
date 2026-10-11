@@ -10,6 +10,8 @@
 #include <cstdint>
 #include <exception>
 #include <memory>
+#include <stdexcept>
+#include <string>
 
 struct nix_exception
 {
@@ -17,6 +19,49 @@ struct nix_exception
 };
 
 namespace nix::rs {
+
+/**
+ * A Rust value that a C++ exception owns: the error of a Rust `Err`, or the
+ * payload of a Rust panic.
+ *
+ * A C++ exception type that carries a Rust value derives from this class.
+ * When the exception crosses back into Rust, the Rust code takes the value
+ * out (`nix_exception_take_rust_value`) and continues with the original
+ * error, or resumes the original panic. Copies of the exception, for
+ * example from `throwClone()`, share the value; the first take empties it
+ * for all of them.
+ */
+class RustValue
+{
+    struct Shared;
+    std::shared_ptr<Shared> shared;
+
+public:
+    explicit RustValue(nix_rust_value value);
+    RustValue(const RustValue &) = default;
+    RustValue(RustValue &&) = default;
+    RustValue & operator=(const RustValue &) = default;
+    RustValue & operator=(RustValue &&) = default;
+    virtual ~RustValue();
+
+    nix_rust_error_kind rustErrorKind() const noexcept;
+
+    /**
+     * Move the value to `out`, if `owner` made it and nobody took it yet.
+     */
+    bool takeRustValue(const void * owner, nix_rust_value & out) const noexcept;
+};
+
+/**
+ * The exception for a Rust value while no library above registered a
+ * factory (`nix_set_rust_error_factory`).
+ */
+class RustException : public std::runtime_error, public RustValue
+{
+public:
+    RustException(const std::string & message, nix_rust_value value);
+    ~RustException() override;
+};
 
 /**
  * Wrap the exception that is being handled. Call it in a `catch` block.

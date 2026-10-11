@@ -3,6 +3,7 @@
 #include "nix/util/task.hh"
 #include "nix/util/task-thread.hh"
 #include "nix/util/error.hh"
+#include "nix/util/rust-error.hh"
 
 #include <condition_variable>
 #include <mutex>
@@ -725,12 +726,31 @@ TEST(Task, awaitCFutureRethrowsWithDynamicType)
 TEST(Task, rustErrorFromFactoryIsNixError)
 {
     detail::registerRustErrorFactory();
-    auto * exception = nix_exception_from_rust(NIX_RUST_PANIC, "boom", 4);
+
+    /* A stand-in for a Rust value: a counter of its drops. */
+    static int drops = 0;
+    drops = 0;
+    nix_rust_value value{
+        .kind = NIX_RUST_PANIC,
+        .data = &drops,
+        .drop = [](void * data) { ++*static_cast<int *>(data); },
+        .owner = nullptr,
+    };
+
+    auto * exception = nix_exception_from_rust("boom", 4, value);
     try {
         rs::rethrowException(exception);
-    } catch (const Error & e) {
+    } catch (const RustPanic & e) {
         EXPECT_EQ(e.info().msg.str(), "Rust panic: boom");
+        /* A copy shares the value instead of dropping it twice. */
+        try {
+            e.throwClone();
+        } catch (const RustPanic &) {
+        }
+        EXPECT_EQ(drops, 0);
     }
+    /* The last exception that owned the value dropped it. */
+    EXPECT_EQ(drops, 1);
 }
 
 } // namespace nix
