@@ -208,6 +208,21 @@ if nix_store.found()
 
 endif
 
+# An HTTP server that can stall in the middle of a response, for the
+# tests that interrupt a download.
+add_languages('cpp')
+subdir('test-http-server')
+suites += {
+  'name' : 'tarball-cancel',
+  'deps' : [
+    test_http_server,
+  ],
+  'tests' : [
+    'tarball-cancel.sh',
+  ],
+  'workdir' : meson.current_source_dir(),
+}
+
 subdir('suites')
 # TODO: Lay out the tests suites in a less flat manner.
 subdir('ca')
