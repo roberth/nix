@@ -116,8 +116,14 @@ public:
     /**
      * A pool of at most `maxThreads` threads, at least 1. It starts a
      * thread when work is queued and no thread is idle.
+     *
+     * At most `maxPerOwner` work items of one owner run at the same time,
+     * by default `maxThreads`. Each file that a thread writes occupies a
+     * writer of the store: the libgit2 implementation writes a pack for
+     * each, and more concurrent writes of one archive cost CPU time without
+     * a faster unpack.
      */
-    explicit TarWriterPool(size_t maxThreads);
+    explicit TarWriterPool(size_t maxThreads, std::optional<size_t> maxPerOwner = std::nullopt);
 
     /**
      * Waits for the threads, which finish the work that they have started.
@@ -126,8 +132,10 @@ public:
     ~TarWriterPool();
 
     /**
-     * The pool of the process: one thread per CPU. It is never destroyed,
-     * so its threads live as long as the process.
+     * The pool of the process: one thread per CPU, and at most 10 at the
+     * same time for one archive, as with the pool of 10 threads that each
+     * adapter had before. It is never destroyed, so its threads live as
+     * long as the process.
      */
     static TarWriterPool & shared();
 

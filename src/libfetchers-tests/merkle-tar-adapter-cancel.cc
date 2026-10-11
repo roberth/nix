@@ -6,6 +6,8 @@
 #include <atomic>
 #include <chrono>
 #include <future>
+#include <mutex>
+#include <set>
 #include <thread>
 
 /* A namespace of its own: in a unity build, this file shares a translation
@@ -148,6 +150,94 @@ TEST(TarAdapterCancel, onePoolThreadWritesAllFiles)
 
     EXPECT_EQ(result.get(), "done");
     EXPECT_EQ(store.written, 20);
+}
+
+/**
+ * Counts the work items of a pool that run at the same time.
+ */
+struct ConcurrencyProbe
+{
+    std::atomic<int> running = 0;
+    std::atomic<int> maxRunning = 0;
+    std::atomic<int> done = 0;
+
+    TarWriterPool::Work item(std::atomic<int> & ownerRunning, std::atomic<int> & ownerMax)
+    {
+        return [this, &ownerRunning, &ownerMax]() noexcept {
+            raise(maxRunning, ++running);
+            raise(ownerMax, ++ownerRunning);
+            std::this_thread::sleep_for(20ms);
+            --ownerRunning;
+            --running;
+            ++done;
+        };
+    }
+
+    static void raise(std::atomic<int> & max, int value)
+    {
+        int seen = max;
+        while (value > seen && !max.compare_exchange_weak(seen, value)) {
+        }
+    }
+
+    void waitFor(int n)
+    {
+        auto deadline = std::chrono::steady_clock::now() + 10s;
+        while (done < n && std::chrono::steady_clock::now() < deadline)
+            std::this_thread::sleep_for(1ms);
+    }
+};
+
+/**
+ * One archive does not use more threads of the pool than `maxPerOwner`,
+ * while other archives can use the rest. Each file that is written at the
+ * same time occupies a writer of the store; the libgit2 implementation
+ * writes a pack for each.
+ */
+TEST(TarAdapterCancel, poolBoundsTheWorkOfOneOwner)
+{
+    TarWriterPool writers(8, 3);
+    ConcurrencyProbe probe;
+    int owner1 = 0, owner2 = 0;
+    std::atomic<int> running1 = 0, max1 = 0, running2 = 0, max2 = 0;
+
+    for (int i = 0; i < 12; ++i) {
+        writers.enqueue(&owner1, probe.item(running1, max1));
+        writers.enqueue(&owner2, probe.item(running2, max2));
+    }
+    probe.waitFor(24);
+
+    EXPECT_EQ(probe.done, 24);
+    EXPECT_EQ(max1, 3);
+    EXPECT_EQ(max2, 3);
+    EXPECT_EQ(probe.maxRunning, 6);
+}
+
+/**
+ * The pool starts no more threads than the work can use: the work of one
+ * owner at its bound needs no more threads than the bound.
+ */
+TEST(TarAdapterCancel, poolStartsThreadsOnlyForWorkThatCanRun)
+{
+    TarWriterPool writers(8, 3);
+    ConcurrencyProbe probe;
+    std::mutex mutex;
+    std::set<std::thread::id> threads;
+    int owner = 0;
+
+    for (int i = 0; i < 12; ++i)
+        writers.enqueue(&owner, [&]() noexcept {
+            {
+                std::lock_guard lock(mutex);
+                threads.insert(std::this_thread::get_id());
+            }
+            std::this_thread::sleep_for(5ms);
+            ++probe.done;
+        });
+    probe.waitFor(12);
+
+    EXPECT_EQ(probe.done, 12);
+    EXPECT_EQ(threads.size(), 3u);
 }
 
 /**

@@ -8,6 +8,7 @@
 #  include "nix/util/linux-namespaces.hh"
 #endif
 
+#include <algorithm>
 #include <atomic>
 #include <cassert>
 #include <chrono>
@@ -20,6 +21,7 @@
 #include <set>
 #include <utility>
 #include <thread>
+#include <unordered_map>
 #include <variant>
 
 /**
@@ -572,6 +574,7 @@ namespace nix::merkle {
 struct TarWriterPool::State
 {
     size_t maxThreads;
+    size_t maxPerOwner;
 
     std::mutex mutex;
     std::condition_variable workAvailable;
@@ -586,9 +589,48 @@ struct TarWriterPool::State
     std::vector<std::thread> threads;
 
     /**
-     * The threads that wait for work.
+     * The number of work items that run, for each owner that has any.
      */
-    size_t idle = 0;
+    std::unordered_map<const void *, size_t> running;
+
+    /**
+     * The first queued item whose owner runs fewer than `maxPerOwner`
+     * items.
+     */
+    std::deque<Queued>::iterator findRunnable()
+    {
+        return std::ranges::find_if(queue, [&](const Queued & queued) {
+            auto i = running.find(queued.owner);
+            return i == running.end() || i->second < maxPerOwner;
+        });
+    }
+
+    /**
+     * The number of queued items that may run now: for each owner, its
+     * queued items, but at most as many as its bound leaves room for.
+     */
+    size_t countRunnable() const
+    {
+        std::unordered_map<const void *, size_t> room;
+        size_t n = 0;
+        for (auto & queued : queue) {
+            auto [i, inserted] = room.try_emplace(queued.owner, 0);
+            if (inserted) {
+                auto r = running.find(queued.owner);
+                i->second = maxPerOwner - (r == running.end() ? 0 : r->second);
+            }
+            if (i->second > 0) {
+                --i->second;
+                ++n;
+            }
+        }
+        return n;
+    }
+
+    /**
+     * The number of items that run, the sum of `running`.
+     */
+    size_t busy = 0;
 
     bool quit = false;
 
@@ -610,31 +652,40 @@ struct TarWriterPool::State
 
         std::unique_lock lock(mutex);
         while (true) {
-            if (queue.empty()) {
-                if (quit)
+            auto next = findRunnable();
+            if (next == queue.end()) {
+                /* The queue is empty, or its owners run as many items as
+                   they may. A thread that finishes an item of such an
+                   owner takes the next one itself. */
+                if (quit && queue.empty())
                     return;
-                ++idle;
-                workAvailable.wait(lock, [&] { return quit || !queue.empty(); });
-                --idle;
+                workAvailable.wait(lock, [&] { return (quit && queue.empty()) || findRunnable() != queue.end(); });
                 continue;
             }
+            auto owner = next->owner;
             {
-                auto work = std::move(queue.front().work);
-                queue.pop_front();
+                auto work = std::move(next->work);
+                queue.erase(next);
+                ++running[owner];
+                ++busy;
                 lock.unlock();
                 work();
                 /* `work` and what it owns go before the lock is taken
                    again. */
             }
             lock.lock();
+            --busy;
+            if (--running[owner] == 0)
+                running.erase(owner);
         }
     }
 };
 
-TarWriterPool::TarWriterPool(size_t maxThreads)
+TarWriterPool::TarWriterPool(size_t maxThreads, std::optional<size_t> maxPerOwner)
     : state(std::make_unique<State>())
 {
     state->maxThreads = std::max<size_t>(maxThreads, 1);
+    state->maxPerOwner = std::max<size_t>(maxPerOwner.value_or(state->maxThreads), 1);
 }
 
 TarWriterPool::~TarWriterPool()
@@ -654,7 +705,8 @@ TarWriterPool & TarWriterPool::shared()
 {
     /* Never destroyed: an adapter can be in use while static destructors
        run, and the threads would have to be joined at exit. */
-    static auto * pool = new TarWriterPool(std::thread::hardware_concurrency());
+    static auto * pool = new TarWriterPool(
+        std::thread::hardware_concurrency(), std::min<size_t>(std::thread::hardware_concurrency(), 10));
     return *pool;
 }
 
@@ -676,9 +728,14 @@ void TarWriterPool::enqueue(const void * owner, Work work)
     {
         std::lock_guard lock(state->mutex);
         state->queue.push_back({owner, std::move(work)});
-        /* Start a thread when the idle threads cannot take all the work,
-           also when some of them have been notified and do not run yet. */
-        if (state->queue.size() > state->idle && state->threads.size() < state->maxThreads) {
+        /* Start a thread when the threads that do not run an item cannot
+           take all the work that may run now. These include threads that
+           have just started or been notified, so a burst of work does not
+           start more threads than it can use. Work of an owner at its bound
+           does not count: a thread that finishes an item of that owner
+           takes it. Each thread that uses the store of the tarball cache
+           makes its writes more expensive (see `TarWriterPool`). */
+        if (state->countRunnable() > state->threads.size() - state->busy && state->threads.size() < state->maxThreads) {
             try {
                 state->threads.emplace_back([s = state.get()]() { s->run(); });
             } catch (...) {
