@@ -64,3 +64,26 @@ echo "the build ended $(( (end - start) / 1000 )) ms after it started"
 # interrupt does.
 grepQuiet "^closed by client nar/" "$serverLog"
 expect 1 nix-store --check-validity "$big"
+
+# A user interrupt during the stalled download ends Nix at once as well.
+nix-build --no-out-link substitute-cancel.nix -A big \
+    --substituters "http://127.0.0.1:$port" --no-require-sigs \
+    --stalled-download-timeout 3600 2> "$TEST_ROOT/interrupt.err" &
+pid=$!
+for _ in $(seq 1 600); do
+    (( $(grep -c "^stalled nar/" "$serverLog") >= 2 )) && break
+    sleep 0.1
+done
+(( $(grep -c "^stalled nar/" "$serverLog") >= 2 ))
+
+start=${EPOCHREALTIME/[.,]/}
+kill -INT "$pid"
+status=0
+wait "$pid" || status=$?
+end=${EPOCHREALTIME/[.,]/}
+
+echo "interrupted; exited with $status after $(( (end - start) / 1000 )) ms"
+(( status != 0 ))
+(( end - start < 5000000 ))
+grepQuiet "interrupted by the user" "$TEST_ROOT/interrupt.err"
+expect 1 nix-store --check-validity "$big"
