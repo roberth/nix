@@ -26,8 +26,7 @@
 //! function since Rust 1.81. The futures turn a panic into an error.
 
 use nix_rust_future::{
-    CxxFuture, Error, NixFuture, NixWaker, export_future, nix_waker_from_rust, waker_from_nix,
-    with_borrowed_nix_waker,
+    CxxFuture, Error, NixFuture, NixWaker, export_future, nix_waker_from_rust, waker_from_nix, with_borrowed_nix_waker,
 };
 use std::ffi::{c_char, c_void};
 use std::future::poll_fn;
@@ -188,10 +187,7 @@ pub unsafe extern "C" fn nix_rust_test_future_panic(message: *const c_char, leng
 /// `inner` must be a valid, owned `nix_future` whose output type is
 /// `String`. `log` must outlive the returned future.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn nix_rust_test_future_forward(
-    inner: NixFuture,
-    log: *const NixRustTestLog,
-) -> NixFuture {
+pub unsafe extern "C" fn nix_rust_test_future_forward(inner: NixFuture, log: *const NixRustTestLog) -> NixFuture {
     // SAFETY: The caller passes the ownership of a valid `nix_future`.
     let inner = unsafe { CxxFuture::<String>::new(inner) };
     // SAFETY: The caller guarantees that `log` outlives the future.
@@ -321,11 +317,7 @@ pub extern "C" fn nix_rust_test_future_woken_from_thread(delay_ms: u64, late_wak
             thread::spawn(move || {
                 thread::sleep(Duration::from_millis(delay_ms));
                 shared.ready.store(true, Ordering::SeqCst);
-                let waker = shared
-                    .waker
-                    .lock()
-                    .expect("the waker lock is not poisoned")
-                    .clone();
+                let waker = shared.waker.lock().expect("the waker lock is not poisoned").clone();
                 if let Some(waker) = &waker {
                     waker.wake_by_ref();
                 }
@@ -358,11 +350,7 @@ pub extern "C" fn nix_rust_test_wake_threads_running() -> usize {
 /// `waker` must be a valid `nix_waker` for the duration of the call, and
 /// `sink` must accept `context`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn nix_rust_test_waker_roundtrip(
-    waker: *const NixWaker,
-    sink: StringSink,
-    context: *mut c_void,
-) {
+pub unsafe extern "C" fn nix_rust_test_waker_roundtrip(waker: *const NixWaker, sink: StringSink, context: *mut c_void) {
     // SAFETY: The caller guarantees that `waker` is valid during the call.
     let unwrapped_nix = unsafe {
         with_borrowed_nix_waker(waker, |borrowed| {

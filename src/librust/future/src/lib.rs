@@ -107,11 +107,7 @@ unsafe impl cxx::ExternType for NixFuture {
 unsafe extern "C" {
     fn nix_exception_free(exception: *mut NixException);
     fn nix_exception_what(exception: *const NixException) -> *const c_char;
-    fn nix_exception_from_rust(
-        kind: NixRustErrorKind,
-        message: *const c_char,
-        length: usize,
-    ) -> *mut NixException;
+    fn nix_exception_from_rust(kind: NixRustErrorKind, message: *const c_char, length: usize) -> *mut NixException;
 }
 
 /// The name of the Rust type of a future's output, in
@@ -193,9 +189,7 @@ impl Error {
     /// `exception` must be a non-null `nix_exception` that nothing else
     /// owns.
     pub unsafe fn from_exception(exception: *mut NixException) -> Self {
-        Error(Repr::Cxx(
-            NonNull::new(exception).expect("a nix_exception is not null"),
-        ))
+        Error(Repr::Cxx(NonNull::new(exception).expect("a nix_exception is not null")))
     }
 
     /// Whether this error is a C++ exception, as opposed to an error that
@@ -211,18 +205,10 @@ impl Error {
         match unsafe { std::ptr::read(&this.0) } {
             Repr::Cxx(exception) => exception.as_ptr(),
             Repr::Message(message) => unsafe {
-                nix_exception_from_rust(
-                    NixRustErrorKind::Error,
-                    message.as_ptr().cast(),
-                    message.len(),
-                )
+                nix_exception_from_rust(NixRustErrorKind::Error, message.as_ptr().cast(), message.len())
             },
             Repr::Panic(message) => unsafe {
-                nix_exception_from_rust(
-                    NixRustErrorKind::Panic,
-                    message.as_ptr().cast(),
-                    message.len(),
-                )
+                nix_exception_from_rust(NixRustErrorKind::Panic, message.as_ptr().cast(), message.len())
             },
         }
     }
@@ -316,12 +302,8 @@ unsafe extern "C" fn rust_waker_drop(data: *const c_void) {
 unsafe extern "C" fn borrowed_rust_waker_drop(_data: *const c_void) {}
 
 /// A `nix_waker` in a box, presented as a Rust `Waker`.
-static NIX_WAKER_VTABLE: RawWakerVTable = RawWakerVTable::new(
-    nix_waker_clone,
-    nix_waker_wake,
-    nix_waker_wake_by_ref,
-    nix_waker_drop,
-);
+static NIX_WAKER_VTABLE: RawWakerVTable =
+    RawWakerVTable::new(nix_waker_clone, nix_waker_wake, nix_waker_wake_by_ref, nix_waker_drop);
 
 /// A borrowed `nix_waker`, presented as a Rust `Waker` for the duration of
 /// a `poll` call. Rust code receives it as `&Waker` and can only clone it
@@ -357,8 +339,7 @@ unsafe fn nix_waker_drop(data: *const ()) {
 unsafe fn borrowed_nix_waker_drop(_data: *const ()) {}
 
 fn is_rust_waker(waker: &NixWaker) -> bool {
-    std::ptr::eq(waker.vtable, &RUST_WAKER_VTABLE)
-        || std::ptr::eq(waker.vtable, &BORROWED_RUST_WAKER_VTABLE)
+    std::ptr::eq(waker.vtable, &RUST_WAKER_VTABLE) || std::ptr::eq(waker.vtable, &BORROWED_RUST_WAKER_VTABLE)
 }
 
 /// Take ownership of a `nix_waker` as a Rust `Waker`.
@@ -413,9 +394,7 @@ pub unsafe fn with_borrowed_nix_waker<R>(waker: *const NixWaker, f: impl FnOnce(
 
 /// Call `f` with a borrowed Rust `Waker` as a borrowed `nix_waker`.
 pub fn with_borrowed_rust_waker<R>(waker: &Waker, f: impl FnOnce(&NixWaker) -> R) -> R {
-    if std::ptr::eq(waker.vtable(), &NIX_WAKER_VTABLE)
-        || std::ptr::eq(waker.vtable(), &BORROWED_NIX_WAKER_VTABLE)
-    {
+    if std::ptr::eq(waker.vtable(), &NIX_WAKER_VTABLE) || std::ptr::eq(waker.vtable(), &BORROWED_NIX_WAKER_VTABLE) {
         return f(unsafe { &*(waker.data() as *const NixWaker) });
     }
     let nix = NixWaker {
@@ -567,9 +546,7 @@ impl<T: AbiType> Future for CxxFuture<T> {
         let this = self.get_mut();
         assert!(!this.complete, "a completed CxxFuture is not polled again");
         let vtable = unsafe { &*this.raw.vtable };
-        let polled = with_borrowed_rust_waker(cx.waker(), |waker| unsafe {
-            (vtable.poll)(this.raw.this, waker)
-        });
+        let polled = with_borrowed_rust_waker(cx.waker(), |waker| unsafe { (vtable.poll)(this.raw.this, waker) });
         if polled == NixPoll::Pending {
             return Poll::Pending;
         }

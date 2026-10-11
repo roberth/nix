@@ -316,6 +316,8 @@ nixComponents.callPackage (
           (pkgs.writeScriptBin "pre-commit-hooks-install" modular.pre-commit.settings.installationScript)
           pkgs.buildPackages.nixfmt
           pkgs.buildPackages.shellcheck
+          pkgs.buildPackages.rustfmt
+          pkgs.buildPackages.clippy
           pkgs.buildPackages.include-what-you-use
         ]
         ++ lib.optional stdenv.hostPlatform.isUnix pkgs.buildPackages.gdb

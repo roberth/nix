@@ -108,6 +108,15 @@
               ''^doc/manual/theme/highlight\.js$''
             ];
           };
+          # Not the built-in `rustfmt` hook: that one runs `cargo fmt` for
+          # one manifest, and needs cargo. `rustfmt` takes the files and
+          # reads `rustfmt.toml`.
+          rustfmt-files = {
+            enable = true;
+            name = "rustfmt";
+            files = "\\.rs$";
+            entry = lib.getExe' pkgs.rustfmt "rustfmt";
+          };
           shellcheck = {
             enable = true;
           };

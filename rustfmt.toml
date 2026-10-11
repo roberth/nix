@@ -1,0 +1,3 @@
+edition = "2024"
+# The same line length as `.clang-format`.
+max_width = 120

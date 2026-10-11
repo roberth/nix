@@ -316,8 +316,7 @@ impl TarballCacheWriter {
             out.write_all(chunk)
                 .map_err(|e| format!("compressing a Git object: {e}"))?;
         }
-        out.flush()
-            .map_err(|e| format!("compressing a Git object: {e}"))?;
+        out.flush().map_err(|e| format!("compressing a Git object: {e}"))?;
         Ok(out.into_inner())
     }
 
@@ -376,7 +375,8 @@ impl TarballCacheWriter {
         };
         tree.entries.sort();
         let mut data = Vec::new();
-        tree.write_to(&mut data).map_err(|e| format!("encoding a Git tree: {e}"))?;
+        tree.write_to(&mut data)
+            .map_err(|e| format!("encoding a Git tree: {e}"))?;
         Ok(to_bytes(&self.write_object(gix_object::Kind::Tree, &data)?))
     }
 
@@ -464,8 +464,11 @@ fn write_pack(
     let pack_checksum = {
         let mut out = gix_hash::io::Write::new(std::io::BufWriter::new(pack_file.as_file_mut()), HASH);
 
-        out.write_all(&gix_pack::data::header::encode(gix_pack::data::Version::V2, num_entries))
-            .map_err(io_error("writing a pack"))?;
+        out.write_all(&gix_pack::data::header::encode(
+            gix_pack::data::Version::V2,
+            num_entries,
+        ))
+        .map_err(io_error("writing a pack"))?;
         let mut offset = gix_pack::data::header::SIZE as u64;
 
         let mut header = Vec::with_capacity(16);
@@ -493,9 +496,14 @@ fn write_pack(
             offset += (header.len() + entry.compressed.len()) as u64;
         }
 
-        let gix_hash::io::Write { hash, inner: mut buffered } = out;
+        let gix_hash::io::Write {
+            hash,
+            inner: mut buffered,
+        } = out;
         let pack_checksum = hash.try_finalize().map_err(|e| e.to_string())?;
-        buffered.write_all(pack_checksum.as_slice()).map_err(io_error("writing a pack"))?;
+        buffered
+            .write_all(pack_checksum.as_slice())
+            .map_err(io_error("writing a pack"))?;
         buffered.flush().map_err(io_error("writing a pack"))?;
         pack_checksum
     };
@@ -551,11 +559,7 @@ fn pack_entry_header(kind: gix_object::Kind) -> gix_pack::data::entry::Header {
 /// gitoxide's index writer reads the pack again to compute the ids and the
 /// CRCs. The writer already has them, so it writes the index itself. The
 /// format is in Git's `Documentation/gitformat-pack.adoc`.
-fn write_index_v2(
-    out: impl std::io::Write,
-    entries: &[IndexEntry],
-    pack_checksum: &ObjectId,
-) -> std::io::Result<()> {
+fn write_index_v2(out: impl std::io::Write, entries: &[IndexEntry], pack_checksum: &ObjectId) -> std::io::Result<()> {
     let mut out = gix_hash::io::Write::new(out, HASH);
 
     out.write_all(b"\xfftOc")?;
@@ -666,10 +670,7 @@ fn tarball_cache_unpack(objects_dir: &str, unpacker: UniquePtr<TarballUnpacker>)
     export_future(poll_fn(move |cx| {
         // Lazy, like any future: the thread starts on the first poll.
         let job = job.get_or_insert_with(|| {
-            start_unpack(
-                objects_dir.clone(),
-                unpacker.take().expect("the unpacker is used once"),
-            )
+            start_unpack(objects_dir.clone(), unpacker.take().expect("the unpacker is used once"))
         });
         // Store the waker before looking for the result. The thread stores
         // the result before it takes the waker, so either this poll sees
@@ -699,19 +700,15 @@ fn start_unpack(objects_dir: String, unpacker: UniquePtr<TarballUnpacker>) -> Un
     let spawned = {
         let shared = shared.clone();
         let unpacker = unpacker.clone();
-        thread::Builder::new()
-            .name("nix-unpack".to_owned())
-            .spawn(move || {
-                let result = catch_unwind(AssertUnwindSafe(|| {
-                    unpack(&objects_dir, &unpacker, &shared.cancel)
-                }))
+        thread::Builder::new().name("nix-unpack".to_owned()).spawn(move || {
+            let result = catch_unwind(AssertUnwindSafe(|| unpack(&objects_dir, &unpacker, &shared.cancel)))
                 .unwrap_or_else(|payload| Err(Error::from_panic(payload)));
-                *lock(&shared.result) = Some(result);
-                let waker = lock(&shared.waker).take();
-                if let Some(waker) = waker {
-                    waker.wake();
-                }
-            })
+            *lock(&shared.result) = Some(result);
+            let waker = lock(&shared.waker).take();
+            if let Some(waker) = waker {
+                waker.wake();
+            }
+        })
     };
 
     let thread = match spawned {
@@ -788,8 +785,18 @@ impl TarballCacheReader {
         // A chain longer than this is a cycle or an attack.
         for _ in 0..64 {
             match self.find(&id)? {
-                gix_object::Kind::Tree => return Ok(GitPeeledObject { id: to_bytes(&id), is_tree: true }),
-                gix_object::Kind::Blob => return Ok(GitPeeledObject { id: to_bytes(&id), is_tree: false }),
+                gix_object::Kind::Tree => {
+                    return Ok(GitPeeledObject {
+                        id: to_bytes(&id),
+                        is_tree: true,
+                    });
+                }
+                gix_object::Kind::Blob => {
+                    return Ok(GitPeeledObject {
+                        id: to_bytes(&id),
+                        is_tree: false,
+                    });
+                }
                 gix_object::Kind::Commit => {
                     id = gix_object::CommitRef::from_bytes(&self.buffer, HASH)
                         .map_err(|e| format!("parsing Git commit '{id}': {e}"))?
