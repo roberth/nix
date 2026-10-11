@@ -9,6 +9,8 @@
 #include "nix/rust/future-abi.hh"
 #include "rust/cxx.h"
 
+#include <cstdint>
+
 namespace nix::rs {
 
 /**
@@ -38,6 +40,19 @@ public:
      * interest, so that the next read or write sees it.
      */
     virtual void ready(bool readable, bool writable) const noexcept = 0;
+};
+
+/**
+ * Told by the watchdog of the reactor about each poll that kept the
+ * reactor thread busy longer than its threshold (`reactor_set_slow_poll_hook`).
+ * Called on the reactor thread.
+ */
+class SlowPollHook
+{
+public:
+    virtual ~SlowPollHook();
+
+    virtual void slowPoll(::rust::Str what, std::uint64_t micros) const noexcept = 0;
 };
 
 } // namespace nix::rs

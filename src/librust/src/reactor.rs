@@ -39,11 +39,33 @@ use crate::future::{BridgeError, CxxFuture, Error, NixFuture, bridge, export_fut
 
 #[cxx::bridge(namespace = "nix::rs")]
 mod ffi {
+    /// How busy the reactor thread was since it started. Times are in
+    /// microseconds. A poll is one poll of a task of the reactor, or one
+    /// posted function.
+    struct ReactorStats {
+        uptime_us: u64,
+        busy_us: u64,
+        polls: u64,
+        /// The longest single poll: the longest time that the reactor
+        /// thread could not react to anything else.
+        max_poll_us: u64,
+        /// The busy time of the busiest whole second of uptime.
+        max_busy_per_second_us: u64,
+        /// The polls that took longer than the threshold of the watchdog.
+        slow_polls: u64,
+    }
+
     unsafe extern "C++" {
         include!("nix/rust/reactor.hh");
 
         #[namespace = ""]
         type nix_future = crate::future::NixFuture;
+
+        /// Told about each poll that took longer than the threshold.
+        type SlowPollHook;
+
+        #[cxx_name = "slowPoll"]
+        fn slow_poll(self: &SlowPollHook, what: &str, micros: u64);
 
         type ReactorCallback;
 
@@ -94,6 +116,16 @@ mod ffi {
         #[cxx_name = "on_reactor_thread"]
         fn bridge_on_reactor_thread() -> Result<bool>;
 
+        /// The statistics of the reactor thread. All zero if the reactor
+        /// has not started.
+        #[cxx_name = "reactor_stats"]
+        fn bridge_reactor_stats() -> Result<ReactorStats>;
+
+        /// Set the hook that the watchdog tells about slow polls, once.
+        /// Later calls do nothing.
+        #[cxx_name = "reactor_set_slow_poll_hook"]
+        fn bridge_reactor_set_slow_poll_hook(hook: UniquePtr<SlowPollHook>) -> Result<()>;
+
         /// Runs a callback on the reactor thread when it expires. Use and
         /// drop it on the reactor thread only: then its callback never runs
         /// after `set(-1)` or after the drop.
@@ -140,7 +172,7 @@ mod ffi {
     }
 }
 
-use ffi::{FdCallback, ReactorCallback};
+use ffi::{FdCallback, ReactorCallback, ReactorStats, SlowPollHook};
 
 // SAFETY: the callbacks run on the reactor thread, so they move there. The
 // C++ implementations (`nix/util/reactor.hh`) hold a `std::function` and
@@ -152,6 +184,152 @@ unsafe impl Send for FdCallback {}
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(|e| e.into_inner())
 }
+
+// The busy time of the reactor thread, and the watchdog.
+//
+// Each poll of a task of the reactor, and each posted function, is timed.
+// All of them run on the reactor thread, so there is one writer; the
+// atomics let other threads read the statistics. Two calls of
+// `Instant::now()` per poll are the whole cost.
+
+// SAFETY: the C++ implementation (`nix/util/reactor.cc`) only logs, which
+// is thread-safe, and holds nothing of the thread that made it.
+unsafe impl Send for SlowPollHook {}
+// SAFETY: as for `Send`; `slow_poll` takes `&self` and is thread-safe.
+unsafe impl Sync for SlowPollHook {}
+
+mod stats {
+    use std::sync::OnceLock;
+    use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+    use std::time::{Duration, Instant};
+
+    pub static START: OnceLock<Instant> = OnceLock::new();
+    pub static BUSY_US: AtomicU64 = AtomicU64::new(0);
+    pub static POLLS: AtomicU64 = AtomicU64::new(0);
+    pub static MAX_POLL_US: AtomicU64 = AtomicU64::new(0);
+    pub static SLOW_POLLS: AtomicU64 = AtomicU64::new(0);
+    pub static MAX_BUSY_PER_SECOND_US: AtomicU64 = AtomicU64::new(0);
+    /// The second of uptime that `SECOND_BUSY_US` counts.
+    static SECOND: AtomicU64 = AtomicU64::new(0);
+    static SECOND_BUSY_US: AtomicU64 = AtomicU64::new(0);
+
+    pub static HOOK: OnceLock<cxx::UniquePtr<super::SlowPollHook>> = OnceLock::new();
+
+    /// The threshold of the watchdog: `_NIX_REACTOR_SLOW_POLL_MS`, 50 ms by
+    /// default.
+    pub fn threshold() -> Duration {
+        static THRESHOLD: OnceLock<Duration> = OnceLock::new();
+        *THRESHOLD.get_or_init(|| {
+            let millis = std::env::var("_NIX_REACTOR_SLOW_POLL_MS")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(50);
+            Duration::from_millis(millis)
+        })
+    }
+
+    /// Record a poll of `what` that started at `start`. Called on the
+    /// reactor thread only.
+    pub fn record(what: &str, start: Instant) {
+        let end = Instant::now();
+        let micros = u64::try_from((end - start).as_micros()).unwrap_or(u64::MAX);
+        BUSY_US.fetch_add(micros, Relaxed);
+        POLLS.fetch_add(1, Relaxed);
+        MAX_POLL_US.fetch_max(micros, Relaxed);
+
+        // Busy time per second of uptime, attributed to the second in which
+        // the poll ended.
+        let second = START.get().map_or(0, |s| (end - *s).as_secs());
+        if SECOND.load(Relaxed) != second {
+            MAX_BUSY_PER_SECOND_US.fetch_max(SECOND_BUSY_US.swap(0, Relaxed), Relaxed);
+            SECOND.store(second, Relaxed);
+        }
+        let busy = SECOND_BUSY_US.fetch_add(micros, Relaxed) + micros;
+        MAX_BUSY_PER_SECOND_US.fetch_max(busy, Relaxed);
+
+        if end - start >= threshold() {
+            SLOW_POLLS.fetch_add(1, Relaxed);
+            if let Some(hook) = HOOK.get() {
+                hook.slow_poll(what, micros);
+            }
+        }
+    }
+}
+
+/// Run `f` as one timed poll of `what`.
+fn timed<R>(what: &str, f: impl FnOnce() -> R) -> R {
+    let start = Instant::now();
+    let result = f();
+    stats::record(what, start);
+    result
+}
+
+/// A future whose polls are timed.
+struct Timed<F> {
+    what: &'static str,
+    future: Pin<Box<F>>,
+}
+
+impl<F: Future> Future for Timed<F> {
+    type Output = F::Output;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<F::Output> {
+        let this = self.get_mut();
+        timed(this.what, || this.future.as_mut().poll(cx))
+    }
+}
+
+fn timed_future<F: Future>(what: &'static str, future: F) -> Timed<F> {
+    Timed {
+        what,
+        future: Box::pin(future),
+    }
+}
+
+fn reactor_stats() -> ReactorStats {
+    use std::sync::atomic::Ordering::Relaxed;
+    ReactorStats {
+        uptime_us: stats::START
+            .get()
+            .map_or(0, |s| u64::try_from(s.elapsed().as_micros()).unwrap_or(u64::MAX)),
+        busy_us: stats::BUSY_US.load(Relaxed),
+        polls: stats::POLLS.load(Relaxed),
+        max_poll_us: stats::MAX_POLL_US.load(Relaxed),
+        max_busy_per_second_us: stats::MAX_BUSY_PER_SECOND_US.load(Relaxed),
+        slow_polls: stats::SLOW_POLLS.load(Relaxed),
+    }
+}
+
+fn reactor_set_slow_poll_hook(hook: UniquePtr<SlowPollHook>) {
+    let _ = stats::HOOK.set(hook);
+}
+
+/// Print the statistics to stderr at exit, if `_NIX_REACTOR_STATS` is set:
+/// a measurement aid, without a dependency on the logger of libutil.
+#[cfg(unix)]
+fn print_stats_at_exit() {
+    extern "C" fn print() {
+        let s = reactor_stats();
+        eprintln!(
+            "nix: reactor: uptime {} ms, busy {} ms, {} polls, longest poll {} us, busiest second {} ms, {} slow polls",
+            s.uptime_us / 1000,
+            s.busy_us / 1000,
+            s.polls,
+            s.max_poll_us,
+            s.max_busy_per_second_us / 1000,
+            s.slow_polls
+        );
+    }
+    if std::env::var_os("_NIX_REACTOR_STATS").is_some() {
+        // SAFETY: `print` is an `extern "C"` function without arguments,
+        // which does not unwind: `eprintln!` panics only if stderr fails,
+        // and a panic in an `extern "C"` function aborts.
+        unsafe { libc::atexit(print) };
+    }
+}
+
+#[cfg(not(unix))]
+fn print_stats_at_exit() {}
 
 struct Reactor {
     handle: Handle,
@@ -172,6 +350,8 @@ fn start_reactor() -> Reactor {
         .enable_time()
         .build()
         .unwrap_or_else(|e| panic!("cannot start the reactor: {e}"));
+    let _ = stats::START.set(Instant::now());
+    print_stats_at_exit();
     let handle = runtime.handle().clone();
     let (posts, mut received) = mpsc::unbounded_channel::<UniquePtr<ReactorCallback>>();
     let (started, thread) = std::sync::mpsc::channel();
@@ -183,7 +363,7 @@ fn start_reactor() -> Reactor {
             // The sender is in a static, so this never returns.
             runtime.block_on(async move {
                 while let Some(callback) = received.recv().await {
-                    callback.run();
+                    timed("posted function", || callback.run());
                 }
             });
         })
@@ -295,10 +475,13 @@ impl CleanupScope {
     /// scope completes only after `cleanup`.
     pub fn defer(&self, cleanup: impl Future<Output = ()> + Send + 'static) {
         let hold = self.hold();
-        reactor().handle.spawn(SCOPE.scope(self.clone(), async move {
-            cleanup.await;
-            drop(hold);
-        }));
+        reactor().handle.spawn(SCOPE.scope(
+            self.clone(),
+            timed_future("cleanup", async move {
+                cleanup.await;
+                drop(hold);
+            }),
+        ));
     }
 
     fn poll_idle(&self, cx: &mut Context<'_>) -> Poll<()> {
@@ -394,7 +577,10 @@ impl Future for Run {
                 result: result.clone(),
                 _hold: scope.hold(),
             };
-            let abort = reactor().handle.spawn(SCOPE.scope(scope.clone(), main)).abort_handle();
+            let abort = reactor()
+                .handle
+                .spawn(SCOPE.scope(scope.clone(), timed_future("task", main)))
+                .abort_handle();
             this.spawned = Some(Spawned {
                 scope,
                 result,
@@ -499,7 +685,7 @@ fn reactor_timer(callback: UniquePtr<ReactorCallback>) -> Box<ReactorTimer> {
                     }
                     *current = None;
                 }
-                callback.run();
+                timed("timer", || callback.run());
             }
         })
     };
@@ -690,7 +876,7 @@ fn reactor_watch_fd(fd: i32, callback: UniquePtr<FdCallback>) -> Result<Box<FdWa
                 let Some(ready) = ready else { return };
                 let Some((r, w)) = ready else { continue };
                 // Not under the lock: the callback can drop the watch.
-                callback.ready(r, w);
+                timed("fd watch", || callback.ready(r, w));
                 poll_fn(|cx| {
                     if let Some(afd) = lock(&shared.afd).as_ref() {
                         fd::clear_stale(afd, cx, r, w);
@@ -754,6 +940,17 @@ fn bridge_reactor_wait_fd(fd: i32, readable: bool, writable: bool) -> Result<Nix
 
 fn bridge_on_reactor_thread() -> Result<bool, BridgeError> {
     bridge(|| Ok(on_reactor_thread()))
+}
+
+fn bridge_reactor_stats() -> Result<ReactorStats, BridgeError> {
+    bridge(|| Ok(reactor_stats()))
+}
+
+fn bridge_reactor_set_slow_poll_hook(hook: UniquePtr<SlowPollHook>) -> Result<(), BridgeError> {
+    bridge(|| {
+        reactor_set_slow_poll_hook(hook);
+        Ok(())
+    })
 }
 
 fn bridge_reactor_timer(callback: UniquePtr<ReactorCallback>) -> Result<Box<ReactorTimer>, BridgeError> {

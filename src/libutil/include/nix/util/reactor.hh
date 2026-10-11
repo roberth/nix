@@ -33,6 +33,33 @@ namespace nix {
  */
 bool onReactorThread();
 
+/**
+ * How busy the reactor thread was since it started. Each poll of a task on
+ * the reactor, and each posted function, counts as one poll.
+ *
+ * A watchdog logs each poll that is longer than
+ * `_NIX_REACTOR_SLOW_POLL_MS` (50 ms by default) at the debug level, and
+ * `_NIX_REACTOR_STATS` prints these numbers to stderr at exit.
+ */
+struct ReactorStats
+{
+    std::chrono::microseconds uptime{0};
+    std::chrono::microseconds busy{0};
+    uint64_t polls = 0;
+    /**
+     * The longest time that the reactor thread could react to nothing
+     * else.
+     */
+    std::chrono::microseconds longestPoll{0};
+    /**
+     * The busy time of the busiest whole second of uptime.
+     */
+    std::chrono::microseconds busiestSecond{0};
+    uint64_t slowPolls = 0;
+};
+
+ReactorStats reactorStats();
+
 namespace detail {
 
 void runOnReactorImpl(Task<void> task);

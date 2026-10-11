@@ -148,6 +148,22 @@ TEST(Reactor, sleepIsLazy)
     EXPECT_GE(ReactorClock::now() - start, std::chrono::milliseconds(30));
 }
 
+TEST(Reactor, theWatchdogCountsALongPoll)
+{
+    onReactor([]() {});
+    auto before = reactorStats();
+
+    /* Longer than the default threshold of 50 ms. */
+    onReactor([]() { std::this_thread::sleep_for(std::chrono::milliseconds(80)); });
+
+    auto after = reactorStats();
+    EXPECT_EQ(after.slowPolls, before.slowPolls + 1);
+    EXPECT_GE(after.longestPoll, std::chrono::milliseconds(80));
+    EXPECT_GE(after.busy - before.busy, std::chrono::milliseconds(80));
+    EXPECT_GE(after.busiestSecond, std::chrono::milliseconds(80));
+    EXPECT_GE(after.polls, before.polls + 1);
+}
+
 TEST(Reactor, postedFunctionsRunInOrder)
 {
     std::vector<int> order;

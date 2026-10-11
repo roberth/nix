@@ -16,4 +16,6 @@ ReactorCallback::~ReactorCallback() = default;
 
 FdCallback::~FdCallback() = default;
 
+SlowPollHook::~SlowPollHook() = default;
+
 } // namespace nix::rs

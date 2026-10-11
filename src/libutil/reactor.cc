@@ -1,5 +1,6 @@
 #include "nix/util/reactor.hh"
 #include "nix/util/error.hh"
+#include "nix/util/logging.hh"
 #include "nix/util/util.hh"
 
 namespace nix {
@@ -45,18 +46,53 @@ struct FunctionFdCallback final : rs::FdCallback
     }
 };
 
+struct DebugSlowPollHook final : rs::SlowPollHook
+{
+    void slowPoll(::rust::Str what, uint64_t micros) const noexcept override
+    {
+        try {
+            debug(
+                "the reactor thread was busy for %d ms in one %s; it reacted to nothing else in that time",
+                micros / 1000,
+                std::string_view(what.data(), what.size()));
+        } catch (...) {
+        }
+    }
+};
+
 /**
  * Call a bridge function of the reactor, and rethrow the original of its
  * error: a `nix::RustError` or a `nix::RustPanic` (`rs::call`).
+ *
+ * The first call also lets the watchdog of the reactor log slow polls: a
+ * function-local static, because a registration at load time does not
+ * survive a static link that drops the object file.
  */
 template<typename F>
 auto callReactor(F && f) -> decltype(f())
 {
     detail::registerRustErrorFactory();
+    [[maybe_unused]] static const bool watchdog = [] {
+        rs::call([] { rs::reactor_set_slow_poll_hook(std::make_unique<DebugSlowPollHook>()); });
+        return true;
+    }();
     return rs::call(std::forward<F>(f));
 }
 
 } // namespace
+
+ReactorStats reactorStats()
+{
+    auto s = callReactor([] { return rs::reactor_stats(); });
+    return ReactorStats{
+        .uptime = std::chrono::microseconds(s.uptime_us),
+        .busy = std::chrono::microseconds(s.busy_us),
+        .polls = s.polls,
+        .longestPoll = std::chrono::microseconds(s.max_poll_us),
+        .busiestSecond = std::chrono::microseconds(s.max_busy_per_second_us),
+        .slowPolls = s.slow_polls,
+    };
+}
 
 bool onReactorThread()
 {
