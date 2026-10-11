@@ -225,6 +225,38 @@ TEST_F(TarballCacheGixTest, skips_objects_on_disk)
     EXPECT_EQ(packFiles().size(), firstPack.size() + 2);
 }
 
+/**
+ * The object store of a writer sizes its table of packs when the writer
+ * opens. Packs that concurrent writers add later must not keep it from
+ * finding the packs that were there: it used to read the pack directory on
+ * its first lookup, failed when the table was too small, and then wrote
+ * every object again.
+ */
+TEST_F(TarballCacheGixTest, skips_objects_on_disk_when_packs_appear_after_open)
+{
+    {
+        auto writer = openTarballWriter(repoDir);
+        writeFile(*writer, "old\n");
+        writer->flush();
+    }
+
+    auto writer = openTarballWriter(repoDir);
+
+    /* More packs than the 32 slots that a store with one pack has. */
+    for (int i = 0; i < 40; ++i) {
+        auto other = openTarballWriter(repoDir);
+        writeFile(*other, fmt("other %d\n", i));
+        other->flush();
+    }
+
+    writeFile(*writer, "old\n");
+    writeFile(*writer, "new\n");
+    writer->flush();
+
+    /* Each pack has one object: the last one only "new". */
+    EXPECT_EQ(packObjectCounts(), std::vector<uint32_t>(42, 1));
+}
+
 TEST_F(TarballCacheGixTest, unflushed_objects_are_not_on_disk)
 {
     auto writer = openTarballWriter(repoDir);

@@ -247,15 +247,45 @@ impl CancelToken {
 /// The tarball cache uses SHA-1, like the libgit2 implementation.
 const HASH: gix_hash::Kind = gix_hash::Kind::Sha1;
 
+/// How often `open_store` opens the store again when packs appear while it
+/// opens it.
+const OPEN_ATTEMPTS: usize = 4;
+
+/// Open the object store, and read the pack directory into it at once.
+///
+/// `Store::at_opts` counts the packs to size its table of index slots (at
+/// least 32, or 1.1 times the packs), but reads the pack directory into the
+/// table only on the first lookup. If more packs than the table holds
+/// appeared in between, for example from concurrent unpackings, that read
+/// fails ("too few index slots"), and the store stays uninitialized: each
+/// later lookup reads the pack directory again, with a `statx` for each
+/// pack, fails again, and reports the object as missing, so that the writer
+/// writes it again. In 200 concurrent fetches, 120 to 153 of the 200 stores
+/// did this for each of their objects. Reading the directory right after
+/// the count leaves a window of a few system calls, and a failure there is
+/// an error that this function sees, so it opens the store again.
 fn open_store(objects_dir: &str) -> Result<Arc<gix_odb::Store>, String> {
-    gix_odb::Store::at_opts(
-        PathBuf::from(objects_dir),
-        HASH,
-        &mut std::iter::empty(),
-        gix_odb::store::init::Options::default(),
-    )
-    .map(Arc::new)
-    .map_err(|e| format!("opening the Git object database '{objects_dir}': {e}"))
+    let mut attempt = 1;
+    loop {
+        let store = gix_odb::Store::at_opts(
+            PathBuf::from(objects_dir),
+            HASH,
+            &mut std::iter::empty(),
+            gix_odb::store::init::Options::default(),
+        )
+        .map_err(|e| format!("opening the Git object database '{objects_dir}': {e}"))?;
+        // `structure` initializes the store from the disk, and lists what
+        // it found, which is not needed here.
+        match store.structure() {
+            Ok(_) => return Ok(Arc::new(store)),
+            Err(_) if attempt < OPEN_ATTEMPTS => attempt += 1,
+            Err(e) => {
+                return Err(format!(
+                    "reading the packs of the Git object database '{objects_dir}': {e}"
+                ));
+            }
+        }
+    }
 }
 
 fn to_oid(id: &[u8; 20]) -> ObjectId {
