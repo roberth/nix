@@ -17,6 +17,12 @@
 //! The output of a future crosses the boundary by value, in storage that
 //! the receiver provides. Only types with an [`AbiType`] name can cross;
 //! cxx guarantees that their layout is the same in both languages.
+//!
+//! The crate refers to the C functions `nix_exception_*` of
+//! `nix/rust/future-abi.h`, which `libnixrust` defines. It contains no C++
+//! code itself, so that a second Rust library, such as
+//! `nix-rust-test-support`, can use it and still share the C functions of
+//! `libnixrust`.
 
 use std::ffi::{CStr, c_char, c_void};
 use std::fmt;
@@ -44,6 +50,7 @@ pub struct NixWaker {
     pub vtable: *const NixWakerVTable,
 }
 
+#[cfg(feature = "cxx")]
 unsafe impl cxx::ExternType for NixWaker {
     type Id = cxx::type_id!("nix_waker");
     type Kind = cxx::kind::Trivial;
@@ -89,6 +96,7 @@ pub struct NixFuture {
     pub vtable: *const NixFutureVTable,
 }
 
+#[cfg(feature = "cxx")]
 unsafe impl cxx::ExternType for NixFuture {
     type Id = cxx::type_id!("nix_future");
     type Kind = cxx::kind::Trivial;
@@ -253,6 +261,7 @@ impl fmt::Debug for Error {
 
 impl std::error::Error for Error {}
 
+#[cfg(feature = "cxx")]
 impl From<cxx::Exception> for Error {
     fn from(exception: cxx::Exception) -> Self {
         Error::msg(exception.what())

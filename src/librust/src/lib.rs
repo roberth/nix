@@ -8,7 +8,7 @@
 //! Each `#[cxx::bridge]` module has its own generated C++ header,
 //! `nix/rust/<module>.rs.h`. The headers are listed in `meson.build`.
 
-pub mod future;
+pub use nix_rust_future as future;
 pub mod future_probe;
 pub mod probe;
 pub mod tarball_cache;

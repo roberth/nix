@@ -45,6 +45,7 @@ mkMesonLibrary (finalAttrs: {
     ./libnixrust.map
     ./libnixrust.exp
     ./src
+    ./future
     ./include
   ];
 

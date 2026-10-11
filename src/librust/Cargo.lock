@@ -688,7 +688,15 @@ dependencies = [
  "gix-odb",
  "gix-pack",
  "gix-zlib",
+ "nix-rust-future",
  "tempfile",
+]
+
+[[package]]
+name = "nix-rust-future"
+version = "0.0.0"
+dependencies = [
+ "cxx",
 ]
 
 [[package]]

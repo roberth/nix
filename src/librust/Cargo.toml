@@ -21,6 +21,7 @@ gix-object = "0.66"
 gix-odb = { version = "0.86.0", features = ["sha1"] }
 gix-pack = { version = "0.76", default-features = false, features = ["sha1", "parallel", "pack-cache-lru-static"] }
 gix-zlib = "0.3.0"
+nix-rust-future = { path = "future", features = ["cxx"] }
 tempfile = "3"
 
 [build-dependencies]
