@@ -5,6 +5,7 @@
  * Blocking code on its own thread, as a task.
  */
 
+#include "nix/util/file-descriptor.hh"
 #include "nix/util/reactor.hh"
 #include "nix/util/task.hh"
 #include "nix/util/signals.hh"
@@ -26,10 +27,14 @@ namespace nix {
  *
  * Destroying the task before it completes asks `fn` to stop, and then
  * waits for the thread to end. From then on, `checkInterrupt()` on that
- * thread throws `Interrupted`, so `fn` stops at its next check. A blocking
- * call that neither checks nor registers with `onThreadCancelled` delays
- * the destruction until it returns. The thread also receives user
- * interrupts, as `ReceiveInterrupts` describes.
+ * thread throws `Interrupted`, so `fn` stops at its next check. On Unix,
+ * the blocking reads and writes of `nix::read` and `nix::write` (and the
+ * sources, sinks and functions that use them, such as `FdSource` and
+ * `readFull`) wait for the descriptor and for the cancellation at once,
+ * and throw `Interrupted` too. Any other blocking call that neither
+ * checks nor registers with `onThreadCancelled` delays the destruction
+ * until it returns. The thread also receives user interrupts, as
+ * `ReceiveInterrupts` describes.
  *
  * Outside of a run on the reactor, the destruction blocks the thread that
  * destroys the task. That is acceptable for a thread that does nothing
@@ -52,8 +57,24 @@ struct ThreadCancellation
     std::mutex mutex;
     std::list<fun<void()>> callbacks;
 
+#ifndef _WIN32
     /**
-     * Set `cancelled` and call the callbacks.
+     * Its read side becomes readable (end of file) when the thread is
+     * cancelled, so that a `poll` for a descriptor also wakes up on the
+     * cancellation. Created by the first `descriptor()` call, because most
+     * threads never wait for a descriptor.
+     */
+    Pipe pipe;
+
+    /**
+     * The read side of `pipe`.
+     */
+    Descriptor descriptor();
+#endif
+
+    /**
+     * Set `cancelled`, close the write side of `pipe` and call the
+     * callbacks.
      */
     void cancel();
 

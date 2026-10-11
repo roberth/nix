@@ -3,6 +3,7 @@
 #include "nix/util/signals.hh"
 
 #include <fcntl.h>
+#include <poll.h>
 #include <unistd.h>
 #include <span>
 #include <algorithm>
@@ -24,6 +25,7 @@ size_t read(Descriptor fd, std::span<std::byte> buffer)
     ssize_t n;
     do {
         checkInterrupt();
+        waitForFdOrThreadCancellation(fd, POLLIN, buffer.size());
         n = ::read(fd, buffer.data(), buffer.size());
     } while (n == -1 && errno == EINTR);
     if (n == -1)
@@ -47,9 +49,12 @@ size_t write(Descriptor fd, std::span<const std::byte> buffer, bool allowInterru
 {
     ssize_t n;
     do {
-        if (allowInterrupts)
+        auto size = buffer.size();
+        if (allowInterrupts) {
             checkInterrupt();
-        n = ::write(fd, buffer.data(), buffer.size());
+            size = waitForFdOrThreadCancellation(fd, POLLOUT, size);
+        }
+        n = ::write(fd, buffer.data(), size);
     } while (n == -1 && errno == EINTR);
     if (n == -1)
         throw SysError("write of %1% bytes", buffer.size());

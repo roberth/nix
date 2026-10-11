@@ -12,6 +12,11 @@
 #include <thread>
 #include <vector>
 
+#ifndef _WIN32
+#  include <sys/wait.h>
+#  include <unistd.h>
+#endif
+
 namespace nix {
 
 namespace {
@@ -609,6 +614,128 @@ TEST(Task, waitForInterruptThrowsOnUserInterrupt)
     EXPECT_EQ(task.poll(target->waker()), NIX_POLL_READY);
     EXPECT_THROW(task.takeResult(), Interrupted);
     setInterrupted(false);
+}
+
+/**
+ * Run `fn` in a `runInThread` task, drop the task once `fn` started, and
+ * return how `fn` ended.
+ */
+static std::string dropWhileBlocked(std::function<void()> fn)
+{
+    std::atomic<bool> started = false;
+    std::string outcome = "not ended";
+
+    auto task = runInThread<void>([&]() {
+        started = true;
+        try {
+            fn();
+            outcome = "returned";
+        } catch (Interrupted &) {
+            outcome = "interrupted";
+        } catch (std::exception & e) {
+            outcome = e.what();
+        }
+    });
+
+    auto target = makeWakeTarget<CountingTarget>();
+    EXPECT_EQ(task.poll(target->waker()), NIX_POLL_PENDING);
+    while (!started)
+        std::this_thread::yield();
+    /* Give the function time to block. The outcome is the same if the
+       drop comes first. */
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+
+    /* The destruction waits for the thread. */
+    task.reset();
+    return outcome;
+}
+
+TEST(Task, runInThreadDropInterruptsABlockingRead)
+{
+    Pipe pipe;
+    pipe.create();
+
+    /* Nothing ever writes to the pipe, and nothing closes it: only the
+       drop ends the read. */
+    auto outcome = dropWhileBlocked([&]() {
+        char c;
+        readFull(pipe.readSide.get(), &c, 1);
+    });
+
+    EXPECT_EQ(outcome, "interrupted");
+    EXPECT_EQ(isInterrupted(), false);
+}
+
+TEST(Task, runInThreadDropInterruptsABlockingWrite)
+{
+    Pipe pipe;
+    pipe.create();
+
+    /* More than the buffer of a pipe, which nothing reads. */
+    auto outcome = dropWhileBlocked([&]() { writeFull(pipe.writeSide.get(), std::string(16 << 20, 'x')); });
+
+    EXPECT_EQ(outcome, "interrupted");
+    EXPECT_EQ(isInterrupted(), false);
+}
+
+TEST(Task, readOutsideRunInThreadIsNotAffected)
+{
+    Pipe pipe;
+    pipe.create();
+    writeFull(pipe.writeSide.get(), "abc");
+    pipe.writeSide.close();
+    EXPECT_EQ(drainFD(pipe.readSide.get()), "abc");
+}
+
+TEST(Task, readInRunInThreadReturnsData)
+{
+    Pipe pipe;
+    pipe.create();
+    auto task = runInThread<std::string>([&]() { return drainFD(pipe.readSide.get()); });
+    auto target = makeWakeTarget<CountingTarget>();
+    EXPECT_EQ(task.poll(target->waker()), NIX_POLL_PENDING);
+    writeFull(pipe.writeSide.get(), "abc");
+    pipe.writeSide.close();
+    EXPECT_EQ(runBlocking(std::move(task)), "abc");
+}
+
+TEST(Task, readInChildOfRunInThreadThread)
+{
+    /* A child that a `runInThread` thread forks has a copy of the
+       cancellation of the thread, and closes its descriptor, as the
+       builder of a derivation does. Its reads must work as before. */
+    auto task = runInThread<int>([]() {
+        Pipe pipe;
+        pipe.create();
+        writeFull(pipe.writeSide.get(), "abc");
+        /* Make the thread create its cancellation pipe. */
+        char c;
+        readFull(pipe.readSide.get(), &c, 1);
+
+        auto pid = fork();
+        if (pid == -1)
+            throw SysError("fork");
+        if (pid == 0) {
+            int status = 1;
+            try {
+                if (dup2(pipe.readSide.get(), STDIN_FILENO) == -1)
+                    _exit(2);
+                unix::closeExtraFDs();
+                char buf[2];
+                readFull(STDIN_FILENO, buf, 2);
+                status = std::string_view(buf, 2) == "bc" ? 0 : 3;
+            } catch (...) {
+                status = 4;
+            }
+            _exit(status);
+        }
+        int status;
+        while (waitpid(pid, &status, 0) == -1)
+            if (errno != EINTR)
+                throw SysError("waitpid");
+        return status;
+    });
+    EXPECT_EQ(runBlocking(std::move(task)), 0);
 }
 
 TEST(Task, runBlockingInRunInThreadEndsWhenDropped)

@@ -5,6 +5,16 @@
 #include "nix/util/rust-error.hh"
 #include "nix/util/util.hh"
 
+#include "file-descriptor-private.hh"
+
+#ifndef _WIN32
+#  include <climits>
+#  include <poll.h>
+#  include <sys/stat.h>
+#endif
+
+#include <algorithm>
+#include <array>
 #include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
@@ -167,10 +177,29 @@ thread_local std::shared_ptr<ThreadCancellation> currentThreadCancellation;
 
 } // namespace
 
+#ifndef _WIN32
+Descriptor ThreadCancellation::descriptor()
+{
+    std::lock_guard lock(mutex);
+    if (!pipe.readSide) {
+        pipe.create();
+        if (cancelled)
+            pipe.writeSide.close();
+    }
+    return pipe.readSide.get();
+}
+#endif
+
 void ThreadCancellation::cancel()
 {
     std::lock_guard lock(mutex);
     cancelled = true;
+#ifndef _WIN32
+    /* The end of file wakes a `poll` in `waitForFdOrThreadCancellation`.
+       It stays readable, so a later `poll` wakes up as well. */
+    if (pipe.writeSide)
+        pipe.writeSide.close();
+#endif
     for (auto & callback : callbacks) {
         try {
             callback();
@@ -250,6 +279,58 @@ ThreadCancelledCallback::~ThreadCancelledCallback()
         cancellation->callbacks.erase(pos);
     }
 }
+
+#ifndef _WIN32
+size_t waitForFdOrThreadCancellation(Descriptor fd, short events, size_t size)
+{
+    auto & cancellation = detail::currentThreadCancellation;
+    /* `poll` ignores a negative descriptor, and would wait for the
+       cancellation only. Let the call of the caller fail instead. */
+    if (!cancellation || fd < 0)
+        return size;
+
+    if (events & POLLOUT) {
+        /* A write to a file does not wait for a peer, and `poll` reports
+           a file as ready anyway. Only a pipe or a socket needs the wait
+           and the bound, which would make a large write to a file slow. */
+        struct stat st;
+        if (::fstat(fd, &st) == 0 && (S_ISREG(st.st_mode) || S_ISBLK(st.st_mode)))
+            return size;
+    }
+
+    std::array<pollfd, 2> fds{
+        pollfd{.fd = fd, .events = events, .revents = 0},
+        pollfd{.fd = cancellation->descriptor(), .events = POLLIN, .revents = 0},
+    };
+    while (true) {
+        if (::poll(fds.data(), fds.size(), -1) == -1) {
+            if (errno == EINTR) {
+                checkInterrupt();
+                continue;
+            }
+            throw SysError("waiting for a file descriptor");
+        }
+        if (fds[1].revents) {
+            /* The cancellation sets the flag before it closes the pipe, so
+               `checkInterrupt()` throws, unless an exception unwinds the
+               stack already, as for a user interrupt. Then the call
+               waits, as before.
+
+               Without the flag, this is a child that the thread forked,
+               with a copy of the thread-local state, and the child closed
+               the descriptor of the pipe (`POLLNVAL`) or reused its
+               number. Nothing cancels a child; let the call wait. */
+            checkInterrupt();
+            return size;
+        }
+        if (fds[0].revents)
+            /* A blocking read returns what is there. A blocking write
+               waits until it wrote everything, but `poll` only promises
+               room for `PIPE_BUF` bytes. */
+            return (events & POLLOUT) ? std::min<size_t>(size, PIPE_BUF) : size;
+    }
+}
+#endif
 
 ThreadCancelledCallback onThreadCancelled(fun<void()> callback)
 {
