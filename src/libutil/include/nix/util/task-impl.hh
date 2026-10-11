@@ -143,6 +143,11 @@ struct WhenAllLeaf : LeafAwaiter
             childWakers.push_back(makeWakeTarget<WhenAllChild>(shared, i)->waker());
     }
 
+    ~WhenAllLeaf()
+    {
+        dropInOrder(tasks);
+    }
+
     nix_poll pollLeaf(const Waker & waker) override
     {
         std::vector<size_t> toPoll;
@@ -174,7 +179,7 @@ struct WhenAllLeaf : LeafAwaiter
             } catch (...) {
                 error = std::current_exception();
                 /* Cancel the others. */
-                tasks.clear();
+                dropInOrder(tasks);
                 return NIX_POLL_READY;
             }
             task.reset();

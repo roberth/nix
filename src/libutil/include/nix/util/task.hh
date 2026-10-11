@@ -637,9 +637,31 @@ struct CallbackState
  *
  * If a task throws, the remaining tasks are cancelled and the exception
  * is rethrown. Only tasks that woke their waker are polled again.
+ *
+ * Cancellation, by an error or by a drop of the returned task, destroys
+ * the remaining tasks in list order, like a `Vec` in Rust.
  */
 template<typename T>
 Task<std::conditional_t<std::is_void_v<T>, void, std::vector<T>>> whenAll(std::vector<Task<T>> tasks);
+
+namespace detail {
+
+/**
+ * Destroy the tasks in index order. `std::vector` does not specify the
+ * order in which `clear()` and its destructor destroy the elements:
+ * libstdc++ goes forward and libc++ goes backward. The order is visible
+ * to the tasks through their destructors, so it must not depend on the
+ * standard library.
+ */
+template<typename T>
+void dropInOrder(std::vector<Task<T>> & tasks) noexcept
+{
+    for (auto & task : tasks)
+        task.reset();
+    tasks.clear();
+}
+
+} // namespace detail
 
 namespace detail {
 template<typename T>
@@ -678,6 +700,11 @@ public:
     TaskSet();
     TaskSet(TaskSet &&) = default;
     TaskSet & operator=(TaskSet &&) = default;
+
+    ~TaskSet()
+    {
+        detail::dropInOrder(slots);
+    }
 
     /**
      * Add a task. The task does not run until the owner awaits `next()`.
