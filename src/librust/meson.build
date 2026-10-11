@@ -160,10 +160,19 @@ if get_option('default_library') == 'static'
     install_dir : get_option('libdir'),
   )
 else
+  # On Windows, Rust generates import stubs for `raw-dylib` imports in each
+  # crate that declares them, for example `ProcessPrng` in both the standard
+  # library and `getrandom`. The stubs of one function are identical, but
+  # `link_whole` puts all of them into the link, and GNU ld then reports
+  # multiple definitions. Allow them for this one library.
+  windows_link_args = []
+  if host_machine.system() == 'windows'
+    windows_link_args += '-Wl,--allow-multiple-definition'
+  endif
   this_library = shared_library(
     'nixrust',
     link_whole : cargo_staticlib,
-    link_args : linker_export_flags + native_static_libs,
+    link_args : linker_export_flags + native_static_libs + windows_link_args,
     soversion : meson.project_version().split('+')[0].split('pre')[0],
     install : true,
   )
