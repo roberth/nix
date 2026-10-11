@@ -76,31 +76,43 @@ mkMesonLibrary (finalAttrs: {
     "CARGO_TARGET_${hostRust.cargoEnvVarTarget}_LINKER" = ccFor stdenv.cc "cc";
   };
 
-  # `cargo clippy` on the source and the crates of the package, as the flake
-  # check `nix-rust-clippy`. The warnings are errors.
-  passthru.tests.clippy = stdenv.mkDerivation {
-    pname = "${finalAttrs.pname}-clippy";
-    inherit (finalAttrs)
-      version
-      src
-      sourceRoot
-      cargoDeps
-      env
-      ;
-    nativeBuildInputs = finalAttrs.nativeBuildInputs ++ [ buildPackages.clippy ];
-    # The `dev` profile compiles the C++ of the build script without
-    # optimization, and `_FORTIFY_SOURCE` warns about that.
-    hardeningDisable = [ "fortify" ];
-    dontConfigure = true;
-    buildPhase = ''
-      runHook preBuild
-      cargo clippy --offline --locked --workspace --all-targets -- --deny warnings
-      runHook postBuild
-    '';
-    installPhase = ''
-      touch $out
-    '';
-  };
+  # Cargo's own checks, which become the flake checks `nix-rust-<name>`.
+  passthru.tests =
+    let
+      # A cargo command on the source and the crates of the package.
+      cargoCheck =
+        name: command:
+        stdenv.mkDerivation {
+          pname = "${finalAttrs.pname}-${name}";
+          inherit (finalAttrs)
+            version
+            src
+            sourceRoot
+            cargoDeps
+            env
+            ;
+          nativeBuildInputs = finalAttrs.nativeBuildInputs ++ [ buildPackages.clippy ];
+          # The `dev` profile compiles the C++ of the build script without
+          # optimization, and `_FORTIFY_SOURCE` warns about that.
+          hardeningDisable = [ "fortify" ];
+          dontConfigure = true;
+          buildPhase = ''
+            runHook preBuild
+            ${command}
+            runHook postBuild
+          '';
+          installPhase = ''
+            touch $out
+          '';
+        };
+    in
+    {
+      # The flake check `nix-rust-clippy`. The warnings are errors.
+      clippy = cargoCheck "clippy" "cargo clippy --offline --locked --workspace --all-targets -- --deny warnings";
+      # The flake check `nix-rust-cargo-test`: the Rust unit tests, for
+      # example the check that every bridge function uses `bridge`.
+      cargo-test = cargoCheck "cargo-test" "cargo test --offline --locked --workspace";
+    };
 
   meta = {
     platforms = lib.platforms.unix ++ lib.platforms.windows;
