@@ -199,6 +199,70 @@ struct WhenAllLeaf : LeafAwaiter
 };
 
 template<typename T>
+struct TaskSetNextLeaf : LeafAwaiter
+{
+    TaskSet<T> & set;
+    std::optional<T> result;
+    std::exception_ptr error;
+
+    explicit TaskSetNextLeaf(TaskSet<T> & set)
+        : set(set)
+    {
+    }
+
+    TaskSetNextLeaf(const TaskSetNextLeaf &) = delete;
+
+    nix_poll pollLeaf(const Waker & waker) override
+    {
+        if (set.count == 0)
+            return NIX_POLL_READY;
+
+        std::vector<size_t> toPoll;
+        Waker old;
+        {
+            std::lock_guard lock(set.shared->mutex);
+            replaceWaker(set.shared->parent, waker, old);
+            toPoll = std::exchange(set.shared->woken, {});
+        }
+
+        for (size_t n = 0; n < toPoll.size(); ++n) {
+            auto i = toPoll[n];
+            auto & task = set.slots[i];
+            /* A wake from a task that completed before is spurious. */
+            if (!task)
+                continue;
+            if (task.poll(set.wakers[i]) == NIX_POLL_PENDING)
+                continue;
+
+            try {
+                result.emplace(task.takeResult());
+            } catch (...) {
+                error = std::current_exception();
+            }
+            task.reset();
+            set.freeSlots.push_back(i);
+            --set.count;
+
+            /* Leave the tasks that we did not poll for the next call. */
+            if (n + 1 < toPoll.size()) {
+                std::lock_guard lock(set.shared->mutex);
+                set.shared->woken.insert(set.shared->woken.begin(), toPoll.begin() + n + 1, toPoll.end());
+            }
+            return NIX_POLL_READY;
+        }
+
+        return NIX_POLL_PENDING;
+    }
+
+    std::optional<T> await_resume()
+    {
+        if (error)
+            std::rethrow_exception(error);
+        return std::move(result);
+    }
+};
+
+template<typename T>
 using VoidToMonostate = std::conditional_t<std::is_void_v<T>, std::monostate, T>;
 
 template<typename A, typename B>
@@ -269,6 +333,37 @@ Task<std::conditional_t<std::is_void_v<T>, void, std::vector<T>>> whenAll(std::v
         co_await detail::WhenAllLeaf<T>(std::move(tasks));
     else
         co_return co_await detail::WhenAllLeaf<T>(std::move(tasks));
+}
+
+template<typename T>
+TaskSet<T>::TaskSet()
+    : shared(std::make_shared<detail::WhenAllShared>())
+{
+}
+
+template<typename T>
+void TaskSet<T>::push(Task<T> task)
+{
+    size_t i;
+    if (freeSlots.empty()) {
+        i = slots.size();
+        slots.emplace_back();
+        wakers.push_back(makeWakeTarget<detail::WhenAllChild>(shared, i)->waker());
+    } else {
+        i = freeSlots.back();
+        freeSlots.pop_back();
+    }
+    slots[i] = std::move(task);
+    ++count;
+    /* Poll the new task in the next call to `next()`. */
+    std::lock_guard lock(shared->mutex);
+    shared->woken.push_back(i);
+}
+
+template<typename T>
+Task<std::optional<T>> TaskSet<T>::next()
+{
+    co_return co_await detail::TaskSetNextLeaf<T>(*this);
 }
 
 template<typename A, typename B>

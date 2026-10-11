@@ -641,6 +641,72 @@ struct CallbackState
 template<typename T>
 Task<std::conditional_t<std::is_void_v<T>, void, std::vector<T>>> whenAll(std::vector<Task<T>> tasks);
 
+namespace detail {
+template<typename T>
+struct TaskSetNextLeaf;
+struct WhenAllShared;
+} // namespace detail
+
+/**
+ * A set of tasks that run concurrently and complete in any order, like
+ * `FuturesUnordered` in Rust. The owner adds tasks with `push()` at any
+ * time, also while other tasks in the set are pending, and awaits
+ * `next()` for the result of the next task that completes.
+ *
+ * `whenAll` takes a fixed list. A `TaskSet` is for work that grows while
+ * it runs, for example a graph traversal that finds new nodes in the
+ * results of earlier tasks.
+ *
+ * The tasks make progress only while the owner awaits `next()`.
+ * Destroying the set cancels the tasks in it. Each task has its own
+ * waker, so a wake polls only the task that woke.
+ */
+template<typename T>
+class TaskSet
+{
+    static_assert(!std::is_void_v<T>, "TaskSet<void> is not implemented");
+
+    friend struct detail::TaskSetNextLeaf<T>;
+
+    std::shared_ptr<detail::WhenAllShared> shared;
+    std::vector<Task<T>> slots;
+    std::vector<Waker> wakers;
+    std::vector<size_t> freeSlots;
+    size_t count = 0;
+
+public:
+    TaskSet();
+    TaskSet(TaskSet &&) = default;
+    TaskSet & operator=(TaskSet &&) = default;
+
+    /**
+     * Add a task. The task does not run until the owner awaits `next()`.
+     */
+    void push(Task<T> task);
+
+    /**
+     * The number of tasks in the set that did not complete yet.
+     */
+    size_t size() const noexcept
+    {
+        return count;
+    }
+
+    bool empty() const noexcept
+    {
+        return count == 0;
+    }
+
+    /**
+     * Await the next task to complete and return its result. Returns
+     * `std::nullopt` if the set is empty. If the task throws, `next()`
+     * rethrows the exception and the other tasks stay in the set.
+     *
+     * The returned task refers to this set, so the set must outlive it.
+     */
+    Task<std::optional<T>> next();
+};
+
 /**
  * Await two tasks concurrently. The first one to complete wins and the
  * other one is cancelled. Index 0 of the result is the first task's

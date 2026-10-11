@@ -375,6 +375,129 @@ TEST(Task, raceCancelsLoser)
     EXPECT_EQ(std::get<0>(result), 1);
 }
 
+TEST(Task, taskSetReturnsResultsInCompletionOrder)
+{
+    Trigger t0, t1, t2;
+
+    auto child = [](Trigger & t, int v) -> Task<int> {
+        co_await t.wait();
+        co_return v;
+    };
+
+    TaskSet<int> set;
+    set.push(child(t0, 10));
+    set.push(child(t1, 11));
+    set.push(child(t2, 12));
+    EXPECT_EQ(set.size(), 3u);
+
+    auto target = makeWakeTarget<CountingTarget>();
+    auto waker = target->waker();
+
+    auto next = set.next();
+    EXPECT_EQ(next.poll(waker), NIX_POLL_PENDING);
+    EXPECT_EQ(t0.state->polls, 1);
+    EXPECT_EQ(t1.state->polls, 1);
+    EXPECT_EQ(t2.state->polls, 1);
+
+    t2.fire();
+    EXPECT_EQ(target->count, 1);
+    EXPECT_EQ(next.poll(waker), NIX_POLL_READY);
+    EXPECT_EQ(next.takeResult(), std::optional<int>(12));
+    EXPECT_EQ(set.size(), 2u);
+
+    /* Only the woken task was polled again. */
+    EXPECT_EQ(t0.state->polls, 1);
+    EXPECT_EQ(t1.state->polls, 1);
+    EXPECT_EQ(t2.state->polls, 2);
+
+    t0.fire();
+    t1.fire();
+    next = set.next();
+    EXPECT_EQ(next.poll(waker), NIX_POLL_READY);
+    EXPECT_EQ(next.takeResult(), std::optional<int>(10));
+
+    /* The second task woke too; the next call returns it without a new
+       wake. */
+    next = set.next();
+    EXPECT_EQ(next.poll(waker), NIX_POLL_READY);
+    EXPECT_EQ(next.takeResult(), std::optional<int>(11));
+
+    EXPECT_EQ(set.size(), 0u);
+    EXPECT_EQ(runBlocking(set.next()), std::nullopt);
+}
+
+TEST(Task, taskSetAcceptsTasksWhileOthersRun)
+{
+    Trigger slow, fast;
+
+    auto child = [](Trigger & t, int v) -> Task<int> {
+        co_await t.wait();
+        co_return v;
+    };
+
+    auto driver = [](TaskSet<int> & set, Task<int> later) -> Task<std::vector<int>> {
+        std::vector<int> results;
+        set.push(std::move(later));
+        while (auto r = co_await set.next())
+            results.push_back(*r);
+        co_return results;
+    };
+
+    TaskSet<int> set;
+    set.push(child(slow, 1));
+
+    auto target = makeWakeTarget<CountingTarget>();
+    auto waker = target->waker();
+
+    /* A task that pushes into the set while the first task is pending. */
+    auto task = driver(set, child(fast, 2));
+    EXPECT_EQ(task.poll(waker), NIX_POLL_PENDING);
+    EXPECT_EQ(set.size(), 2u);
+
+    fast.fire();
+    EXPECT_EQ(task.poll(waker), NIX_POLL_PENDING);
+    slow.fire();
+    EXPECT_EQ(task.poll(waker), NIX_POLL_READY);
+    EXPECT_EQ(task.takeResult(), (std::vector<int>{2, 1}));
+}
+
+TEST(Task, taskSetErrorLeavesOtherTasks)
+{
+    Log log;
+    Trigger failing, other;
+
+    auto fails = [](Trigger & t) -> Task<int> {
+        co_await t.wait();
+        throw TestError("edge failure");
+    };
+
+    auto waits = [](Log & log, Trigger & t) -> Task<int> {
+        Guard guard{log, "other local"};
+        co_await t.wait(&log, "other");
+        co_return 1;
+    };
+
+    auto set = std::make_unique<TaskSet<int>>();
+    set->push(waits(log, other));
+    set->push(fails(failing));
+
+    auto target = makeWakeTarget<CountingTarget>();
+    auto next = set->next();
+    EXPECT_EQ(next.poll(target->waker()), NIX_POLL_PENDING);
+
+    failing.fire();
+    EXPECT_EQ(next.poll(target->waker()), NIX_POLL_READY);
+    EXPECT_THROW(next.takeResult(), TestError);
+
+    /* The error removes only the task that threw. */
+    EXPECT_EQ(set->size(), 1u);
+    EXPECT_EQ(log, Log{});
+
+    /* Destroying the set cancels the rest. */
+    set.reset();
+    EXPECT_EQ(log, (Log{"other leaf destroyed", "other local destroyed"}));
+}
+
 /* A waker implemented only in terms of the C ABI, as Rust would. */
 namespace {
 
