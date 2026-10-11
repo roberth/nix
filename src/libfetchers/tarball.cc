@@ -11,6 +11,7 @@
 #include "nix/fetchers/merkle-tar-adapter.hh"
 #include "nix/fetchers/fetch-settings.hh"
 #include "nix/fetchers/tarball-cache-gix.hh"
+#include "nix/util/fiber.hh"
 #include "nix/util/reactor.hh"
 #include "nix/util/task.hh"
 
@@ -209,11 +210,17 @@ UnpackedDownload downloadIntoTarballCache(
 {
     Activity act(*logger, lvlInfo, actUnknown, fmt("unpacking '%s' into the Git cache", description));
 
-    if (gix::useGixTarballCache())
+    if (gix::useGixTarballCache()) {
+        auto task = downloadIntoGixTarballCache(std::move(request), isZip);
         /* On the reactor, the task and curl share one thread, so a wake
            from curl does not have to cross to this thread. */
-        return fileTransferUsesReactor() ? runOnReactor(downloadIntoGixTarballCache(std::move(request), isZip))
-                                         : runBlocking(downloadIntoGixTarballCache(std::move(request), isZip));
+        if (Fiber::current())
+            /* An evaluation on a fiber (`runOnFiber`) suspends instead of
+               blocking its thread, and a drop of the evaluation cancels
+               the download here. */
+            return awaitOnFiber(fileTransferUsesReactor() ? spawnOnReactor(std::move(task)) : std::move(task));
+        return fileTransferUsesReactor() ? runOnReactor(std::move(task)) : runBlocking(std::move(task));
+    }
     return downloadIntoLibgit2TarballCache(settings, std::move(request), isZip);
 }
 

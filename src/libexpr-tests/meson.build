@@ -50,6 +50,7 @@ sources = files(
   'derived-path.cc',
   'error_traces.cc',
   'eval.cc',
+  'fiber-fetch.cc',
   'fiber-gc.cc',
   'json.cc',
   'lazy-fetcher-attr.cc',
