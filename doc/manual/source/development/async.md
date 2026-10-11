@@ -71,9 +71,127 @@ Two consequences:
   The first error cancels the others.
   Each child has its own waker, so a wake polls only the child that woke.
 - `race(a, b)` returns the result of the first task to complete and cancels the other.
+- `TaskSet<T>` is a set of tasks that complete in any order, like `FuturesUnordered` in Rust.
+  The owner pushes tasks at any time and awaits `next()` for the result of the task that completes first.
+  It is for work that grows while it runs, which `whenAll` cannot take.
+  Destroying the set cancels the tasks in it.
+- `computeClosure(start, getEdges, known, maxConcurrent)` traverses a graph with a `TaskSet`, and returns the closure.
+  An error in one edge, or a drop of the traversal, cancels the edges that run.
+  An edge task can refer to its element by reference: the element is in the result set, whose nodes do not move.
+- `runInThread<T>(fn)` runs blocking code on a thread of its own, as a task.
+  The thread starts on the first poll.
+  Dropping the task makes `checkInterrupt()` on that thread throw `Interrupted`, calls the callbacks that the thread registered with `onThreadCancelled`, and then joins the thread.
+  A blocking wait registers such a callback to wake up; `FileTransfer::download(request, sink)` cancels its transfer in it.
+  The cancellation is per task: it does not set the global interrupt flag.
 
 There is no detached spawn.
 A task always has an owner, so its lifetime is visible in the code.
+The build `Worker` is the one place where several owners share a task; see [Goals and the Worker](#goals-and-the-worker).
+
+## Goals and the Worker
+
+The build `Worker` (`src/libstore/build/`) runs goals: substitutions, builds, and goals that only wait for other goals.
+The work of a goal is a `Task<Goal::ExitCode>`, and goal code is ordinary task code.
+It awaits other tasks, for example `Store::queryPathInfoAsync`, and the leaves below.
+
+The `Worker` is the executor of the goals.
+It polls the task of a goal when the goal's waker wakes.
+The waker puts the goal in a queue of the `Worker`, from any thread; a wake from another thread also wakes the `Worker` from its wait for input.
+The `Worker` is also the reactor of the goals: it waits for the output of child processes and for timeouts, and wakes the goals.
+
+| Leaf | What wakes it |
+|------|---------------|
+| `waitForChildEvent()` | Output, EOF or a timeout of a child process of the goal. |
+| `waitForBuildSlot()` | A free build or substitution slot. The goal waits in a `WaitQueue` of the `Worker`. |
+| `waitForAWhile()` | The poll interval for locks, in a `WaitQueue`. |
+| `yield()` | The goal itself, so that the other awake goals run first. |
+| `await(goals)` | The completion of the goals. Without `--keep-going`, the first failure ends the wait. |
+
+The entry of a `WaitQueue` lives in the leaf, so a cancelled goal leaves the queue and does not take the turn of a goal that still waits.
+
+### Where the contract does not fit
+
+- A goal is shared.
+  The `Worker` deduplicates goals by store path, and several goals can wait for the same goal.
+  A task has one owner, so a goal is a shared object (`GoalPtr`) that owns its task.
+  The last `GoalPtr` to go destroys the goal, and with it the task: that is the cancellation by drop.
+  To wait for goals is therefore a leaf that holds `GoalPtr`s, not an awaited task.
+  Without `--keep-going`, the first failure releases the other goals, which cancels those that nothing else holds.
+- The `Worker` reports a deadlock when no goal can continue.
+  A waker is opaque, so the `Worker` cannot see who will wake a goal.
+  It counts the goals that suspended on a leaf that it does not wake itself, for example a transfer or a thread (`Worker::nrGoalsSuspendedElsewhere`).
+  While such goals exist, it waits for wakes instead of reporting a deadlock.
+- `Worker::run` blocks the thread.
+  The `Worker` is an executor and a reactor of its own, not a task: it waits in `poll()` for child processes and for its wakeup pipe.
+  A user interrupt wakes it through an interrupt callback.
+
+### Cancellation
+
+- Without `--keep-going`, a failed goal releases the goals that its waiters waited for, and a failed top-level goal ends `Worker::run`.
+  The goals that nothing holds any more are destroyed, and their tasks are cancelled.
+- A user interrupt makes `Worker::run` throw `Interrupted`, which destroys the goals while it unwinds.
+- A substitution copies the store path with `runInThread`.
+  The drop of the goal cancels the download of the NAR through `onThreadCancelled`, also when the substituter stalls.
+  Before, the goal joined a thread that downloaded and imported the whole NAR.
+  The functional test `substitute-cancel` checks this.
+  In three runs, the build ended 165 to 176 ms after it started.
+  With the previous `Worker` and `stalled-download-timeout` set to 20 s, it ended after 26 s.
+
+## Migrating code to tasks
+
+The closure traversal and the build `Worker` moved from Boost.Asio and from a coroutine type of their own (`Goal::Co`) to `Task`.
+These steps worked:
+
+1. Replace output parameters with return values, and assign the output of a blocking wrapper only on success.
+   A cancelled task then leaves nothing half-written.
+2. Replace callbacks and Asio awaitables with the `Task` methods of the store, or with `callbackToTask`.
+   `Store::queryPathInfoAsync` replaces `queryPathInfo(path, callback)`.
+3. Replace a custom suspension point with a leaf that stores the waker that it gets, and wakes it when the event happens.
+   Keep the bodies of the coroutines; only the suspension points change.
+4. Move blocking code that a drop must stop to `runInThread`, and make its waits register with `onThreadCancelled`.
+5. Rename the coroutine type to `Task` in a separate, mechanical commit.
+
+Three things change for the code that moves:
+
+- An exception now unwinds the coroutines that await the one that throws.
+  `Goal::Co` passed it to the `Worker` and left the awaiting coroutines suspended, so their locals (for example output locks) were released only when the goal was destroyed.
+- A coroutine parameter that is a reference must outlive the task.
+  A lambda that takes `const T &` and is called on an element of a queue that the caller pops refers to freed memory when it first runs.
+- In the package builds, the source files of a component, its tests included, are one unity build, so names in anonymous namespaces must not repeat across files.
+
+The cost, in lines added and removed per component, for the commits of this migration:
+
+| Component | Change | Lines |
+|-----------|--------|-------|
+| `nix/util/task.hh` | `TaskSet` | +161 |
+| `nix/util/closure.hh` | Task form, Asio form removed | +59 −166 |
+| `nix/util/async.hh` | Asio helpers removed, no user left | −122 |
+| `nix/util/task-thread.hh`, `task.cc` | `runInThread`, `onThreadCancelled` | +267 −7 |
+| Callers of `computeClosure` (`misc.cc`, `http-binary-cache-store.cc`) | Task edges | +23 −40 |
+| `Goal`, `Worker` (`goal.hh`, `goal.cc`, `worker.hh`, `worker.cc`, `goal-impl.hh`) | Executor, leaves, wait queues | +592 −764 |
+| `PathSubstitutionGoal` | Task queries, `runInThread`, slot guard | +37 −79 |
+| `DrvOutputSubstitutionGoal` | `callbackToTask` | +4 −4 |
+| `DerivationBuildingGoal` | `waitForChildEvent()` | +4 −4 |
+| `DerivationGoal`, `DerivationResolutionGoal`, `DerivationTrampolineGoal` | None | 0 |
+| `FileTransfer::download` | Cancel on drop | +6 |
+| All goal classes | Rename `Goal::Co` to `Task` | +54 −60 |
+| `DerivationBuildingGoal` | Guard for the post-build hook on cancellation; the bug is older than the migration | +39 −24 |
+
+The tests are not in the table: they add 741 lines and remove 28 lines of the old closure test.
+
+### What remains for the Worker
+
+- The `Worker` is not a task, so a task cannot await a build.
+  To make `Worker::run` a task needs a reactor for file descriptors and timers that tasks share, which does not exist yet; `runBlocking` only waits for wakes.
+  It is the same question as which reactor owns the curl multi handle.
+- Goal code still calls blocking store operations on the `Worker` thread, which stops all goals while they run:
+  `computeFSClosure` (a nested `runBlocking`), `queryRealisation` in `DrvOutputSubstitutionGoal`, `isValidPath`, the registration of outputs, the hashing in `pathContentsGood`, the build hook protocol, and `copyClosure`.
+  Each needs a task version, or `runInThread`.
+  `computeFSClosure` is virtual (`LegacySSHStore` overrides it), so its task version needs a virtual task method.
+- Only `FileTransfer::download` registers with `onThreadCancelled`.
+  A substitution from an SSH store or a daemon blocks in a socket read, which a drop does not interrupt; the drop then waits until the read returns.
+- `queryRealisation` has no task version: `callbackToTask` discards its result on a drop but does not stop it.
+- The Windows code of the `Worker` keeps its structure. It compiles and links in the cross build `nix-store-x86_64-w64-mingw32`, but no test ran on Windows.
 
 ## Tasks and Rust futures
 
