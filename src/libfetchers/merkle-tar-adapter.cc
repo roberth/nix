@@ -189,10 +189,11 @@ struct TarAdapterImpl : merkle::TarAdapter
         std::optional<merkle::TarAdapterBacklog> backlog)
         : store(store)
         , isCancelled(std::move(isCancelled))
-        , limits(backlog.value_or(merkle::TarAdapterBacklog{
-              .maxFiles = 2 * numWorkers(),
-              .maxBytes = 64 * 1024 * 1024,
-          }))
+        , limits(backlog.value_or(
+              merkle::TarAdapterBacklog{
+                  .maxFiles = 2 * numWorkers(),
+                  .maxBytes = 64 * 1024 * 1024,
+              }))
     {
     }
 
@@ -219,8 +220,7 @@ struct TarAdapterImpl : merkle::TarAdapter
                 workers.process();
                 unreachable();
             }
-            if (backlog.files == 0
-                || (backlog.files < limits.maxFiles && backlog.bytes + size <= limits.maxBytes))
+            if (backlog.files == 0 || (backlog.files < limits.maxFiles && backlog.bytes + size <= limits.maxBytes))
                 break;
             /* Wake up regularly to see a cancellation, which does not
                notify `backlogChanged`. */

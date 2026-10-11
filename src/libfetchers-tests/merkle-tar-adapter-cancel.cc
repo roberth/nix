@@ -39,7 +39,8 @@ struct SlowStore : FileSinkBuilder
             : store(store)
         {
             auto n = ++store.outstanding;
-            for (auto max = store.maxOutstanding.load(); n > max && !store.maxOutstanding.compare_exchange_weak(max, n);)
+            for (auto max = store.maxOutstanding.load();
+                 n > max && !store.maxOutstanding.compare_exchange_weak(max, n);)
                 ;
         }
 
