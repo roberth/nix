@@ -68,6 +68,12 @@ A namespace `nix::rust` would hide cxx's own namespace `::rust` (`rust::String`,
 3. Add `<module>.rs.h` to `bridge_headers` in `meson.build`.
 4. Include `nix/rust/<module>.rs.h` from C++, and add `dependency('nix-rust')` to the Meson dependencies of the library that includes it.
 
+Each `extern "Rust"` function returns `Result`, and its body is `bridge(|| ...)`; a unit test of nix-rust (`src/boundary.rs`) fails otherwise.
+The convention is to declare `bridge_<name>` with `#[cxx_name = "<name>"]`, as a wrapper around the Rust function `<name>`, which Rust code calls directly.
+C++ calls it through `nix::rs::call` or a wrapper of it.
+An `extern "C++"` function that can throw returns `Result` too.
+See [Panics, exceptions and `unsafe`](#panics-exceptions-and-unsafe).
+
 The exported symbols of `libnixrust` include all of `nix::rs`, so a new bridge in that namespace needs no change to `libnixrust.map` or `libnixrust.exp`.
 
 ## Asynchronous functions
@@ -96,8 +102,8 @@ fn fetch_something(url: &str) -> NixFuture {
 
 C++ awaits it with `co_await awaitCFuture<rust::String>(rs::fetch_something(url))`.
 
-An upward call whose C++ exception must keep its type returns it as a `nix_exception *` instead of using cxx's `Result`, which keeps only `what()`.
-`TarballUnpacker::run` does so: it catches the exception, returns `rs::currentException()`, and Rust adopts it with `Error::from_exception`, so that the exception reaches the C++ code that awaits the future with its dynamic type.
+An upward call can also return an exception as a `nix_exception *` instead of throwing.
+`TarballUnpacker::run` does so: it catches the exception, returns `rs::currentException()`, and Rust adopts it with `Error::from_exception`.
 In the other direction, a bridge function takes a `nix_future` that C++ made with `toCFuture(task)`, and Rust awaits `CxxFuture::<T>::new(future)`.
 See [Asynchronous code](./async.md#tasks-and-rust-futures) for the semantics.
 
@@ -154,7 +160,9 @@ The library is a second Rust staticlib, with its own copy of the Rust standard l
 That makes each test program an instance of the case that [Exported symbols](#exported-symbols) is for, in each link mode.
 The two copies share no Rust types, so the test functions are C functions over the C ABI of `future-abi.h` (`nix/rust/tests/probes.hh`), not cxx bridges.
 The crate uses `nix-rust-future` without its feature `cxx`, so it contains neither a copy of the cxx runtime nor a copy of `future-abi.cc`.
-Its calls to `nix_exception_*` therefore resolve to `libnixrust`, and a Rust error from a test future becomes the same `nix::Error` as one from `libnixrust`.
+Its calls to `nix_exception_*` therefore resolve to `libnixrust`, and a Rust error from a test future becomes the same `nix::RustError` as one from `libnixrust`.
+The Rust value inside records the copy that made it, so a value of the test support library never goes back into `libnixrust` as a Rust value, whose types differ: there it stays a C++ exception.
+The library has no cxx, so the test of a synchronous bridge function plays the part of the cxx shim and of `nix::rs::call` itself (`nix_rust_test_bridge_panic`); the cxx path has a test with a real bridge function, `read_blob`.
 A future with a `String` output passes a `String` from one copy of the standard library to the other; both use the default global allocator, the `malloc` of the C library.
 
 The tarball cache reports the phases of a write through a hook (`setTarballCachePhaseHook` in libfetchers), and a test that interrupts a write in a phase sets a hook that blocks until the write is cancelled.
@@ -163,15 +171,46 @@ The functional test `tarball-cancel.sh` sets the hook from a plugin, `tests/func
 ## Panics, exceptions and `unsafe`
 
 Neither a Rust panic nor a C++ exception may unwind across the boundary.
-The rules:
+The rule is: wrap at the boundary, unwrap on return, and abort only when a contract is broken.
 
-- A panic that leaves an `extern "C"` function aborts the process (Rust 1.81 and later).
-  The vtable functions of an exported future catch the panics of the future, which then completes with an error (`Rust panic: ...`).
-  A panic elsewhere in them means a broken contract, for example a second `take`, and aborts.
-- cxx aborts on a panic that leaves an `extern "Rust"` function, and makes its C++ shims for `extern "C++"` functions `noexcept`.
-  An exception that a C++ implementation of an upward call does not catch therefore terminates the process.
-- The C functions of `future-abi.h`, and the C++ functions in the vtables of C ABI futures and wakers, are `noexcept`.
-  An upward call that must report an exception returns it as a `nix_exception *`.
+A value that crosses keeps its identity, and comes back out unchanged when it crosses back:
+
+- A C++ exception crosses into Rust as `nix_rust_future::Error` around the `std::exception_ptr`.
+  Its `Display` is the `what()` of the exception, for logs.
+  When the error goes back to C++, C++ rethrows the same exception object, with its dynamic type and its traces.
+- A Rust error crosses into C++ inside a `nix::RustError`, which owns the Rust value (`nix::rs::RustValue`).
+  C++ code handles it as a `nix::Error` with the message of the Rust error.
+  When it comes back into Rust, it is the same Rust value.
+- A Rust panic crosses into C++ inside a `nix::RustPanic`, which owns the panic payload.
+  C++ code handles it as a `nix::Error` with the message `Rust panic: <message>`.
+  When it comes back into Rust, the panic resumes with the same payload (`resume_unwind`).
+
+Each Rust value records which copy of the Rust code made it, and only that copy takes it apart; see [Test support](#test-support).
+
+The places where the wrapping happens:
+
+- An exported future (`export_future`) catches the panics of the future, and of its drop after it completed.
+  Its error reaches C++ through `nix_future_vtable::take`, and a `CxxFuture` gives an exception back to Rust through `Error::from_exception`.
+- A synchronous bridge function (`extern "Rust"`) returns `Result`, and its body is `bridge(|| ...)`.
+  cxx gives C++ only the message of an `Err`, as a `rust::Error`, so `bridge` catches a panic, and keeps the error or the panic on the thread.
+  The C++ caller calls the function through `nix::rs::call`, which catches the `rust::Error` and rethrows the original.
+  A direct call gets the `rust::Error`, a `std::exception` with the same message.
+- An upward call (`extern "C++"`) that can throw returns `Result`.
+  cxx catches the exception and gives Rust only its message; the `rust::behavior::trycatch` of `nix/rust/boundary.hh` keeps the exception on the thread, and `From<cxx::Exception>` for `Error` takes it back.
+  An upward call can also return the exception as a `nix_exception *`, as `TarballUnpacker::run` does.
+
+A panic that has nowhere to go, for example in the drop of a cancelled future, is printed to stderr.
+
+The process aborts only when a contract is broken, like a failed assertion:
+
+- a `nix_future` that is polled after it completed, or whose result is taken twice;
+- a borrowed `nix_waker` that is owned, or a waker that is used against the rules of `future-abi.h`;
+- a `nix_future` with an output type other than the expected one.
+
+These are panics in `extern "C"` functions, which abort since Rust 1.81, or explicit aborts in C++.
+The C functions of `future-abi.h`, and the C++ functions in the vtables of C ABI futures and wakers, are `noexcept`.
+They allocate, so an allocation failure terminates the process, as an allocation failure in Rust aborts it.
+cxx makes the shims of `extern "C++"` functions without `Result` `noexcept`; such a function must not throw.
 
 Each `unsafe` block and `unsafe impl` has a `SAFETY` comment.
 The crates enforce that with the lint `clippy::undocumented_unsafe_blocks`, and treat `unsafe_op_in_unsafe_fn` as an error.
@@ -182,6 +221,7 @@ The crates enforce that with the lint `clippy::undocumented_unsafe_blocks`, and 
   The pre-commit hook `rustfmt` runs it, like `clang-format` for C++ (`./maintainers/format.sh`).
 - The flake checks `nix-rust-clippy` and `nix-rust-test-support-clippy` run `cargo clippy` with warnings as errors.
   In the dev shell, run `cargo clippy --workspace` in `src/librust`, and `cargo clippy` in `src/librust-test-support`.
+- The flake check `nix-rust-cargo-test` runs `cargo test --workspace` in `src/librust`, among others the check that every bridge function uses `bridge`.
 
 ## Known limitations
 

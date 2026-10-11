@@ -218,10 +218,10 @@ Both sides have the same semantics, so a chain of `co_await` and `.await` can cr
   A mismatch aborts, instead of corrupting memory.
   To let a future carry another cxx type, for example `rust::Box<T>` of an opaque Rust type, add the same name on both sides.
 - An error crosses as a `nix_exception`, which owns an `std::exception_ptr`.
-  A C++ exception that travels through Rust and back keeps its dynamic type, because Rust holds it without looking inside.
-  A Rust `Err` and a Rust panic become a `nix::Error`.
+  A C++ exception that travels through Rust and back is the same exception object, because Rust holds it without looking inside.
+  A Rust `Err` becomes a `nix::RustError`, and a Rust panic a `nix::RustPanic`; both are `nix::Error` and own the Rust value, so that it comes back unchanged into Rust.
   libutil makes these exceptions through a factory that it registers with libnixrust at run time, because libnixrust cannot refer to libutil at link time.
-  A panic never unwinds into C++.
+  A panic never unwinds into C++; see [Panics, exceptions and `unsafe`](./rust.md#panics-exceptions-and-unsafe).
 
 A `CxxFuture` is `Send`, so a C++ task that crosses into Rust can be polled on any thread, one thread at a time.
 A task that keeps thread-local state across a `co_await`, such as a `PushActivity`, is therefore not fit to cross.
