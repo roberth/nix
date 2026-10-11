@@ -314,7 +314,15 @@ The reactor times each poll of its tasks and each posted function (`reactorStats
 the busy time, the longest single poll, and the busy time of the busiest second.
 A watchdog logs each poll that is longer than `_NIX_REACTOR_SLOW_POLL_MS` (50 ms by default) at the debug level, with its kind (task, posted function, timer, fd watch, cleanup).
 It reports after the fact; to find the code inside a slow task, use a profiler.
-`_NIX_REACTOR_STATS` prints the numbers to stderr when the process exits.
+`_NIX_REACTOR_STATS` prints the numbers to stderr when the process exits, with details that cost a system call per poll, so that only the variable turns them on:
+
+- For each kind of poll: the polls, the busy time, and the CPU time of the thread (`CLOCK_THREAD_CPUTIME_ID`).
+  Busy time without CPU time is time off the CPU inside a poll: the thread was preempted, or waited for a lock or a page fault.
+- The `poll(2)` rechecks of the level-triggered emulation of `FdWatch`, which run outside the polls.
+- On Linux, the user and system time and the context switches of the whole reactor thread, which include `epoll_wait` and the wakes of other threads.
+
+The busy time alone does not show what limits a run.
+With 200 tarball fetches at once, the reactor thread was busy for about half of the run, but most of the run was spent in the unpacking threads, which the reactor does not see; see [Many fetches at once](./tarball-cache.md#many-fetches-at-once).
 
 `nix-fetchers-tarball-bench`, in the tests of libfetchers, fetches many tarballs at once through the task path, and `maintainers/tarball-cancel-stress.sh` interrupts it with `CONCURRENT=N`.
 [The tarball cache on gitoxide](./tarball-cache.md#many-fetches-at-once) has the measurements under load.

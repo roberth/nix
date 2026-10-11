@@ -103,10 +103,10 @@ The limits of the guarantee:
 
 - The wait for the thread lasts until the unpacking threads reach their next check.
   On the reactor it delays the return of `runOnReactor()`, not other work; under `runBlocking()` it blocks the thread that drops the future.
-  The tar adapter writes files on a pool of at most 10 threads.
-  After a cancellation, a pool thread skips the files that are still queued, and the writer stops the file that it is hashing or compressing before its next piece of 1 MiB (`CHUNK` in `tarball_cache.rs`).
-  The wait is therefore bounded by the time to hash and compress 1 MiB on each pool thread, plus 10 ms for the parse to notice while it waits for room in the backlog.
-- The backlog of the tar adapter, the files that are parsed but not yet written, holds at most 2 files per pool thread and 64 MiB; the parse waits when it is full.
+  The tar adapters of all unpackings write files on one pool of the process (`TarWriterPool::shared()`, one thread per CPU).
+  After a cancellation, the adapter takes its files that are still queued out of the pool and skips them, so it does not wait for the files of other archives before them, and the writer stops the file that it is hashing or compressing before its next piece of 1 MiB (`CHUNK` in `tarball_cache.rs`).
+  The wait is therefore bounded by the time to hash and compress 1 MiB on each pool thread that writes a file of this archive, plus 10 ms for the parse to notice while it waits for room in the backlog or for its writers.
+- The backlog of the tar adapter, the files that are parsed but not yet written, holds at most 20 files (2 for each of 10 writers, fewer on a machine with fewer CPUs) and 64 MiB; the parse waits when it is full.
   The parse is often faster than the writers, for example in a debug build or on a machine with few cores.
   Without the bound, it parsed the whole archive ahead of the writers, with the contents of all queued files in memory, and a cancellation waited until the writers had drained the queue: up to 7.9 s in a debug build.
   A single file that is larger than 64 MiB is admitted when the backlog is empty, so the memory in the backlog is at most 64 MiB or one file.
@@ -289,14 +289,57 @@ The measurements found three problems, which separate commits fix:
 - The tar adapter allocated and zeroed 32 MiB for each unpacking. 200 fetches peaked at 4.7 GB of RSS; now 0.8 GB.
 - With `CURLOPT_PIPEWAIT`, concurrent transfers to one plain HTTP server waited for the whole first transfer, because the reactor adds them in one go. 4 copies of rev1 took 2.3 s on the reactor and 1.7 s with the curl thread; now 1.7 s with both.
 
+With these fixes, 200 small tarballs took 0.90 s on the reactor and 0.71 s with the curl thread.
+
+#### Why the reactor was slower with 200 small tarballs
+
+The reactor thread was not the cause.
+`_NIX_REACTOR_STATS` (see [Measuring the reactor](./async.md#measuring-the-reactor)) showed the reactor thread busy for 368 ms of a run of 770 ms, but with 210 ms of CPU time; the rest was time off the CPU inside its polls.
+A `perf record -e cycles:u` gave the reactor thread 0.85 % of the user cycles of the process.
+Its polls were few: 625 readiness callbacks of the sockets for 200 transfers, and the `poll(2)` of the level-triggered emulation of `FdWatch` took less than 1 ms of CPU in total.
+A timeline of each fetch (temporary instrumentation, not in the branch) showed that the last download ended 300 to 400 ms into the run with both backends, a little earlier on the reactor, and the unpackings ended 250 to 400 ms after that.
+
+The unpacking was slow on both backends, for two reasons, which two commits fix:
+
+- The object store of each writer (`gix_odb::Store`) sizes its table of packs when it opens, but reads the pack directory only on its first lookup.
+  Concurrent unpackings add packs in between, more than the table holds, so the read failed with "too few index slots", and the store read the pack directory again for each object, with a `statx` for each pack, and reported each object as missing.
+  In runs of 200 fetches, 120 to 153 of the 200 stores never initialized, and `strace -f -c` counted 1.6 million `statx`.
+  `open_store` (`tarball_cache.rs`) now reads the pack directory when it opens the store.
+- Each unpacking had a pool of up to 10 writer threads, so 200 fetches ran more than 1000 threads.
+  gitoxide uses arc-swap, whose writer side (`Debt::pay_all`) visits a slot of each thread that uses it; it took half of all user cycles.
+  All unpackings now share one pool with one thread per CPU (`TarWriterPool` in `merkle-tar-adapter.cc`).
+
+The reactor was slower because it is faster at the download: the data of all 200 tarballs arrived sooner, so more unpackings ran at the same time, and the cost of each write grew with the threads and the packs (more stores opened before the packs of the others appeared: 153 against 120 uninitialized stores in one pair of runs).
+That the order of the arrivals is the whole difference is an inference: with the shared pool, the writer threads used the same CPU time with both backends, but spent 2.8 times their CPU time inside their writes on the reactor, against 1.85 times with the curl thread.
+
+Release builds, the machine above, 5 rounds of all variants, interleaved, each command started at a load average below 8 (3 to 14 seen); the median, with the minimum and maximum:
+
+| Workload | Backend | Before | Shared pool | Store fix | Both |
+|---|---|---|---|---|---|
+| 200 × 1 MB, wall clock | `reactor` | 0.92 s (0.82-0.93) | 0.62 s (0.60-0.64) | 0.31 s (0.31-0.32) | 0.31 s (0.30-0.33) |
+| 200 × 1 MB, wall clock | `thread` | 0.77 s (0.72-0.86) | 0.53 s (0.51-0.56) | 0.35 s (0.34-0.37) | 0.32 s (0.30-0.33) |
+| 200 × 1 MB, CPU | `reactor` | 14.7 s | 7.4 s | 4.6 s | 4.4 s |
+| 200 × 1 MB, CPU | `thread` | 13.2 s | 8.1 s | 5.0 s | 4.6 s |
+| 200 × 1 MB, peak threads | `reactor` | 1286 | 219 | 214 | 217 |
+| 200 × 1 MB, peak threads | `thread` | 1019 | 235 | 291 | 235 |
+| 200 × 1 MB, peak RSS | `reactor` | 789 MB | 565 MB | 344 MB | 382 MB |
+| 200 × 1 MB, peak RSS | `thread` | 681 MB | 469 MB | 414 MB | 281 MB |
+| 50 × 1 MB, wall clock | `reactor` | 0.11 s | 0.12 s | 0.10 s | 0.10 s |
+| 50 × 1 MB, wall clock | `thread` | 0.13 s | 0.12 s | 0.13 s | 0.11 s |
+| 4 × 53 MB, wall clock | `reactor` | 1.77 s | 1.77 s | 1.77 s | 1.83 s |
+| 4 × 53 MB, wall clock | `thread` | 1.74 s | 1.80 s | 1.81 s | 1.89 s |
+
+The 4 copies of rev1 are equal within the noise (the ranges overlap; the slowest run of "Both, `thread`" took 3.36 s).
+The store fix gives most of the gain; on top of it, the shared pool lowers the threads and the time with the curl thread a little, and it bounds the threads by design.
+
 What remains:
 
-- With 200 small tarballs, the reactor is about 25 % slower than the curl thread.
-  The reactor thread is busy for about 45 % of the run, with curl, the copies into the `TransferStream`, and the polls of the tasks on one thread.
-  Reserving the buffer of the `TransferStream` did not change its busy time, so it is not in the branch.
+- The reactor thread is now busy for about 245 ms of a run of 310 ms with 200 small tarballs, 210 ms of it in the readiness callbacks of the sockets (150 ms CPU): curl and the copies into the `TransferStream`.
+  It is not slower than the curl thread, but it is the next limit for more concurrent transfers.
+- The first poll of the run starts the 200 unpacking threads on the reactor thread, which delays the first transfer by about 17 ms; with the curl thread, the main thread starts them while curl already runs.
 - The first fetch on the reactor initializes libgit2 and OpenSSL in `initTarballCache()` on the reactor thread: about 10 ms, below the threshold of the watchdog.
   The longest polls under load were 10 to 30 ms, and in one run 56 ms (one slow poll).
-- Each unpacking has a pool of up to 10 threads, so 200 fetches run more than 1000 threads with either backend.
+- Each unpacking still has a thread of its own for the parse, because libarchive reads with blocking calls: 200 fetches run 200 parse threads.
 
 Substitution from a local HTTP binary cache of 3008 small paths and 8 paths of 32 MiB, zstd-compressed, into an empty local store (3 rounds, median):
 
