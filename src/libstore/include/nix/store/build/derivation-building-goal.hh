@@ -90,6 +90,12 @@ private:
         PathLocks outputLocks);
 
     /**
+     * Run the post-build hook on `outputPaths`, and wait until it exits.
+     * Not on Windows.
+     */
+    Task<void> awaitPostBuildHook(const StorePathSet & outputPaths);
+
+    /**
      * Is the build hook willing to perform the build?
      */
     HookReply tryBuildHook(const DerivationOptions<StorePath> & drvOptions);

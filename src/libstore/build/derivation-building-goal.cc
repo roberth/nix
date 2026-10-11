@@ -802,18 +802,7 @@ Task<DerivationBuildingGoal::Result> DerivationBuildingGoal::buildWithHook(
         outputPaths.insert(output.outPath);
 
     if (worker.settings.postBuildHook.get() != "") {
-        auto hookState = runPostBuildHook(worker.settings, worker.store, *logger, drvPath, outputPaths);
-        worker.childStarted(shared_from_this(), {hookState->out->readSide.get()}, false, false);
-        while (true) {
-            auto event = co_await waitForChildEvent();
-            if (auto * output = std::get_if<ChildOutput>(&event)) {
-                (*hookState->sink)(output->data);
-            } else if (std::get_if<ChildEOF>(&event)) {
-                hookState->complete();
-                worker.childTerminated(this);
-                break;
-            }
-        }
+        co_await awaitPostBuildHook(outputPaths);
     }
 
     /* It is now safe to delete the lock files, since all future
@@ -1111,18 +1100,7 @@ Task<DerivationBuildingGoal::LocalBuildOutcome> DerivationBuildingGoal::buildLoc
                than silently skip the hook. */
             throw UnimplementedError("the post-build hook is not yet supported on Windows");
 #else
-            auto hookState = runPostBuildHook(worker.settings, worker.store, *logger, drvPath, outputPaths);
-            worker.childStarted(shared_from_this(), {hookState->out->readSide.get()}, false, false);
-            while (true) {
-                auto event = co_await waitForChildEvent();
-                if (auto * output = std::get_if<ChildOutput>(&event)) {
-                    (*hookState->sink)(output->data);
-                } else if (std::get_if<ChildEOF>(&event)) {
-                    hookState->complete();
-                    worker.childTerminated(this);
-                    break;
-                }
-            }
+            co_await awaitPostBuildHook(outputPaths);
 #endif
         }
 
@@ -1140,6 +1118,37 @@ Task<DerivationBuildingGoal::LocalBuildOutcome> DerivationBuildingGoal::buildLoc
 }
 
 #ifndef _WIN32
+Task<void> DerivationBuildingGoal::awaitPostBuildHook(const StorePathSet & outputPaths)
+{
+    auto hookState = runPostBuildHook(worker.settings, worker.store, *logger, drvPath, outputPaths);
+
+    /* Unregister the hook also when the goal is cancelled while the hook
+       runs. Otherwise the Worker polls the pipe of a goal that is gone. */
+    struct Registration
+    {
+        Worker & worker;
+        Goal * goal;
+
+        ~Registration()
+        {
+            worker.childTerminated(goal, JobCategory::Build);
+        }
+    };
+
+    worker.childStarted(shared_from_this(), {hookState->out->readSide.get()}, false, false);
+    Registration registration{worker, this};
+
+    while (true) {
+        auto event = co_await waitForChildEvent();
+        if (auto * output = std::get_if<ChildOutput>(&event)) {
+            (*hookState->sink)(output->data);
+        } else if (std::get_if<ChildEOF>(&event)) {
+            hookState->complete();
+            co_return;
+        }
+    }
+}
+
 static std::unique_ptr<PostBuildHookState> runPostBuildHook(
     const WorkerSettings & workerSettings,
     const StoreDirConfig & store,
