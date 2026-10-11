@@ -23,6 +23,12 @@ gix-pack = { version = "0.76", default-features = false, features = ["sha1", "pa
 gix-zlib = "0.3.0"
 nix-rust-future = { path = "future", features = ["cxx"] }
 tempfile = "3"
+# The reactor (`src/reactor.rs`): a single-threaded runtime with timers and fd
+# readiness. No `signal` feature: Nix handles signals itself.
+tokio = { version = "1.53", default-features = false, features = ["rt", "time", "net", "sync"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [build-dependencies]
 cxx-build = "1.0"

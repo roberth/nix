@@ -68,6 +68,7 @@ sources = files(
   'pool.cc',
   'position.cc',
   'processes.cc',
+  'reactor.cc',
   'ref.cc',
   'rust-future.cc',
   'rust.cc',

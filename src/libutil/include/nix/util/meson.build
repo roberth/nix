@@ -74,6 +74,7 @@ headers = [ config_pub_h ] + files(
   'pos-table.hh',
   'position.hh',
   'processes.hh',
+  'reactor.hh',
   'ref.hh',
   'regex-combinators.hh',
   'repair-flag.hh',

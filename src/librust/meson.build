@@ -26,6 +26,7 @@ subdir('nix-meson-build-support/rust-staticlib')
 # runtime header. Keep in sync with `BRIDGES` in `build.rs`.
 bridge_headers = [
   'lib.rs.h',
+  'reactor.rs.h',
   'tarball_cache.rs.h',
 ]
 
@@ -67,6 +68,7 @@ install_headers(
   'include/nix/rust/boundary.hh',
   'include/nix/rust/future-abi.h',
   'include/nix/rust/future-abi.hh',
+  'include/nix/rust/reactor.hh',
   'include/nix/rust/tarball-cache.hh',
   subdir : 'nix/rust',
 )

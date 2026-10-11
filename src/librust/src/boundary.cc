@@ -1,4 +1,5 @@
 #include "nix/rust/boundary.hh"
+#include "nix/rust/reactor.hh"
 #include "nix/rust/tarball-cache.hh"
 
 namespace nix::rs {
@@ -10,5 +11,9 @@ namespace nix::rs {
 TarballCacheHooks::~TarballCacheHooks() = default;
 
 TarballUnpacker::~TarballUnpacker() = default;
+
+ReactorCallback::~ReactorCallback() = default;
+
+FdCallback::~FdCallback() = default;
 
 } // namespace nix::rs

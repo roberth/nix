@@ -206,6 +206,7 @@ sources = [ config_priv_h ] + files(
   'position.cc',
   'posix-source-accessor.cc',
   'processes.cc',
+  'reactor.cc',
   'register-library-versions.cc',
   'serialise.cc',
   'signature/local-keys.cc',
