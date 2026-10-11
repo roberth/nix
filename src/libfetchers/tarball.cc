@@ -125,6 +125,8 @@ Task<void> unpackInto(
     out = co_await gix::unpackIntoTarballCache(std::move(repoDir), std::move(stream), isZip);
 }
 
+} // namespace
+
 /**
  * The download and the unpacking as two concurrent tasks, which a stream
  * connects. The first error cancels the other task.
@@ -156,6 +158,8 @@ Task<UnpackedDownload> downloadIntoGixTarballCache(FileTransferRequest request, 
         .transfer = std::move(*transfer),
     };
 }
+
+namespace {
 
 /**
  * The libgit2 implementation, which runs the download in a coroutine

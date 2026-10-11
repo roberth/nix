@@ -70,6 +70,16 @@ this_exe = executable(
   install : true,
 )
 
+# A measurement tool for many concurrent tarball fetches; see the comment at
+# the top of `tarball-bench.cc`.
+executable(
+  'nix-fetchers-tarball-bench',
+  files('tarball-bench.cc'),
+  dependencies : deps_private_subproject + deps_private + deps_private_no_pkgconfig,
+  include_directories : include_dirs,
+  install : true,
+)
+
 test(
   meson.project_name(),
   this_exe,

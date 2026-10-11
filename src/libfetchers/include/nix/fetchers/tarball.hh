@@ -76,4 +76,15 @@ struct UnpackedDownload
 UnpackedDownload downloadIntoTarballCache(
     const Settings & settings, FileTransferRequest request, bool isZip, const std::string & description);
 
+/**
+ * `downloadIntoTarballCache()` with the gitoxide tarball cache, as a task,
+ * so that a caller can fetch many archives at once, for example with
+ * `whenAll`. Run it with `runOnReactor()` when `fileTransferUsesReactor()`,
+ * so that curl and the tasks share a thread.
+ *
+ * No evaluator path awaits several fetches at once yet; the tarball
+ * benchmark (`src/libfetchers-tests/tarball-bench.cc`) uses this.
+ */
+Task<UnpackedDownload> downloadIntoGixTarballCache(FileTransferRequest request, bool isZip);
+
 } // namespace nix::fetchers
