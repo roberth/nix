@@ -78,6 +78,12 @@ nix_future nix_rust_test_future_probe_panic(uint64_t id);
 nix_future nix_rust_test_future_identify(nix_future inner);
 
 /**
+ * A future of a `rust::String` that completes with `value`, and panics
+ * with `probe panic in drop` when the completed future is dropped.
+ */
+nix_future nix_rust_test_future_panic_on_drop(void);
+
+/**
  * The Rust half of a synchronous bridge function whose body panics with
  * the message `probe panic <id>`. Passes the message that cxx would throw
  * as a `rust::Error` to `sink`.

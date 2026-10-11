@@ -98,6 +98,26 @@ pub unsafe extern "C" fn nix_rust_test_take_pending_exception(
     take_pending_exception(message)
 }
 
+/// Panics when it is dropped.
+struct PanicOnDrop;
+
+impl Drop for PanicOnDrop {
+    fn drop(&mut self) {
+        resume_unwind(Box::new("probe panic in drop"));
+    }
+}
+
+/// A future that completes with `value`, and panics when the completed
+/// future is dropped.
+#[unsafe(no_mangle)]
+pub extern "C" fn nix_rust_test_future_panic_on_drop() -> NixFuture {
+    let guard = PanicOnDrop;
+    export_future(poll_fn(move |_| {
+        let _guard = &guard;
+        Poll::Ready(Ok::<_, Error>("value".to_owned()))
+    }))
+}
+
 /// A future that awaits `inner`, a C++ future without a value, and
 /// describes how it failed: `same Rust error <id>` if the error is the last
 /// `ProbeError`, `same panic: <message>` if the panic resumed with the

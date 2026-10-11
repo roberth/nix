@@ -350,7 +350,7 @@ unsafe extern "C" fn drop_rust_value<T>(data: *mut c_void) {
     // SAFETY: `wrap_rust_value` made `data` from a `Box<T>`, and C++ drops
     // it once.
     let value = unsafe { Box::from_raw(data as *mut T) };
-    if let Err(payload) = catch_unwind(AssertUnwindSafe(move || drop(value))) {
+    if let Some(payload) = drop_catching(value) {
         report_lost_panic("dropping a Rust value that a C++ exception owned", &payload);
     }
 }
@@ -687,10 +687,10 @@ struct ExportedFuture<T> {
     output: Option<Result<T, Error>>,
 }
 
-/// Drop a value, and turn a panic during the drop into nothing. A panic
-/// must not unwind into C++, and there is nobody to report it to.
-fn drop_quietly<V>(value: V) {
-    let _ = catch_unwind(AssertUnwindSafe(move || drop(value)));
+/// Drop a value, and return the payload of a panic during the drop. A
+/// panic must not unwind into C++.
+fn drop_catching<V>(value: V) -> Option<PanicPayload> {
+    catch_unwind(AssertUnwindSafe(move || drop(value))).err()
 }
 
 impl<T: AbiType> ExportedFuture<T> {
@@ -729,8 +729,17 @@ impl<T: AbiType> ExportedFuture<T> {
             Err(payload) => Err(Error::from_panic(payload)),
         };
         // Drop the future as soon as it completed, as Rust executors do, so
-        // that its resources are released before the result is taken.
-        drop_quietly(this.future.take());
+        // that its resources are released before the result is taken. A
+        // panic in the drop replaces a value; it does not replace an error,
+        // which is the more useful report, and is only reported then.
+        let output = match (drop_catching(this.future.take()), output) {
+            (None, output) => output,
+            (Some(payload), Ok(_)) => Err(Error::from_panic(payload)),
+            (Some(payload), Err(error)) => {
+                report_lost_panic("dropping a completed Rust future", &payload);
+                Err(error)
+            }
+        };
         this.output = Some(output);
         NixPoll::Ready
     }
@@ -763,7 +772,12 @@ impl<T: AbiType> ExportedFuture<T> {
     unsafe extern "C" fn drop(this: *mut c_void) {
         // SAFETY: `this` is the box of `export_future`, and `drop` consumes
         // the `nix_future`.
-        drop_quietly(unsafe { Box::from_raw(this as *mut Self) });
+        let this = unsafe { Box::from_raw(this as *mut Self) };
+        // C++ cancels the future, or drops it after it took the result, so
+        // no caller waits for a result that could carry the panic.
+        if let Some(payload) = drop_catching(this) {
+            report_lost_panic("dropping a Rust future", &payload);
+        }
     }
 }
 

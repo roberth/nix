@@ -107,6 +107,17 @@ TEST(RustIdentity, panicInABridgeFunctionIsARustPanicInCxx)
     EXPECT_EQ(std::string(description), "same panic: probe panic 5");
 }
 
+TEST(RustIdentity, panicInTheDropOfACompletedFutureReplacesItsValue)
+{
+    try {
+        runBlocking(awaitCFuture<rust::String>(nix_rust_test_future_panic_on_drop()));
+        FAIL() << "the future did not fail";
+    } catch (const Error & e) {
+        EXPECT_EQ(typeid(e), typeid(RustPanic));
+        EXPECT_EQ(e.info().msg.str(), "Rust panic: probe panic in drop");
+    }
+}
+
 TEST(RustIdentity, cxxExceptionComesBackAsTheSameObject)
 {
     std::exception_ptr original;
