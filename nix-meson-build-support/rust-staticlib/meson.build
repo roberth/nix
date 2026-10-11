@@ -8,7 +8,11 @@
 # - `rust_target`, the value of the option;
 # - `native_static_libs`, the system libraries that the Rust standard
 #   library needs on the host;
-# - `cargo_build_script`, see `cargo-build.sh`.
+# - `cargo_build_script`, see `cargo-build.sh`;
+# - `localize_rust_symbols`, whether the host supports
+#   `localize-rust-symbols.sh`, and `localize_rust_symbols_command`, the
+#   command to run it with, followed by the pattern of the C exports, the
+#   input and the output.
 
 cargo = find_program('cargo')
 rustc = find_program('rustc')
@@ -76,3 +80,16 @@ endif
 message('Rust native static libraries: ' + ' '.join(native_static_libs))
 
 cargo_build_script = files('cargo-build.sh')
+
+# Only ELF has the tools that `localize-rust-symbols.sh` uses: a relocatable
+# link with `-r`, and `objcopy --localize-symbols`.
+localize_rust_symbols = host_machine.system() not in [
+  'darwin',
+  'windows',
+  'cygwin',
+]
+localize_rust_symbols_command = [
+  find_program('sh'),
+  files('localize-rust-symbols.sh'),
+  ' '.join(cxx.cmd_array()),
+]

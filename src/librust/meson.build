@@ -89,13 +89,25 @@ foreach i : range(1, 2 + bridge_headers.length())
 endforeach
 
 if get_option('default_library') == 'static'
-  # The cargo staticlib is the static library. Copy it to the name that the
-  # other Nix libraries link.
+  # The cargo staticlib is the static library, under the name that the other
+  # Nix libraries link. Where the host supports it, its Rust symbols become
+  # local, as in the shared library, so that another Rust staticlib can be
+  # in the same static link.
+  if localize_rust_symbols
+    static_library_command = localize_rust_symbols_command + [
+      # The C functions of `nix/rust/future-abi.h`.
+      '^nix_',
+      '@INPUT@',
+      '@OUTPUT@',
+    ]
+  else
+    static_library_command = [ 'cp', '@INPUT@', '@OUTPUT@' ]
+  endif
   this_library = custom_target(
     'nixrust',
     input : cargo_staticlib,
     output : 'libnixrust.a',
-    command : [ 'cp', '@INPUT@', '@OUTPUT@' ],
+    command : static_library_command,
     install : true,
     install_dir : get_option('libdir'),
   )
