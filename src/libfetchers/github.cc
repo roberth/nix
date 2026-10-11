@@ -296,26 +296,14 @@ struct GitArchiveInputScheme : InputScheme
         /* Stream the tarball into the tarball cache. */
         auto url = getDownloadUrl(settings, input);
 
-        auto source = sinkToSource([&](Sink & sink) {
-            FileTransferRequest req(url.url);
-            req.headers = url.headers;
-            getFileTransfer()->download(std::move(req), sink);
-        });
+        FileTransferRequest req(url.url);
+        req.headers = url.headers;
+        auto unpacked = downloadIntoTarballCache(settings, std::move(req), false, input.to_string());
 
-        auto act = std::make_unique<Activity>(
-            *logger, lvlInfo, actUnknown, fmt("unpacking '%s' into the Git cache", input.to_string()));
-
-        TarArchive archive{*source};
         auto tarballCache = settings.getTarballCache();
-        auto writerPool = settings.getTarballWriterPool();
-        auto parseSink = merkle::makeTarSink(*writerPool);
-        auto lastModified = unpackTarfileToSink(archive, *parseSink);
-        auto tree = parseSink->flush();
-
-        act.reset();
-
         TarballInfo tarballInfo{
-            .treeHash = tarballCache->dereferenceSingletonDirectory(tree.hash), .lastModified = lastModified};
+            .treeHash = tarballCache->dereferenceSingletonDirectory(unpacked.treeHash),
+            .lastModified = unpacked.lastModified};
 
         cache->upsert(treeHashKey, Attrs{{"treeHash", tarballInfo.treeHash.gitRev()}});
         cache->upsert(lastModifiedKey, Attrs{{"lastModified", (uint64_t) tarballInfo.lastModified}});

@@ -10,6 +10,8 @@
 #include "nix/fetchers/git-utils.hh"
 #include "nix/fetchers/merkle-tar-adapter.hh"
 #include "nix/fetchers/fetch-settings.hh"
+#include "nix/fetchers/tarball-cache-gix.hh"
+#include "nix/util/task.hh"
 
 namespace nix::fetchers {
 
@@ -105,6 +107,106 @@ DownloadFileResult downloadFile(
     };
 }
 
+namespace {
+
+Task<void> transferInto(
+    ref<FileTransfer> fileTransfer,
+    FileTransferRequest request,
+    ref<TransferStream> stream,
+    std::optional<FileTransferResult> & out)
+{
+    out = co_await fileTransfer->transferStreaming(std::move(request), std::move(stream));
+}
+
+Task<void>
+unpackInto(std::filesystem::path repoDir, ref<TransferStream> stream, bool isZip, std::optional<gix::UnpackedTree> & out)
+{
+    out = co_await gix::unpackIntoTarballCache(std::move(repoDir), std::move(stream), isZip);
+}
+
+/**
+ * The download and the unpacking as two concurrent tasks, which a stream
+ * connects. The first error cancels the other task.
+ *
+ * Destroying this task, for example on a user interrupt in
+ * `runBlocking()`, cancels both: the transfer stops in curl, and the
+ * unpacking stops and waits for its thread, which removes its temporary
+ * files and leaves no pack.
+ */
+Task<UnpackedDownload> downloadIntoGixTarballCache(FileTransferRequest request, bool isZip)
+{
+    auto stream = make_ref<TransferStream>();
+
+    /* Written by the two tasks when they complete; they live in this
+       frame, which outlives the tasks. */
+    std::optional<FileTransferResult> transfer;
+    std::optional<gix::UnpackedTree> tree;
+
+    std::vector<Task<void>> tasks;
+    tasks.push_back(transferInto(getFileTransfer(), std::move(request), stream, transfer));
+    tasks.push_back(unpackInto(gix::initTarballCache(), stream, isZip, tree));
+    co_await whenAll(std::move(tasks));
+
+    co_return UnpackedDownload{
+        .treeHash = tree->treeHash,
+        .lastModified = tree->lastModified,
+        .transfer = std::move(*transfer),
+    };
+}
+
+/**
+ * The libgit2 implementation, which runs the download in a coroutine
+ * on the calling thread (`sinkToSource`) and unpacks synchronously.
+ */
+UnpackedDownload downloadIntoLibgit2TarballCache(const Settings & settings, FileTransferRequest request, bool isZip)
+{
+    auto _res = std::make_shared<Sync<FileTransferResult>>();
+
+    auto source = sinkToSource([&](Sink & sink) {
+        getFileTransfer()->download(std::move(request), sink, [_res](FileTransferResult r) { *_res->lock() = r; });
+    });
+
+    AutoDelete cleanupTemp;
+
+    auto archive = isZip ? ({
+        /* In streaming mode, libarchive doesn't handle
+           symlinks in zip files correctly (#10649). So write
+           the entire file to disk so libarchive can access it
+           in random-access mode. */
+        auto [fdTemp, path] = createTempFile("nix-zipfile");
+        cleanupTemp.cancel();
+        cleanupTemp = {path};
+        {
+            FdSink sink(fdTemp.get());
+            source->drainInto(sink);
+        }
+        TarArchive{path};
+    })
+                         : TarArchive{*source};
+    auto writerPool = settings.getTarballWriterPool();
+    auto parseSink = merkle::makeTarSink(*writerPool);
+    auto lastModified = unpackTarfileToSink(archive, *parseSink);
+    auto tree = parseSink->flush();
+
+    return UnpackedDownload{
+        .treeHash = tree.hash,
+        .lastModified = lastModified,
+        .transfer = std::move(*_res->lock()),
+    };
+}
+
+} // namespace
+
+UnpackedDownload downloadIntoTarballCache(
+    const Settings & settings, FileTransferRequest request, bool isZip, const std::string & description)
+{
+    Activity act(*logger, lvlInfo, actUnknown, fmt("unpacking '%s' into the Git cache", description));
+
+    if (gix::useGixTarballCache())
+        return runBlocking(downloadIntoGixTarballCache(std::move(request), isZip));
+    return downloadIntoLibgit2TarballCache(settings, std::move(request), isZip);
+}
+
 static DownloadTarballResult downloadTarball_(
     const Settings & settings, const std::string & urlS, const Headers & headers, const std::string & displayPrefix)
 {
@@ -157,64 +259,35 @@ static DownloadTarballResult downloadTarball_(
            `tarballTtl`, so no need to check the server. */
         return attrsToResult(cached->value);
 
-    auto _res = std::make_shared<Sync<FileTransferResult>>();
-
-    auto source = sinkToSource([&](Sink & sink) {
-        FileTransferRequest req(url);
-        req.expectedETag = cached ? getStrAttr(cached->value, "etag") : "";
-        getFileTransfer()->download(std::move(req), sink, [_res](FileTransferResult r) { *_res->lock() = r; });
-    });
+    FileTransferRequest req(url);
+    req.expectedETag = cached ? getStrAttr(cached->value, "etag") : "";
 
     // TODO: fall back to cached value if download fails.
 
-    auto act = std::make_unique<Activity>(*logger, lvlInfo, actUnknown, fmt("unpacking '%s' into the Git cache", url));
-
-    AutoDelete cleanupTemp;
-
-    /* Note: if the download is cached, `importTarball()` will receive
-       no data, which causes it to import an empty tarball. */
-    auto archive = !url.path.empty() && hasSuffix(toLower(url.path.back()), ".zip") ? ({
-        /* In streaming mode, libarchive doesn't handle
-           symlinks in zip files correctly (#10649). So write
-           the entire file to disk so libarchive can access it
-           in random-access mode. */
-        auto [fdTemp, path] = createTempFile("nix-zipfile");
-        cleanupTemp.cancel();
-        cleanupTemp = {path};
-        debug("downloading '%s' into %s...", url, PathFmt(path));
-        {
-            FdSink sink(fdTemp.get());
-            source->drainInto(sink);
-        }
-        TarArchive{path};
-    })
-                                                                                    : TarArchive{*source};
+    /* Note: if the download is cached, the unpacking receives no data,
+       which causes it to import an empty tarball. */
+    auto isZip = !url.path.empty() && hasSuffix(toLower(url.path.back()), ".zip");
+    auto unpacked = downloadIntoTarballCache(settings, std::move(req), isZip, url.to_string());
     auto tarballCache = settings.getTarballCache();
-    auto writerPool = settings.getTarballWriterPool();
-    auto parseSink = merkle::makeTarSink(*writerPool);
-    auto lastModified = unpackTarfileToSink(archive, *parseSink);
-    auto tree = parseSink->flush();
-
-    act.reset();
-
-    auto res(_res->lock());
+    const auto & res = unpacked.transfer;
 
     Attrs infoAttrs;
 
-    if (res->cached) {
+    if (res.cached) {
         /* The server says that the previously downloaded version is
            still current. */
         infoAttrs = cached->value;
     } else {
-        infoAttrs.insert_or_assign("etag", res->etag);
-        infoAttrs.insert_or_assign("treeHash", tarballCache->dereferenceSingletonDirectory(tree.hash).gitRev());
-        infoAttrs.insert_or_assign("lastModified", uint64_t(lastModified));
-        if (res->immutableUrl)
-            infoAttrs.insert_or_assign("immutableUrl", *res->immutableUrl);
+        infoAttrs.insert_or_assign("etag", res.etag);
+        infoAttrs.insert_or_assign(
+            "treeHash", tarballCache->dereferenceSingletonDirectory(unpacked.treeHash).gitRev());
+        infoAttrs.insert_or_assign("lastModified", uint64_t(unpacked.lastModified));
+        if (res.immutableUrl)
+            infoAttrs.insert_or_assign("immutableUrl", *res.immutableUrl);
     }
 
     /* Insert a cache entry for every URL in the redirect chain. */
-    for (auto & url : res->urls) {
+    for (auto & url : res.urls) {
         cacheKey.second.insert_or_assign("url", url);
         settings.getCache()->upsert(cacheKey, infoAttrs);
     }
