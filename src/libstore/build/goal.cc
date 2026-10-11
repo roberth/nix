@@ -246,7 +246,67 @@ struct WaitQueueLeaf : WorkerLeaf
     void await_resume() noexcept {}
 };
 
+/**
+ * Take the turn with the build hook, or wait in `Worker::wantingBuildHook`
+ * until the goal that has it ends it.
+ */
+struct BuildHookTurnLeaf : WorkerLeaf
+{
+    Worker & worker;
+    WaitQueue::Entry entry;
+    bool taken = false;
+
+    BuildHookTurnLeaf(bool & suspendedOnWorker, Worker & worker)
+        : WorkerLeaf(suspendedOnWorker)
+        , worker(worker)
+    {
+    }
+
+    BuildHookTurnLeaf(const BuildHookTurnLeaf &) = delete;
+
+    ~BuildHookTurnLeaf()
+    {
+        /* The end of a turn woke this goal, which is cancelled before it
+           took the turn: pass the wake on, so that the other goals do not
+           wait forever. */
+        if (!taken && entry.isWoken())
+            worker.wantingBuildHook.wakeOne();
+    }
+
+    nix_poll pollWorker(const Waker & waker) override
+    {
+        if (!worker.buildHookBusy) {
+            worker.buildHookBusy = true;
+            taken = true;
+            return NIX_POLL_READY;
+        }
+        entry.wait(worker.wantingBuildHook, waker);
+        return NIX_POLL_PENDING;
+    }
+
+    void await_resume() noexcept {}
+};
+
 } // namespace
+
+Goal::BuildHookTurn::~BuildHookTurn()
+{
+    if (!worker)
+        return;
+    worker->buildHookBusy = false;
+    /* After "decline-permanently", nobody talks to the hook any more, and
+       all goals that wait can go on at once. */
+    if (worker->tryBuildHook)
+        worker->wantingBuildHook.wakeOne();
+    else
+        worker->wantingBuildHook.wakeAll();
+}
+
+Task<Goal::BuildHookTurn> Goal::waitForBuildHook()
+{
+    co_await BuildHookTurnLeaf(suspendedOnWorker, worker);
+    co_return BuildHookTurn(worker);
+}
 
 void Goal::removeWaiter(const WaiteeSet * set)
 {

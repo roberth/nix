@@ -96,9 +96,10 @@ private:
     Task<void> awaitPostBuildHook(const StorePathSet & outputPaths);
 
     /**
-     * Is the build hook willing to perform the build?
+     * Is the build hook willing to perform the build? On `rpAccept`, the
+     * hook is in `Worker::hook`, for `buildWithHook`.
      */
-    HookReply tryBuildHook(const DerivationOptions<StorePath> & drvOptions);
+    Task<HookReply> tryBuildHook(const DerivationOptions<StorePath> & drvOptions);
 
     BuildError logLimitExceeded();
 

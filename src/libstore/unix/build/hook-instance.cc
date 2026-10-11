@@ -7,6 +7,8 @@
 #include <chrono>
 #include <utility>
 
+#include <fcntl.h>
+
 namespace nix {
 
 HookInstance::HookInstance(const Strings & _buildHook, std::chrono::milliseconds timeout)
@@ -83,12 +85,18 @@ HookInstance::HookInstance(const Strings & _buildHook, std::chrono::milliseconds
     fromHook.writeSide = -1;
     toHook.readSide = -1;
 
-    sink = FdSink(toHook.writeSide.get());
+    /* The worker writes to the hook from a task, which must not block
+       when the hook does not read. */
+    if (fcntl(toHook.writeSide.get(), F_SETFL, fcntl(toHook.writeSide.get(), F_GETFL) | O_NONBLOCK) == -1)
+        throw SysError("making the pipe to the build hook non-blocking");
+
+    StringSink sink;
     std::map<std::string, Config::SettingInfo> settings;
     globalConfig.getSettings(settings);
     for (auto & setting : settings)
         sink << 1 << setting.first << setting.second.value;
     sink << 0;
+    pendingInput = std::move(sink.s);
 }
 
 HookInstance::~HookInstance()

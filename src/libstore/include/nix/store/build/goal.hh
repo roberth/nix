@@ -399,6 +399,36 @@ protected:
     Task<void> yield();
 
     /**
+     * The turn of a goal with the build hook. Destroying it ends the
+     * turn, and wakes the next goal that waits for one.
+     */
+    class BuildHookTurn
+    {
+        Worker * worker;
+
+    public:
+        explicit BuildHookTurn(Worker & worker)
+            : worker(&worker)
+        {
+        }
+
+        BuildHookTurn(BuildHookTurn && other) noexcept
+            : worker(std::exchange(other.worker, nullptr))
+        {
+        }
+
+        BuildHookTurn & operator=(BuildHookTurn &&) = delete;
+
+        ~BuildHookTurn();
+    };
+
+    /**
+     * Wait until no other goal talks to the build hook, and take the
+     * turn (`Worker::buildHookBusy`).
+     */
+    Task<BuildHookTurn> waitForBuildHook();
+
+    /**
      * Wait for the next output, EOF or timeout of the child processes of
      * this goal.
      */

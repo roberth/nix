@@ -247,6 +247,19 @@ public:
     std::unique_ptr<HookInstance> hook;
 #endif
 
+    /**
+     * Whether a goal talks to the build hook. The exchange of a goal with
+     * the hook waits on the reactor, and the goals take turns, so that
+     * the next goal gets the hook that the previous one did not use.
+     * See `Goal::waitForBuildHook`.
+     */
+    bool buildHookBusy = false;
+
+    /**
+     * Goals waiting for their turn with the build hook.
+     */
+    WaitQueue wantingBuildHook;
+
     uint64_t expectedBuilds = 0;
     uint64_t doneBuilds = 0;
     uint64_t failedBuilds = 0;

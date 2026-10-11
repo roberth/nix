@@ -19,6 +19,7 @@
 #include "nix/store/outputs-query.hh"
 #include "nix/store/globals.hh"
 #include "nix/util/current-process.hh"
+#include "nix/util/reactor.hh"
 
 #include <chrono>
 #include <algorithm>
@@ -27,6 +28,9 @@
 #include <sys/types.h>
 #include <fcntl.h>
 #include <unistd.h>
+#ifndef _WIN32
+#  include <poll.h>
+#endif
 
 #include <nlohmann/json.hpp>
 
@@ -115,6 +119,71 @@ struct LogSink : Sink
 };
 
 } // namespace
+
+#ifndef _WIN32
+namespace {
+
+/**
+ * Write all of `data` to the non-blocking descriptor `fd`. While the pipe
+ * is full, wait on the reactor, so that the other goals run.
+ */
+Task<void> writeAllAsync(Descriptor fd, std::string data)
+{
+    std::string_view rest = data;
+    while (!rest.empty()) {
+        auto n = ::write(fd, rest.data(), rest.size());
+        if (n >= 0)
+            rest.remove_prefix(n);
+        else if (errno == EAGAIN || errno == EWOULDBLOCK)
+            co_await waitFd(fd, false, true);
+        else if (errno != EINTR)
+            throw SysError("writing to the build hook");
+    }
+}
+
+/**
+ * Read a line from `fd`. While nothing is there to read, wait on the
+ * reactor, so that the other goals run.
+ *
+ * Read one byte at a time, as `readLine` does: the worker reads the rest
+ * of the channel later, as log output of the build.
+ */
+Task<std::string> readLineAsync(Descriptor fd)
+{
+    std::string line;
+    while (true) {
+        pollfd pfd{.fd = fd, .events = POLLIN, .revents = 0};
+        auto ready = ::poll(&pfd, 1, 0);
+        if (ready == -1) {
+            if (errno == EINTR)
+                continue;
+            throw SysError("polling the build hook");
+        }
+        if (ready == 0) {
+            co_await waitFd(fd, true, false);
+            continue;
+        }
+        char c;
+        auto n = ::read(fd, &c, 1);
+        if (n == -1) {
+            if (errno == EINTR)
+                continue;
+            if (errno != EIO)
+                throw SysError("reading from the build hook");
+            /* EIO is the end of file of a pseudo-terminal, as in
+               `readLine`. */
+            n = 0;
+        }
+        if (n == 0)
+            throw EndOfFile("unexpected EOF reading a line");
+        if (c == '\n')
+            co_return line;
+        line += c;
+    }
+}
+
+} // namespace
+#endif
 
 struct PostBuildHookState
 {
@@ -500,7 +569,7 @@ Task<DerivationBuildingGoal::Result> DerivationBuildingGoal::tryToBuild()
                     .builtOutputs = checkPathValidity(initialOutputs).second,
                 }};
 
-            switch (tryBuildHook(drvOptions)) {
+            switch (co_await tryBuildHook(drvOptions)) {
             case rpAccept:
                 /* Yes, it has started doing so.  Wait until we get
                    EOF from the hook. */
@@ -532,7 +601,7 @@ Task<DerivationBuildingGoal::Result> DerivationBuildingGoal::tryToBuild()
                 if (valid)
                     break;
 
-                switch (tryBuildHook(drvOptions)) {
+                switch (co_await tryBuildHook(drvOptions)) {
                 case rpAccept:
                     /* Yes, it has started doing so.  Wait until we get
                        EOF from the hook. */
@@ -621,24 +690,24 @@ Task<DerivationBuildingGoal::Result> DerivationBuildingGoal::buildWithHook(
        destroyed (e.g., during failure cascades). */
     hook->onKillChild = [this]() { worker.childTerminated(this, JobCategory::Build); };
 
-    std::string machineName = [&hook]() {
-        try {
-            return readLine(hook->fromHook.readSide.get());
-        } catch (Error & e) {
-            e.addTrace({}, "while reading the machine name from the build hook");
-            throw;
-        }
-    }();
+    std::string machineName;
+    try {
+        machineName = co_await readLineAsync(hook->fromHook.readSide.get());
+    } catch (Error & e) {
+        e.addTrace({}, "while reading the machine name from the build hook");
+        throw;
+    }
 
-    CommonProto::WriteConn conn{hook->sink};
-
-    /* Tell the hook all the inputs that have to be copied to the
-       remote system. */
-    CommonProto::write(worker.store, conn, inputPaths);
-
-    /* Tell the hooks the missing outputs that have to be copied back
-       from the remote system. */
     {
+        StringSink request;
+        CommonProto::WriteConn conn{request};
+
+        /* Tell the hook all the inputs that have to be copied to the
+           remote system. */
+        CommonProto::write(worker.store, conn, inputPaths);
+
+        /* Tell the hooks the missing outputs that have to be copied back
+           from the remote system. */
         StringSet missingOutputs;
         for (auto & [outputName, status] : initialOutputs) {
             // XXX: Does this include known CA outputs?
@@ -647,9 +716,11 @@ Task<DerivationBuildingGoal::Result> DerivationBuildingGoal::buildWithHook(
             missingOutputs.insert(outputName);
         }
         CommonProto::write(worker.store, conn, missingOutputs);
+
+        /* The list of inputs can be larger than the pipe. */
+        co_await writeAllAsync(hook->toHook.writeSide.get(), std::move(request.s));
     }
 
-    hook->sink = FdSink();
     hook->toHook.writeSide.close();
 
     /* Create the log file and pipe. */
@@ -1232,41 +1303,55 @@ BuildError DerivationBuildingGoal::fixupBuilderFailureErrorMessage(BuilderFailur
     return BuildError{e.status, msg};
 }
 
-HookReply DerivationBuildingGoal::tryBuildHook(const DerivationOptions<StorePath> & drvOptions)
+Task<HookReply> DerivationBuildingGoal::tryBuildHook(const DerivationOptions<StorePath> & drvOptions)
 {
 #ifdef _WIN32 // TODO enable build hook on Windows
-    return rpDecline;
+    co_return rpDecline;
 #else
     /* This should use `worker.evalStore`, but per #13179 the build hook
        doesn't work with eval store anyways. */
     if (worker.settings.buildHook.get().empty() || !worker.tryBuildHook || !worker.store.isValidPath(drvPath))
-        return rpDecline;
+        co_return rpDecline;
 
-    if (!worker.hook)
-        worker.hook = std::make_unique<HookInstance>(
+    /* The exchange waits on the reactor, so other goals can ask at the
+       same time. One goal at a time talks to the hook, as when the
+       exchange blocked: a hook that declines answers the next goal, and
+       the goals do not start a hook each. */
+    auto turn = co_await waitForBuildHook();
+
+    /* The hook can have declined permanently while this goal waited. */
+    if (!worker.tryBuildHook)
+        co_return rpDecline;
+
+    /* The goal owns the hook during the exchange. If the goal is
+       cancelled in the middle of it, the state of the hook is unknown, and
+       destroying it kills it. */
+    auto hook = std::move(worker.hook);
+    if (!hook)
+        hook = std::make_unique<HookInstance>(
             worker.settings.buildHook, std::chrono::milliseconds(worker.settings.buildHookKillTimeout));
+
+    std::string reply;
 
     try {
 
         /* Send the request to the hook. */
-        worker.hook->sink << "try" << (worker.getNrLocalBuilds() < worker.settings.maxBuildJobs ? 1 : 0)
-                          << drv->platform << worker.store.printStorePath(drvPath)
-                          << drvOptions.getRequiredSystemFeatures(*drv);
-        worker.hook->sink.flush();
+        StringSink request;
+        request << "try" << (worker.getNrLocalBuilds() < worker.settings.maxBuildJobs ? 1 : 0) << drv->platform
+                << worker.store.printStorePath(drvPath) << drvOptions.getRequiredSystemFeatures(*drv);
+        co_await writeAllAsync(hook->toHook.writeSide.get(), std::exchange(hook->pendingInput, {}) + request.s);
 
         /* Read the first line of input, which should be a word indicating
            whether the hook wishes to perform the build. */
-        std::string reply;
         while (true) {
-            auto s = [&]() {
-                try {
-                    return readLine(worker.hook->fromHook.readSide.get());
-                } catch (Error & e) {
-                    e.addTrace({}, "while reading the response from the build hook");
-                    throw;
-                }
-            }();
-            if (handleJSONLogMessage(s, worker.act, worker.hook->activities, "the build hook", true))
+            std::string s;
+            try {
+                s = co_await readLineAsync(hook->fromHook.readSide.get());
+            } catch (Error & e) {
+                e.addTrace({}, "while reading the response from the build hook");
+                throw;
+            }
+            if (handleJSONLogMessage(s, worker.act, hook->activities, "the build hook", true))
                 ;
             else if (s.substr(0, 2) == "# ") {
                 reply = s.substr(2);
@@ -1277,29 +1362,30 @@ HookReply DerivationBuildingGoal::tryBuildHook(const DerivationOptions<StorePath
             }
         }
 
-        debug("hook reply is '%1%'", reply);
-
-        if (reply == "decline")
-            return rpDecline;
-        else if (reply == "decline-permanently") {
-            worker.tryBuildHook = false;
-            worker.hook = 0;
-            return rpDecline;
-        } else if (reply == "postpone")
-            return rpPostpone;
-        else if (reply != "accept")
-            throw Error("bad hook reply '%s'", reply);
-
     } catch (SystemError & e) {
-        if (e.is(std::errc::broken_pipe)) {
-            printError("build hook died unexpectedly: %s", chomp(drainFD(worker.hook->fromHook.readSide.get())));
-            worker.hook = 0;
-            return rpDecline;
-        } else
+        if (!e.is(std::errc::broken_pipe))
             throw;
+        printError("build hook died unexpectedly: %s", chomp(drainFD(hook->fromHook.readSide.get())));
+        co_return rpDecline;
     }
 
-    return rpAccept;
+    debug("hook reply is '%1%'", reply);
+
+    if (reply == "decline") {
+        worker.hook = std::move(hook);
+        co_return rpDecline;
+    } else if (reply == "decline-permanently") {
+        worker.tryBuildHook = false;
+        co_return rpDecline;
+    } else if (reply == "postpone") {
+        worker.hook = std::move(hook);
+        co_return rpPostpone;
+    } else if (reply != "accept")
+        throw Error("bad hook reply '%s'", reply);
+
+    /* `buildWithHook` takes the hook from here. */
+    worker.hook = std::move(hook);
+    co_return rpAccept;
 #endif
 }
 

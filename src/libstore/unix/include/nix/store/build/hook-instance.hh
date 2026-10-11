@@ -40,7 +40,14 @@ struct HookInstance
      */
     Pid pid;
 
-    FdSink sink;
+    /**
+     * Input for the hook that the worker has not written yet: the
+     * settings, from the constructor. The worker sends it before its
+     * first request, without blocking: the write side of `toHook` is
+     * non-blocking, and the worker waits on the reactor while the pipe is
+     * full.
+     */
+    std::string pendingInput;
 
     std::map<ActivityId, Activity> activities;
 
