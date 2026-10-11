@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include "nix/util/task.hh"
+#include "nix/util/task-thread.hh"
 #include "nix/util/error.hh"
 
 #include <string>
@@ -497,6 +498,68 @@ TEST(Task, taskSetErrorLeavesOtherTasks)
     set.reset();
     EXPECT_EQ(log, (Log{"other leaf destroyed", "other local destroyed"}));
 }
+
+TEST(Task, runInThreadReturnsResult)
+{
+    auto caller = std::this_thread::get_id();
+    auto task = runInThread<bool>([caller]() { return std::this_thread::get_id() != caller; });
+    EXPECT_EQ(runBlocking(std::move(task)), true);
+}
+
+TEST(Task, runInThreadKeepsExceptionType)
+{
+    auto task = runInThread<void>([]() { throw DerivedTestError("from the thread"); });
+    try {
+        runBlocking(std::move(task));
+        FAIL() << "expected an exception";
+    } catch (TestError & e) {
+        EXPECT_NE(dynamic_cast<DerivedTestError *>(&e), nullptr);
+        EXPECT_EQ(e.info().msg.str(), "from the thread");
+    }
+}
+
+TEST(Task, runInThreadIsLazy)
+{
+    std::atomic<bool> ran = false;
+    {
+        auto task = runInThread<void>([&]() { ran = true; });
+    }
+    EXPECT_EQ(ran.load(), false);
+}
+
+#ifndef _WIN32 // `checkInterrupt()` does nothing on Windows
+TEST(Task, runInThreadDropInterruptsTheFunction)
+{
+    std::atomic<bool> started = false;
+    std::atomic<bool> interrupted = false;
+
+    auto task = runInThread<void>([&]() {
+        started = true;
+        try {
+            while (true) {
+                checkInterrupt();
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+        } catch (Interrupted &) {
+            interrupted = true;
+            throw;
+        }
+    });
+
+    auto target = makeWakeTarget<CountingTarget>();
+    EXPECT_EQ(task.poll(target->waker()), NIX_POLL_PENDING);
+    while (!started)
+        std::this_thread::yield();
+
+    /* The destruction waits for the thread, so the function has seen the
+       interrupt when it returns. */
+    task.reset();
+    EXPECT_EQ(interrupted.load(), true);
+    EXPECT_EQ(target->count, 0);
+    /* The interrupt was for that thread only. */
+    EXPECT_EQ(isInterrupted(), false);
+}
+#endif
 
 /* A waker implemented only in terms of the C ABI, as Rust would. */
 namespace {

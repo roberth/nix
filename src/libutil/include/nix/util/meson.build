@@ -95,6 +95,7 @@ headers = [ config_pub_h ] + files(
   'tarfile.hh',
   'task-asio.hh',
   'task-impl.hh',
+  'task-thread.hh',
   'task.hh',
   'terminal.hh',
   'thread-pool.hh',
