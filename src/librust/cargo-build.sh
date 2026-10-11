@@ -74,10 +74,24 @@ if [ ! -f "$generated/rust/cxx.h" ]; then
     exit 1
 fi
 
+# The copies under `include/` are the ones that the compiler reads. Ninja does
+# not know them as outputs of this script, so it cannot order a compilation,
+# or the build of a precompiled header, after the copy. Copy them only if
+# their contents changed: a new modification time on an unchanged header,
+# such as `cxx.h`, makes the precompiled headers that include it stale in the
+# middle of a build, and the compiler then rejects them. The outputs that
+# Meson declares are copied every time, so that Ninja sees them as up to
+# date.
+copy_if_changed() {
+    if ! cmp -s "$1" "$2"; then
+        cp -L "$1" "$2"
+    fi
+}
+
 mkdir -p "$outdir/include/rust" "$outdir/include/nix/rust"
 cp -L "$generated/rust/cxx.h" "$outdir/cxx.h"
-cp -L "$generated/rust/cxx.h" "$outdir/include/rust/cxx.h"
+copy_if_changed "$generated/rust/cxx.h" "$outdir/include/rust/cxx.h"
 for header in "$generated"/nix-rust/src/*.rs.h; do
     cp -L "$header" "$outdir/"
-    cp -L "$header" "$outdir/include/nix/rust/"
+    copy_if_changed "$header" "$outdir/include/nix/rust/$(basename "$header")"
 done
