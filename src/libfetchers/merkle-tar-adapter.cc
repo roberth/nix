@@ -1,10 +1,14 @@
 #include "nix/fetchers/merkle-tar-adapter.hh"
 #include "nix/util/chunked-vector.hh"
+#include "nix/util/signals.hh"
 #include "nix/util/thread-pool.hh"
 #include "nix/util/strings.hh"
 #include "nix/util/util.hh"
 
 #include <cassert>
+#include <chrono>
+#include <condition_variable>
+#include <mutex>
 #include <map>
 #include <optional>
 #include <memory>
@@ -129,6 +133,45 @@ struct TarAdapterImpl : merkle::TarAdapter
     ChunkedVector<std::optional<Hash>, chunkSize, std::numeric_limits<uint32_t>::max() / chunkSize> results;
 
     /**
+     * Whether the owner cancelled the parse. Empty if it cannot.
+     */
+    std::function<bool()> isCancelled;
+
+    static constexpr size_t maxWorkers = 10;
+
+    static size_t numWorkers()
+    {
+        return std::max<size_t>(std::min<size_t>(std::thread::hardware_concurrency(), maxWorkers), 1);
+    }
+
+    merkle::TarAdapterBacklog limits;
+
+    /**
+     * The files that were parsed and handed to `workers`, but are not
+     * written yet, and their total size.
+     *
+     * Without a bound, the parse runs ahead of the writers whenever it is
+     * faster than them: in a debug build, or on a machine with few cores.
+     * The contents of all queued files are then in memory, and a
+     * cancellation has to wait for the writers to drain the queue.
+     */
+    struct Backlog
+    {
+        size_t files = 0;
+        uint64_t bytes = 0;
+
+        /**
+         * A writer failed. `workers` has stopped, and the files that are
+         * still queued will not be written.
+         */
+        bool failed = false;
+    };
+
+    std::mutex backlogMutex;
+    std::condition_variable backlogChanged;
+    Backlog backlog;
+
+    /**
      * Writes the files as they are parsed, so that hashing them overlaps
      * with parsing the rest of the archive.
      *
@@ -138,11 +181,66 @@ struct TarAdapterImpl : merkle::TarAdapter
      * Declared last, so that the workers are joined before anything they
      * write into is destroyed.
      */
-    ThreadPool workers{std::min(std::thread::hardware_concurrency(), 10U)};
+    ThreadPool workers{numWorkers()};
 
-    TarAdapterImpl(merkle::FileSinkBuilder & store)
+    TarAdapterImpl(
+        merkle::FileSinkBuilder & store,
+        std::function<bool()> isCancelled,
+        std::optional<merkle::TarAdapterBacklog> backlog)
         : store(store)
+        , isCancelled(std::move(isCancelled))
+        , limits(backlog.value_or(merkle::TarAdapterBacklog{
+              .maxFiles = 2 * numWorkers(),
+              .maxBytes = 64 * 1024 * 1024,
+          }))
     {
+    }
+
+    void checkCancelled() const
+    {
+        if (isCancelled && isCancelled())
+            throw Cancelled("writing the files of an archive was cancelled");
+    }
+
+    /**
+     * Wait until the backlog has room for a file of `size` bytes, and
+     * count the file in it.
+     *
+     * If a writer failed, rethrow its exception instead: the workers have
+     * stopped, so the backlog would never shrink.
+     */
+    void enterBacklog(uint64_t size)
+    {
+        std::unique_lock lock(backlogMutex);
+        while (true) {
+            if (backlog.failed) {
+                lock.unlock();
+                /* Rethrows the exception of the writer. */
+                workers.process();
+                unreachable();
+            }
+            if (backlog.files == 0
+                || (backlog.files < limits.maxFiles && backlog.bytes + size <= limits.maxBytes))
+                break;
+            /* Wake up regularly to see a cancellation, which does not
+               notify `backlogChanged`. */
+            backlogChanged.wait_for(lock, std::chrono::milliseconds(10));
+            checkCancelled();
+        }
+        backlog.files++;
+        backlog.bytes += size;
+    }
+
+    void leaveBacklog(uint64_t size, bool failed)
+    {
+        {
+            std::lock_guard lock(backlogMutex);
+            backlog.files--;
+            backlog.bytes -= size;
+            if (failed)
+                backlog.failed = true;
+        }
+        backlogChanged.notify_all();
     }
 
     /**
@@ -232,31 +330,69 @@ struct TarAdapterImpl : merkle::TarAdapter
 
     void createDirectory(const CanonPath & path) override
     {
+        checkCancelled();
         addNode(path, Directory{});
     }
 
     void createRegularFile(const CanonPath & path, bool isExecutable, fun<void(Sink &)> callback) override
     {
+        checkCancelled();
+
         auto sink = store.makeRegularFileSink();
-        callback(*sink);
+        uint64_t size = 0;
+        {
+            LambdaSink counter([&](std::string_view data) {
+                size += data.size();
+                (*sink)(data);
+            });
+            callback(counter);
+        }
+
+        enterBacklog(size);
 
         /* The file is complete, so start writing it now: that way the
            store is busy with it while we parse the rest of the archive,
            and it lets go of whatever resources it holds for this file as
            soon as it is done. */
         auto & hash = results.add().first;
-        workers.enqueue([sink = std::move(sink), &hash]() { hash = std::move(*sink).finalize(); });
+        try {
+            workers.enqueue([this, sink = std::move(sink), &hash, size]() {
+                /* A cancelled parse writes none of the files that are
+                   still queued. Skip the file instead of throwing: the
+                   pool prints every exception after the first, and
+                   `flush()` throws `Cancelled` once. */
+                if (isCancelled && isCancelled()) {
+                    leaveBacklog(size, false);
+                    return;
+                }
+                try {
+                    hash = std::move(*sink).finalize();
+                } catch (...) {
+                    leaveBacklog(size, true);
+                    throw;
+                }
+                leaveBacklog(size, false);
+            });
+        } catch (ThreadPoolShutDown &) {
+            /* A writer failed after `enterBacklog()`. Rethrow its
+               exception. */
+            leaveBacklog(size, true);
+            workers.process();
+            unreachable();
+        }
 
         addNode(path, File{.hash = &hash, .executable = isExecutable});
     }
 
     void createSymlink(const CanonPath & path, const std::string & target) override
     {
+        checkCancelled();
         addNode(path, Symlink{.hash = store.makeSymlink(target).hash});
     }
 
     void createHardlink(const CanonPath & path, const CanonPath & target) override
     try {
+        checkCancelled();
         /* Resolved now rather than at flush, because a hard link refers
            to whatever is at `target` at this point in the archive, the
            way it would refer to an inode. A later entry replacing
@@ -297,18 +433,27 @@ struct TarAdapterImpl : merkle::TarAdapter
     merkle::TreeEntry flush() override
     {
         /* Wait for the files to be written. An exception in a worker is
-           propagated here, so every hash below is filled in. */
+           propagated here, so every hash below is filled in. A
+           cancellation stops the workers before their next file, and the
+           queue has at most `limits.maxFiles` files, so this does not
+           wait for a backlog of files to drain. */
         workers.process();
+
+        /* Skipped files have no hash. */
+        checkCancelled();
 
         /* Write the directories, children before parents, which the
            recursion gives us for free. */
-        auto entry = [&store = store](this const auto & write, const Child & child) -> merkle::TreeEntry {
+        /* `self`, not `this`: GCC does not allow implicit member access
+           in a lambda with an explicit object parameter. */
+        auto entry = [self = this](this const auto & write, const Child & child) -> merkle::TreeEntry {
             return {
                 .mode = std::visit([](const auto & sub) { return sub.mode(); }, child),
                 .hash = std::visit(
                     overloaded{
                         [&](const Directory & dir) {
-                            auto dirSink = store.makeDirectorySink();
+                            self->checkCancelled();
+                            auto dirSink = self->store.makeDirectorySink();
                             for (auto & [name, sub] : dir.children)
                                 dirSink->insertChild(name, write(sub));
                             return std::move(*dirSink).finalize();
@@ -336,9 +481,10 @@ struct TarAdapterImpl : merkle::TarAdapter
 
 namespace nix::merkle {
 
-ref<TarAdapter> makeTarSink(FileSinkBuilder & store)
+ref<TarAdapter>
+makeTarSink(FileSinkBuilder & store, std::function<bool()> isCancelled, std::optional<TarAdapterBacklog> backlog)
 {
-    return make_ref<tar::TarAdapterImpl>(store);
+    return make_ref<tar::TarAdapterImpl>(store, std::move(isCancelled), backlog);
 }
 
 } // namespace nix::merkle

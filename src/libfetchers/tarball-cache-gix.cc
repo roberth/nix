@@ -375,7 +375,7 @@ struct Unpacker final : rs::TarballUnpacker
                                  : TarArchive{source};
 
             UnownedWriterSinks sinks(writer);
-            auto adapter = merkle::makeTarSink(sinks);
+            auto adapter = merkle::makeTarSink(sinks, [&cancel]() { return cancel.isCancelled(); });
             CancellableTarSink sink(*adapter, cancel);
             auto lastModified = unpackTarfileToSink(archive, sink);
             throwIfCancelled(cancel);

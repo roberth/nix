@@ -5,7 +5,10 @@
 #include "nix/util/ref.hh"
 #include "nix/util/tarfile.hh"
 
+#include <cstdint>
+#include <functional>
 #include <memory>
+#include <optional>
 
 namespace nix::merkle {
 
@@ -79,10 +82,37 @@ struct TarAdapter : TarSink
 };
 
 /**
+ * The bounds of the backlog of a `TarAdapter`: the files that it parsed
+ * and that its writer threads have not finished. When the backlog is full,
+ * the parse waits, so that a fast parse does not run ahead of the writers
+ * with an unbounded amount of file contents in memory.
+ *
+ * A single file larger than `maxBytes` is admitted when the backlog is
+ * empty.
+ */
+struct TarAdapterBacklog
+{
+    size_t maxFiles;
+    uint64_t maxBytes;
+};
+
+/**
  * Create a TarSink that builds a merkle tree from path-based tar entries.
  *
  * @param store Factory for creating merkle sinks
+ *
+ * @param isCancelled Whether the owner of the parse cancelled it. The
+ * adapter checks it before it writes each file and directory, and while
+ * it waits for room in the backlog, and then throws `Cancelled`; files
+ * that are queued but not started are not written. Empty for a parse that
+ * cannot be cancelled.
+ *
+ * @param backlog The bounds of the backlog. The default holds at most two
+ * files per writer thread, and at most 64 MiB.
  */
-ref<TarAdapter> makeTarSink(FileSinkBuilder & store);
+ref<TarAdapter> makeTarSink(
+    FileSinkBuilder & store,
+    std::function<bool()> isCancelled = {},
+    std::optional<TarAdapterBacklog> backlog = std::nullopt);
 
 } // namespace nix::merkle
