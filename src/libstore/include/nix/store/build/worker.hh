@@ -153,11 +153,6 @@ private:
     std::map<DrvOutput, std::weak_ptr<DrvOutputSubstitutionGoal>> drvOutputSubstitutionGoals;
 
     /**
-     * Last time the goals in `waitingForAWhile` were woken up.
-     */
-    steady_time_point lastWokenUp;
-
-    /**
      * Cache for pathContentsGood().
      */
     std::map<StorePath, bool> pathContentsGoodCache;
@@ -166,30 +161,20 @@ public:
 
     /**
      * The goals whose wakers woke. The waker of a goal enqueues the goal
-     * here, from any thread, and `run` moves the goals to `awake`.
+     * here, from any thread, and wakes the task that runs the goals
+     * (`runGoals`), which moves them to `awake`.
      */
     class WakeupQueue
     {
-#ifndef _WIN32
-        /**
-         * Wakeup pipe polled alongside all other goal FDs. Gets written to by
-         * enqueue(). Not needed on Windows.
-         */
-        unix::SelfPipe wakeupPipe;
-#else
-        Descriptor ioport;
-#endif
         /**
          * Queue of goals that need to be woken up.
          */
         Sync<std::queue<WeakGoalPtr>> wakeupQueue_;
 
         /**
-         * The thread that runs the worker, set by `run`. A wake on that
-         * thread does not need to interrupt `waitForInput`, because the
-         * worker is not in it.
+         * The waker of the task that runs the goals, from its last poll.
          */
-        std::atomic<std::thread::id> owner = std::this_thread::get_id();
+        Sync<nix::Waker> executor;
 
         friend class Worker;
 
@@ -198,20 +183,10 @@ public:
          */
         void wakeAll(Worker & worker);
 
-        WakeupQueue()
-        {
-#ifndef _WIN32
-            wakeupPipe.create();
-#endif
-        }
+        WakeupQueue() = default;
 
     public:
         void enqueue(WeakGoalPtr goal);
-
-        /**
-         * Make `waitForInput` return, from any thread.
-         */
-        void notify();
     };
 
 private:
@@ -234,15 +209,11 @@ public:
     WaitQueue wantingToSubstitute;
 
     /**
-     * Goals sleeping for a few seconds (polling a lock).
-     */
-    WaitQueue waitingForAWhile;
-
-    /**
-     * The number of goals that are suspended on something that the worker
-     * does not wake itself, such as a transfer or a thread. While there
-     * are such goals, the worker waits for wakes when it has nothing else
-     * to do, instead of reporting a deadlock.
+     * The number of goals that are suspended on something other than
+     * another goal or a slot: the reactor (output of a child, a timer, a
+     * transfer) or a thread. Only such a goal can make progress without
+     * the help of another goal. When no goal is awake and this count is 0,
+     * no goal can continue, and the worker reports a deadlock.
      */
     size_t nrGoalsSuspendedElsewhere = 0;
 
@@ -413,14 +384,52 @@ public:
     bool slotAvailable(JobCategory category);
 
     /**
-     * Loop until the specified top-level goals have finished.
+     * Run the goals until the specified top-level goals have finished,
+     * as a task. The task is the executor of the goals: the goals run on
+     * the thread that polls it, and their drops happen there.
+     *
+     * Goal code still makes blocking store calls, so the task must be
+     * polled on a thread that may block, for example under
+     * `runBlocking`, and never on the reactor thread.
+     *
+     * A user interrupt cancels the task, through a race with
+     * `waitForInterrupt()`.
+     */
+    Task<void> runGoals(Goals topGoals);
+
+    /**
+     * `runGoals` on the current thread, blocking.
      */
     void run(const Goals & topGoals);
 
     /**
-     * Wait for input to become available.
+     * One poll of the executor of `runGoals`: run the goals that woke, in
+     * the order of `CompareGoalPtrs`, until none is awake. Returns true
+     * when the top-level goals have finished. Throws when no goal can
+     * continue.
      */
-    void waitForInput();
+    bool runRound();
+
+    /**
+     * Make goal wakes wake `waker`, the waker of the task that runs the
+     * goals.
+     */
+    void setExecutorWaker(const nix::Waker & waker);
+
+    /**
+     * Wait until a child of `goal` has output, reaches EOF, or times out,
+     * and give the event to `goal`. The reactor wakes the wait.
+     */
+    Task<void> waitForChild(Goal & goal);
+
+#ifdef _WIN32
+    /**
+     * Read the output of all children that is available now, and give it
+     * to their goals. Windows has no `waitFd`, so `waitForChild` polls
+     * with this.
+     */
+    void pollChildrenNow();
+#endif
 
     /**
      * Check whether the given valid path exists and has the right

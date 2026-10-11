@@ -1,6 +1,7 @@
 #include "nix/store/build/goal.hh"
 #include "nix/store/build/worker.hh"
 #include "nix/store/worker-settings.hh"
+#include "nix/util/reactor.hh"
 
 #include <algorithm>
 
@@ -69,7 +70,6 @@ void Goal::ChildEvents::pushChildEvent(ChildOutput event)
     if (childTimeout)
         return; // Already timed out, ignore
     childOutputs.push(std::move(event));
-    waker.wakeByRef();
 }
 
 void Goal::ChildEvents::pushChildEvent(ChildEOF event)
@@ -78,7 +78,6 @@ void Goal::ChildEvents::pushChildEvent(ChildEOF event)
         return; // Already timed out, ignore
     assert(!childEOF);
     childEOF = std::move(event);
-    waker.wakeByRef();
 }
 
 void Goal::ChildEvents::pushChildEvent(TimedOut event)
@@ -87,7 +86,6 @@ void Goal::ChildEvents::pushChildEvent(TimedOut event)
     childOutputs = {};
     childEOF.reset();
     childTimeout = std::make_unique<TimedOut>(std::move(event));
-    waker.wakeByRef();
 }
 
 bool Goal::ChildEvents::hasChildEvent() const
@@ -421,7 +419,7 @@ Task<void> Goal::yield()
 Task<void> Goal::waitForAWhile()
 {
     trace("wait for a while");
-    co_await WaitQueueLeaf(suspendedOnWorker, worker.waitingForAWhile, false);
+    co_await sleepFor(std::chrono::seconds(worker.settings.pollInterval));
 }
 
 Task<void> Goal::waitForBuildSlot()
@@ -436,37 +434,11 @@ Task<void> Goal::waitForBuildSlot()
 
 Task<Goal::ChildEvent> Goal::waitForChildEvent()
 {
-    struct ChildEventLeaf : WorkerLeaf
-    {
-        ChildEvents & events;
-
-        ChildEventLeaf(Goal & goal)
-            : WorkerLeaf(goal.suspendedOnWorker)
-            , events(goal.childEvents)
-        {
-        }
-
-        ~ChildEventLeaf()
-        {
-            events.waker.reset();
-        }
-
-        nix_poll pollWorker(const Waker & waker) override
-        {
-            if (events.hasChildEvent())
-                return NIX_POLL_READY;
-            if (!events.waker.willWake(waker))
-                events.waker = waker;
-            return NIX_POLL_PENDING;
-        }
-
-        ChildEvent await_resume()
-        {
-            return events.popChildEvent();
-        }
-    };
-
-    co_return co_await ChildEventLeaf(*this);
+    /* The reactor wakes the wait for the output of the children, so the
+       goal counts as suspended elsewhere. */
+    while (!childEvents.hasChildEvent())
+        co_await worker.waitForChild(*this);
+    co_return childEvents.popChildEvent();
 }
 
 } // namespace nix

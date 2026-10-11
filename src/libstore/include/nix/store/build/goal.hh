@@ -155,8 +155,11 @@ private:
  *   it, and the `Worker` deduplicates goals by store path. Waiting for a
  *   goal therefore holds a `GoalPtr`, not the goal's task. The last
  *   `GoalPtr` to go cancels the goal, as dropping a task does.
- * - `waitForChildEvent`: output, EOF or a timeout of a child process.
- * - `waitForBuildSlot`, `waitForAWhile`, `yield`: scheduling.
+ * - `waitForBuildSlot`, `yield`: scheduling.
+ *
+ * Two waits go to the reactor instead (`nix/util/reactor.hh`):
+ * `waitForChildEvent` (output, EOF or a timeout of a child process,
+ * through `waitFd` and `sleepFor`) and `waitForAWhile` (`sleepFor`).
  */
 struct Goal : public std::enable_shared_from_this<Goal>
 {
@@ -197,12 +200,6 @@ private:
         std::unique_ptr<TimedOut> childTimeout;
 
     public:
-        /**
-         * The waker of the task that waits for an event, if any. A new
-         * event wakes it.
-         */
-        Waker waker;
-
         void pushChildEvent(ChildOutput event);
         void pushChildEvent(ChildEOF event);
         void pushChildEvent(TimedOut event);
@@ -319,19 +316,19 @@ public:
 
     /**
      * Called by the worker when data is received from a child process.
-     * Stores the event and wakes the task that waits for it.
+     * Stores the event for `waitForChildEvent`.
      */
     void handleChildOutput(Descriptor fd, std::string_view data);
 
     /**
      * Called by the worker when EOF is received from a child process.
-     * Stores the event and wakes the task that waits for it.
+     * Stores the event for `waitForChildEvent`.
      */
     void handleEOF(Descriptor fd);
 
     /**
      * Called by the worker when a build times out.
-     * Stores the event and wakes the task that waits for it.
+     * Stores the event for `waitForChildEvent`.
      */
     void timedOut(TimedOut && ex);
 
