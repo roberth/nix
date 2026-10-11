@@ -11,6 +11,7 @@
 #include "nix/util/signals.hh"
 
 #include <atomic>
+#include <condition_variable>
 #include <list>
 #include <mutex>
 #include <optional>
@@ -35,6 +36,10 @@ namespace nix {
  * checks nor registers with `onThreadCancelled` delays the destruction
  * until it returns. The thread also receives user interrupts, as
  * `ReceiveInterrupts` describes.
+ *
+ * The thread ends with `fn`. A process that `fn` starts with
+ * `dieWithParent` (the default of `startProcess`) is killed then; use a
+ * `BlockingPool` for such a function.
  *
  * Outside of a run on the reactor, the destruction blocks the thread that
  * destroys the task. That is acceptable for a thread that does nothing
@@ -83,6 +88,12 @@ struct ThreadCancellation
      * thread refer to `cancellation`.
      */
     static void enter(std::shared_ptr<ThreadCancellation> cancellation);
+
+    /**
+     * Undo `enter`, for a thread of a `BlockingPool` that goes on with
+     * another function.
+     */
+    static void leave();
 };
 
 } // namespace detail
@@ -288,6 +299,198 @@ template<typename T, typename F>
 Task<T> runInThread(F fn)
 {
     co_return co_await detail::ThreadLeaf<T, F>(std::move(fn));
+}
+
+namespace detail {
+
+/**
+ * A function that a `BlockingPool` runs, with its cancellation and its
+ * completion.
+ */
+struct PoolJob
+{
+    std::shared_ptr<ThreadCancellation> cancellation = std::make_shared<ThreadCancellation>();
+    std::mutex mutex;
+    std::condition_variable doneCv;
+    bool done = false;
+    Waker waker;
+
+    virtual ~PoolJob();
+
+    /**
+     * Run the function, store its result or its exception, and `finish`.
+     */
+    virtual void run() noexcept = 0;
+
+    /**
+     * Mark the job as done, and wake its task.
+     */
+    void finish() noexcept;
+};
+
+/**
+ * Completes when a job is done.
+ */
+struct PoolJobDoneLeaf : LeafAwaiter
+{
+    std::shared_ptr<PoolJob> job;
+
+    explicit PoolJobDoneLeaf(std::shared_ptr<PoolJob> job)
+        : job(std::move(job))
+    {
+    }
+
+    nix_poll pollLeaf(const Waker & waker) override;
+
+    void await_resume() noexcept {}
+};
+
+} // namespace detail
+
+/**
+ * Threads that run blocking functions as tasks, like `runInThread`, and
+ * that stay alive between the functions, until the pool is destroyed.
+ *
+ * Use it instead of `runInThread` for a function that starts a process
+ * that must outlive the function. A child that `startProcess` starts with
+ * `dieWithParent` gets `SIGKILL` when the *thread* that forked it ends
+ * (`PR_SET_PDEATHSIG` on Linux), and the thread of `runInThread` ends with
+ * its function. The pool also saves the start of a thread for each
+ * function.
+ *
+ * A function has the same cancellation as under `runInThread`: dropping
+ * its task before it completes makes `checkInterrupt()`, `nix::read` and
+ * `nix::write` on its thread throw `Interrupted`, calls its
+ * `onThreadCancelled` callbacks, and waits until the function returns, in
+ * place or as a cleanup of the run on the reactor. A function that did not
+ * start yet does not run.
+ *
+ * At most `maxThreads` functions run at once; the others wait, in the
+ * order of their first poll. The destructor waits for the threads to end:
+ * no task of the pool may exist any more.
+ */
+class BlockingPool
+{
+public:
+    explicit BlockingPool(size_t maxThreads);
+    BlockingPool(const BlockingPool &) = delete;
+    BlockingPool & operator=(const BlockingPool &) = delete;
+    ~BlockingPool();
+
+    template<typename T, typename F>
+    Task<T> run(F fn);
+
+    struct State;
+
+private:
+    std::shared_ptr<State> state;
+
+    template<typename T, typename F>
+    struct Leaf;
+
+    static void submit(const std::shared_ptr<State> & state, std::shared_ptr<detail::PoolJob> job);
+
+    /**
+     * Remove `job` from the queue, if no thread took it yet.
+     */
+    static bool withdraw(State & state, const detail::PoolJob * job);
+};
+
+template<typename T, typename F>
+struct BlockingPool::Leaf : LeafAwaiter
+{
+    struct Job : detail::PoolJob
+    {
+        F fn;
+        std::variant<std::monostate, std::conditional_t<std::is_void_v<T>, std::monostate, T>, std::exception_ptr>
+            result;
+
+        explicit Job(F fn)
+            : fn(std::move(fn))
+        {
+        }
+
+        void run() noexcept override
+        {
+            try {
+                if constexpr (std::is_void_v<T>) {
+                    fn();
+                    result.template emplace<1>();
+                } else
+                    result.template emplace<1>(fn());
+            } catch (...) {
+                result.template emplace<2>(std::current_exception());
+            }
+            finish();
+        }
+    };
+
+    std::shared_ptr<State> pool;
+    std::shared_ptr<Job> job;
+    bool submitted = false;
+    std::optional<CleanupScope> scope;
+
+    Leaf(std::shared_ptr<State> pool, F fn)
+        : pool(std::move(pool))
+        , job(std::make_shared<Job>(std::move(fn)))
+    {
+    }
+
+    Leaf(const Leaf &) = delete;
+
+    ~Leaf()
+    {
+        if (!submitted || withdraw(*pool, job.get()))
+            return;
+        Waker old;
+        {
+            std::lock_guard lock(job->mutex);
+            if (job->done)
+                return;
+            /* Nothing wakes the cancelled task. */
+            old = std::move(job->waker);
+        }
+        job->cancellation->cancel();
+        if (scope && *scope)
+            scope->defer([](std::shared_ptr<detail::PoolJob> job) -> Task<void> {
+                co_await detail::PoolJobDoneLeaf(std::move(job));
+            }(job));
+        else {
+            std::unique_lock lock(job->mutex);
+            job->doneCv.wait(lock, [&] { return job->done; });
+        }
+    }
+
+    nix_poll pollLeaf(const Waker & waker) override
+    {
+        {
+            Waker old;
+            std::lock_guard lock(job->mutex);
+            if (job->done)
+                return NIX_POLL_READY;
+            detail::replaceWaker(job->waker, waker, old);
+        }
+        if (!submitted) {
+            submitted = true;
+            scope.emplace(CleanupScope::current());
+            submit(pool, job);
+        }
+        return NIX_POLL_PENDING;
+    }
+
+    T await_resume()
+    {
+        if (auto * e = std::get_if<2>(&job->result))
+            std::rethrow_exception(*e);
+        if constexpr (!std::is_void_v<T>)
+            return std::move(std::get<1>(job->result));
+    }
+};
+
+template<typename T, typename F>
+Task<T> BlockingPool::run(F fn)
+{
+    co_return co_await Leaf<T, F>(state, std::move(fn));
 }
 
 } // namespace nix

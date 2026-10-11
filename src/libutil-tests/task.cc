@@ -5,6 +5,7 @@
 #include "nix/util/error.hh"
 #include "nix/util/rust-error.hh"
 #include "nix/util/signals.hh"
+#include "nix/util/processes.hh"
 
 #include <condition_variable>
 #include <mutex>
@@ -737,6 +738,160 @@ TEST(Task, readInChildOfRunInThreadThread)
     });
     EXPECT_EQ(runBlocking(std::move(task)), 0);
 }
+
+TEST(BlockingPool, returnsResultsAndReusesItsThread)
+{
+    BlockingPool pool(1);
+    auto caller = std::this_thread::get_id();
+    auto first = runBlocking(pool.run<std::thread::id>([]() { return std::this_thread::get_id(); }));
+    auto second = runBlocking(pool.run<std::thread::id>([]() { return std::this_thread::get_id(); }));
+    EXPECT_NE(first, caller);
+    EXPECT_EQ(first, second);
+}
+
+TEST(BlockingPool, keepsExceptionType)
+{
+    BlockingPool pool(1);
+    try {
+        runBlocking(pool.run<void>([]() { throw DerivedTestError("from the pool"); }));
+        FAIL() << "expected an exception";
+    } catch (TestError & e) {
+        EXPECT_NE(dynamic_cast<DerivedTestError *>(&e), nullptr);
+        EXPECT_EQ(e.info().msg.str(), "from the pool");
+    }
+}
+
+TEST(BlockingPool, runsFunctionsAtOnceUpToTheLimit)
+{
+    BlockingPool pool(2);
+    std::mutex mutex;
+    std::condition_variable cv;
+    int running = 0;
+
+    /* Each function waits until the other one runs too: with one thread,
+       they would wait forever. */
+    auto meet = [&]() {
+        std::unique_lock lock(mutex);
+        ++running;
+        cv.notify_all();
+        cv.wait(lock, [&] { return running == 2; });
+    };
+    std::vector<Task<void>> tasks;
+    tasks.push_back(pool.run<void>(meet));
+    tasks.push_back(pool.run<void>(meet));
+    runBlocking(whenAll(std::move(tasks)));
+    EXPECT_EQ(running, 2);
+}
+
+TEST(BlockingPool, dropInterruptsTheRunningFunction)
+{
+    BlockingPool pool(1);
+    Pipe pipe;
+    pipe.create();
+    std::atomic<bool> started = false;
+    std::string outcome = "not ended";
+
+    auto task = pool.run<void>([&]() {
+        started = true;
+        try {
+            char c;
+            readFull(pipe.readSide.get(), &c, 1);
+            outcome = "returned";
+        } catch (Interrupted &) {
+            outcome = "interrupted";
+        }
+    });
+    auto target = makeWakeTarget<CountingTarget>();
+    EXPECT_EQ(task.poll(target->waker()), NIX_POLL_PENDING);
+    while (!started)
+        std::this_thread::yield();
+
+    /* The destruction waits for the function. */
+    task.reset();
+    EXPECT_EQ(outcome, "interrupted");
+    EXPECT_EQ(isInterrupted(), false);
+
+    /* The thread is free for the next function, without the cancellation
+       of the previous one. */
+    EXPECT_EQ(runBlocking(pool.run<bool>([]() { return isInterrupted(); })), false);
+}
+
+TEST(BlockingPool, dropOfAWaitingFunctionDoesNotRunIt)
+{
+    BlockingPool pool(1);
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool release = false;
+    std::atomic<bool> secondRan = false;
+
+    auto first = pool.run<void>([&]() {
+        std::unique_lock lock(mutex);
+        cv.wait(lock, [&] { return release; });
+    });
+    auto second = pool.run<void>([&]() { secondRan = true; });
+
+    auto target = makeWakeTarget<CountingTarget>();
+    EXPECT_EQ(first.poll(target->waker()), NIX_POLL_PENDING);
+    EXPECT_EQ(second.poll(target->waker()), NIX_POLL_PENDING);
+    second.reset();
+
+    {
+        std::lock_guard lock(mutex);
+        release = true;
+    }
+    cv.notify_all();
+    runBlocking(std::move(first));
+    EXPECT_EQ(secondRan.load(), false);
+}
+
+#  ifdef __linux__
+/**
+ * Start a child that dies with its parent thread (`dieWithParent`), as a
+ * builder does, and that exits with 7 after 200 ms. Return its pid once
+ * the death signal is set up in the child.
+ */
+static pid_t startChildThatDiesWithItsThread()
+{
+    Pipe ready;
+    ready.create();
+    auto pid = startProcess([&]() {
+        writeFull(ready.writeSide.get(), "x");
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        _exit(7);
+    });
+    ready.writeSide.close();
+    char c;
+    readFull(ready.readSide.get(), &c, 1);
+    return pid;
+}
+
+static int waitForChild(pid_t pid)
+{
+    int status;
+    while (waitpid(pid, &status, 0) == -1)
+        if (errno != EINTR)
+            throw SysError("waitpid");
+    return status;
+}
+
+TEST(BlockingPool, childOfAFunctionOutlivesTheFunction)
+{
+    BlockingPool pool(1);
+    auto pid = runBlocking(pool.run<pid_t>(startChildThatDiesWithItsThread));
+    auto status = waitForChild(pid);
+    EXPECT_EQ(WIFEXITED(status) ? WEXITSTATUS(status) : -1, 7);
+}
+
+TEST(Task, runInThreadChildDiesWithTheThread)
+{
+    /* The reason for `BlockingPool`: the thread of `runInThread` ends with
+       the function, and the child gets the signal of its parent thread's
+       death. */
+    auto pid = runBlocking(runInThread<pid_t>(startChildThatDiesWithItsThread));
+    auto status = waitForChild(pid);
+    EXPECT_EQ(WIFSIGNALED(status) ? WTERMSIG(status) : -1, SIGKILL);
+}
+#  endif
 
 TEST(Task, runBlockingInRunInThreadEndsWhenDropped)
 {

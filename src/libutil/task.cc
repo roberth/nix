@@ -15,6 +15,9 @@
 
 #include <algorithm>
 #include <array>
+#include <deque>
+#include <thread>
+#include <vector>
 #include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
@@ -217,7 +220,115 @@ void ThreadCancellation::enter(std::shared_ptr<ThreadCancellation> cancellation)
     currentThreadCancellation = std::move(cancellation);
 }
 
+void ThreadCancellation::leave()
+{
+#ifndef _WIN32
+    unix::interruptCheck = nullptr;
+#endif
+    currentThreadCancellation.reset();
+}
+
+PoolJob::~PoolJob() = default;
+
+void PoolJob::finish() noexcept
+{
+    Waker toWake;
+    {
+        std::lock_guard lock(mutex);
+        done = true;
+        toWake = std::move(waker);
+    }
+    doneCv.notify_all();
+    std::move(toWake).wake();
+}
+
+nix_poll PoolJobDoneLeaf::pollLeaf(const Waker & waker)
+{
+    Waker old;
+    std::lock_guard lock(job->mutex);
+    if (job->done)
+        return NIX_POLL_READY;
+    replaceWaker(job->waker, waker, old);
+    return NIX_POLL_PENDING;
+}
+
 } // namespace detail
+
+struct BlockingPool::State
+{
+    std::mutex mutex;
+    std::condition_variable cv;
+    std::deque<std::shared_ptr<detail::PoolJob>> queue;
+    std::vector<std::thread> threads;
+    /**
+     * The threads that wait for a job.
+     */
+    size_t idle = 0;
+    size_t maxThreads;
+    bool stopping = false;
+};
+
+static void runPoolThread(std::shared_ptr<BlockingPool::State> state)
+{
+    ReceiveInterrupts receiveInterrupts;
+    while (true) {
+        std::shared_ptr<detail::PoolJob> job;
+        {
+            std::unique_lock lock(state->mutex);
+            ++state->idle;
+            state->cv.wait(lock, [&] { return state->stopping || !state->queue.empty(); });
+            --state->idle;
+            if (state->queue.empty())
+                return;
+            job = std::move(state->queue.front());
+            state->queue.pop_front();
+        }
+        detail::ThreadCancellation::enter(job->cancellation);
+        job->run();
+        detail::ThreadCancellation::leave();
+    }
+}
+
+BlockingPool::BlockingPool(size_t maxThreads)
+    : state(std::make_shared<State>())
+{
+    state->maxThreads = std::max<size_t>(1, maxThreads);
+}
+
+BlockingPool::~BlockingPool()
+{
+    std::vector<std::thread> threads;
+    {
+        std::lock_guard lock(state->mutex);
+        assert(state->queue.empty());
+        state->stopping = true;
+        threads = std::move(state->threads);
+    }
+    state->cv.notify_all();
+    for (auto & thread : threads)
+        thread.join();
+}
+
+void BlockingPool::submit(const std::shared_ptr<State> & state, std::shared_ptr<detail::PoolJob> job)
+{
+    std::lock_guard lock(state->mutex);
+    state->queue.push_back(std::move(job));
+    /* Start a thread if the idle ones cannot take all queued jobs. */
+    if (state->queue.size() > state->idle && state->threads.size() < state->maxThreads)
+        state->threads.emplace_back(runPoolThread, state);
+    else
+        state->cv.notify_one();
+}
+
+bool BlockingPool::withdraw(State & state, const detail::PoolJob * job)
+{
+    std::lock_guard lock(state.mutex);
+    auto i = std::ranges::find_if(state.queue, [&](auto & j) { return j.get() == job; });
+    if (i == state.queue.end())
+        return false;
+    state.queue.erase(i);
+    return true;
+}
 
 namespace {
 
