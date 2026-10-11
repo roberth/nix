@@ -585,6 +585,17 @@ public:
 template<typename T>
 T runBlocking(Task<T> task);
 
+/**
+ * A task that completes by throwing `Interrupted` when the user
+ * interrupts the process, or when the `runInThread` task of the thread
+ * that polls it is dropped (`checkInterrupt()`). It never completes
+ * otherwise.
+ *
+ * `race(work, waitForInterrupt())` makes an interrupt cancel `work`,
+ * independent of the executor that polls it.
+ */
+Task<void> waitForInterrupt();
+
 namespace detail {
 
 /**

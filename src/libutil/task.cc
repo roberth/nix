@@ -142,6 +142,10 @@ void blockOn(std::function<bool(const Waker &)> run)
        throws and the caller's task is destroyed while unwinding. */
     auto interruptCallback = createInterruptCallback([target]() { target->wake(); });
 
+    /* Likewise when the `runInThread` task that runs this thread is
+       dropped: `checkInterrupt()` then throws on this thread. */
+    auto cancelCallback = onThreadCancelled([target]() { target->wake(); });
+
     while (true) {
         {
             std::unique_lock lock(target->mutex);
@@ -185,6 +189,59 @@ void ThreadCancellation::enter(std::shared_ptr<ThreadCancellation> cancellation)
 }
 
 } // namespace detail
+
+namespace {
+
+struct InterruptLeaf : LeafAwaiter
+{
+    struct State
+    {
+        std::mutex mutex;
+        Waker waker;
+
+        void wake()
+        {
+            Waker w;
+            {
+                std::lock_guard lock(mutex);
+                w = waker;
+            }
+            w.wakeByRef();
+        }
+    };
+
+    std::shared_ptr<State> state = std::make_shared<State>();
+    std::unique_ptr<InterruptCallback> interruptCallback;
+    std::optional<ThreadCancelledCallback> cancelCallback;
+
+    nix_poll pollLeaf(const Waker & waker) override
+    {
+        if (!cancelCallback) {
+            interruptCallback = createInterruptCallback([state = state]() { state->wake(); });
+            cancelCallback.emplace(onThreadCancelled([state = state]() { state->wake(); }));
+        }
+        {
+            Waker old;
+            std::lock_guard lock(state->mutex);
+            detail::replaceWaker(state->waker, waker, old);
+        }
+        return isInterrupted() ? NIX_POLL_READY : NIX_POLL_PENDING;
+    }
+
+    void await_resume()
+    {
+        checkInterrupt();
+    }
+};
+
+} // namespace
+
+Task<void> waitForInterrupt()
+{
+    co_await InterruptLeaf();
+    /* `isInterrupted()` held, but the flag can be reset in between. */
+    throw Interrupted("interrupted by the user");
+}
 
 ThreadCancelledCallback::~ThreadCancelledCallback()
 {

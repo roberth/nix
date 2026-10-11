@@ -4,6 +4,7 @@
 #include "nix/util/task-thread.hh"
 #include "nix/util/error.hh"
 #include "nix/util/rust-error.hh"
+#include "nix/util/signals.hh"
 
 #include <condition_variable>
 #include <mutex>
@@ -595,6 +596,48 @@ TEST(Task, runInThreadDropCallsCancellationCallback)
     task.reset();
     EXPECT_EQ(woken, true);
 }
+
+#ifndef _WIN32 // No user interrupts on Windows
+TEST(Task, waitForInterruptThrowsOnUserInterrupt)
+{
+    auto task = waitForInterrupt();
+    auto target = makeWakeTarget<CountingTarget>();
+    EXPECT_EQ(task.poll(target->waker()), NIX_POLL_PENDING);
+
+    unix::triggerInterrupt();
+    EXPECT_EQ(target->count, 1);
+    EXPECT_EQ(task.poll(target->waker()), NIX_POLL_READY);
+    EXPECT_THROW(task.takeResult(), Interrupted);
+    setInterrupted(false);
+}
+
+TEST(Task, runBlockingInRunInThreadEndsWhenDropped)
+{
+    std::atomic<bool> started = false;
+    std::atomic<bool> interrupted = false;
+
+    /* A task that never completes, run with `runBlocking` on the thread of
+       a `runInThread` task: only the drop ends it. */
+    auto task = runInThread<void>([&]() {
+        started = true;
+        try {
+            runBlocking(waitForInterrupt());
+        } catch (Interrupted &) {
+            interrupted = true;
+            throw;
+        }
+    });
+
+    auto target = makeWakeTarget<CountingTarget>();
+    EXPECT_EQ(task.poll(target->waker()), NIX_POLL_PENDING);
+    while (!started)
+        std::this_thread::yield();
+
+    task.reset();
+    EXPECT_EQ(interrupted.load(), true);
+    EXPECT_EQ(isInterrupted(), false);
+}
+#endif
 
 TEST(Task, cancellationCallbackOutsideRunInThreadIsNotCalled)
 {
