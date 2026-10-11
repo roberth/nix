@@ -216,3 +216,53 @@ The same script, `SEED=1234`, 30 runs each, against the gzipped rev1 (a referenc
 | `debugoptimized` | bounded backlog | 26 | 10, 18, 24, 31 ms |
 
 In all runs, the cache kept its invariants.
+
+### The reactor against the curl thread
+
+This comparison measures the swap of the curl thread for the [reactor](./async.md#the-reactor).
+It uses release builds (`nix build .#nix-cli`) of the commit before the reactor (*before*), and of the commit with it, once with each value of `_NIX_FILE_TRANSFER_BACKEND`: `reactor`, where the fetch runs with `runOnReactor()`, and `thread`, where it runs with `runBlocking()` as before.
+
+Method:
+
+- Machine: the one above, but shared with other work: the load average was between 7 and 30 during the runs.
+  Each round runs the three variants one after the other, so that a change of the load affects all of them.
+- Server: `test-http-server` of the functional tests, on 127.0.0.1.
+- Tarball: `nix flake prefetch tarball+http://…` of the gzipped rev1 (53 MB), into an empty cache and `--store 'dummy://?read-only=false'`.
+- Download: `nix store prefetch-file` of a file of 1 GiB of random data, into an empty local store. Without unpacking, this shows the cost of driving curl.
+- 7 rounds after 1 warm-up round. Each cell is the median, and the minimum and maximum, in seconds. CPU is user plus system time.
+
+| Workload | Before | `reactor` | `thread` |
+|---|---|---|---|
+| Tarball, wall clock | 3.15 (3.03–3.84) | 3.17 (3.07–3.79) | 3.11 (3.04–3.73) |
+| Tarball, CPU | 5.91 (5.67–6.77) | 5.93 (5.74–6.82) | 5.82 (5.71–6.47) |
+| Download 1 GiB, wall clock | 3.84 (3.68–4.54) | 3.83 (3.75–4.47) | 3.86 (3.69–4.57) |
+| Download 1 GiB, CPU | 2.57 (2.54–3.16) | 2.60 (2.54–2.88) | 2.59 (2.51–3.03) |
+
+The differences are smaller than the spread of each variant.
+
+`strace -f -c` of one download of 1 GiB counts the system calls that drive curl:
+
+- `reactor`: 547 `epoll_wait`, 31 `epoll_ctl`, 3280 `poll`, 248267 system calls in total.
+  The `poll` calls are the zero-timeout checks with which `FdWatch` emulates a level-triggered poll.
+- `thread`: 6393 `poll` (`curl_multi_poll`), 6600 `read`, of which 6399 failed, 286560 system calls in total.
+  That the failed reads are curl draining its wakeup pipe is an inference from their count, not a measurement.
+
+`maintainers/tarball-cancel-stress.sh`, 50 runs per variant, `SEED=4242`, signals after 0.2 to 3.8 s:
+
+| Variant | Interrupted | Time from SIGINT to exit: min, median, p90, max |
+|---|---|---|
+| Before | 48 | 6, 29, 56, 190 ms |
+| `reactor` | 48 | 9, 34, 76, 144 ms |
+| `thread` | 47 | 9, 31, 50, 70 ms |
+
+All runs kept the invariants of the cache, and the completed runs gave the expected hash.
+The load average was 12 at the start of these runs and 30 at the end, so the tails do not compare the variants reliably.
+
+The same script on a later release build, with the goals as tasks and the `runInThread` cleanup, at a load average of 10 to 18 (reference fetch 3.1 s):
+
+| Variant | Interrupted | Time from SIGINT to exit: min, median, p90, max |
+|---|---|---|
+| `reactor` | 36 | 5, 20, 34, 58 ms |
+| `thread` | 38 | 10, 28, 45, 65 ms |
+
+All runs kept the invariants of the cache.

@@ -28,6 +28,9 @@
 #   `build/src/nix-functional-tests/test-http-server/test-http-server` by
 #   default (`ninja -C build src/nix-functional-tests/test-http-server/test-http-server`).
 # - SEED: the seed of the random delays, for a repeatable sequence.
+# - _NIX_FILE_TRANSFER_BACKEND: passed on to Nix, to test the `reactor` or
+#   the `thread` backend. Give MAX_DELAY_MS too when comparing the two, so
+#   that both get the same delays.
 #
 # The summary gives the outcomes and the time from the signal to the exit
 # of Nix.
