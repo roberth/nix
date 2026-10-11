@@ -269,7 +269,9 @@ All runs kept the invariants of the cache.
 
 ### Many fetches at once
 
-No evaluator path awaits several tarball fetches at once yet, so these measurements use `nix-fetchers-tarball-bench` (in the tests of libfetchers), which fetches all its URLs with one `whenAll` of `downloadIntoGixTarballCache()`, with `runOnReactor()` or, with `_NIX_FILE_TRANSFER_BACKEND=thread`, with `runBlocking()`.
+These measurements stand for concurrent insertions into the tarball cache, which a parallel evaluator causes when several threads force different inputs at the same time.
+Input fetching stays lazy, so that inputs that an evaluation does not use are not fetched; concurrency comes from the demand of the evaluator, not from fetching ahead.
+The measurements use `nix-fetchers-tarball-bench` (in the tests of libfetchers), which fetches all its URLs with one `whenAll` of `downloadIntoGixTarballCache()`, with `runOnReactor()` or, with `_NIX_FILE_TRANSFER_BACKEND=thread`, with `runBlocking()`.
 Release builds, the machine above, a local `test-http-server`, an empty cache for each run; 3 rounds after the fixes below, with each command started at a load average below 6.
 Each cell is the median, with the minimum and maximum in parentheses.
 

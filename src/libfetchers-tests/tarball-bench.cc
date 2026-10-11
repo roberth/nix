@@ -11,8 +11,10 @@
  * fetches; the program then prints "interrupted by the user" and exits with
  * status 1, like `nix`.
  *
- * This is a measurement tool for the task path under load. No evaluator
- * path fetches several tarballs at once yet.
+ * This is a measurement tool for the task path under load. The load stands
+ * for the concurrent insertions into the tarball cache that a parallel
+ * evaluator causes when several threads force different inputs. Input
+ * fetching itself stays lazy: Nix does not fetch inputs ahead of demand.
  */
 
 #include "nix/fetchers/tarball.hh"

@@ -82,8 +82,8 @@ UnpackedDownload downloadIntoTarballCache(
  * `whenAll`. Run it with `runOnReactor()` when `fileTransferUsesReactor()`,
  * so that curl and the tasks share a thread.
  *
- * No evaluator path awaits several fetches at once yet; the tarball
- * benchmark (`src/libfetchers-tests/tarball-bench.cc`) uses this.
+ * The tarball benchmark (`src/libfetchers-tests/tarball-bench.cc`) uses
+ * this to load the cache with concurrent insertions.
  */
 Task<UnpackedDownload> downloadIntoGixTarballCache(FileTransferRequest request, bool isZip);
 
