@@ -17,6 +17,7 @@
     nix_exception_what;
     nix_exception_from_rust;
     nix_exception_take_rust_value;
+    nix_rust_take_pending_exception;
     nix_set_rust_error_factory;
 
     /* Namespace `nix::rs`: functions, member functions, vtables and type

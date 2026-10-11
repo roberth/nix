@@ -82,6 +82,31 @@ inline nix_exception * currentException()
 }
 
 /**
+ * Rethrow the original of the error of a bridge function: the C++
+ * exception that the Rust code got from C++, or a `nix::RustError` or
+ * `nix::RustPanic` that owns the Rust value. cxx throws only a
+ * `rust::Error` with the message; the original waits in libnixrust. Call
+ * it in the `catch` block of `error`, on the thread of the call. Rethrows
+ * `error` if there is no original.
+ */
+[[noreturn]] void rethrowRustError(const ::rust::Error & error);
+
+/**
+ * Call a function of a cxx bridge of libnixrust, and rethrow the original
+ * of its error. Every C++ call of a bridge function that can fail goes
+ * through this, or through a wrapper of it.
+ */
+template<typename F>
+auto call(F && f) -> decltype(f())
+{
+    try {
+        return f();
+    } catch (const ::rust::Error & error) {
+        rethrowRustError(error);
+    }
+}
+
+/**
  * The name of the Rust type that corresponds to `T` in
  * `nix_future_vtable::output_type`. The Rust trait `AbiType` gives the same
  * names (`src/librust/src/future.rs`).

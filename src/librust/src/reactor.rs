@@ -35,7 +35,7 @@ use tokio::runtime::Handle;
 use tokio::sync::{Notify, mpsc};
 use tokio::task::AbortHandle;
 
-use crate::future::{CxxFuture, Error, NixFuture, export_future};
+use crate::future::{BridgeError, CxxFuture, Error, NixFuture, bridge, export_future};
 
 #[cxx::bridge(namespace = "nix::rs")]
 mod ffi {
@@ -54,6 +54,11 @@ mod ffi {
         fn ready(self: &FdCallback, readable: bool, writable: bool);
     }
 
+    // Each function here is a `bridge_*` wrapper, at the end of this file,
+    // around the function of the same name without the prefix; see
+    // `nix_rust_future::bridge`. The C++ names stay the same. The upward
+    // calls above have no `Result`: they are `noexcept` in C++, and the
+    // reactor thread has no caller to give an error to.
     extern "Rust" {
         /// Run `future`, a future of `()`, on the reactor, and return a
         /// future of `()` that completes after it and after the cleanups
@@ -64,36 +69,43 @@ mod ffi {
         /// until it is dropped and its cleanups completed. On the reactor
         /// thread, that wait is itself deferred, to the scope of the run
         /// that polled the returned future.
-        fn reactor_spawn(future: nix_future) -> nix_future;
+        #[cxx_name = "reactor_spawn"]
+        fn bridge_reactor_spawn(future: nix_future) -> Result<nix_future>;
 
         /// Run `callback` once on the reactor thread. Callbacks run in the
         /// order of the calls, from all threads together.
-        fn reactor_post(callback: UniquePtr<ReactorCallback>);
+        #[cxx_name = "reactor_post"]
+        fn bridge_reactor_post(callback: UniquePtr<ReactorCallback>) -> Result<()>;
 
         /// A future of `()` that completes `millis` milliseconds after its
         /// first poll. It can be polled on any thread.
-        fn reactor_sleep(millis: u64) -> nix_future;
+        #[cxx_name = "reactor_sleep"]
+        fn bridge_reactor_sleep(millis: u64) -> Result<nix_future>;
 
         /// A future of `u64` that completes when `fd` is ready for one of
         /// the directions, with the ready directions: bit 0 for reading,
         /// bit 1 for writing. It can be polled on any thread. While it
         /// exists, `fd` must stay open and must have no other registration
         /// with the reactor.
-        fn reactor_wait_fd(fd: i32, readable: bool, writable: bool) -> nix_future;
+        #[cxx_name = "reactor_wait_fd"]
+        fn bridge_reactor_wait_fd(fd: i32, readable: bool, writable: bool) -> Result<nix_future>;
 
         /// Whether the current thread is the reactor thread.
-        fn on_reactor_thread() -> bool;
+        #[cxx_name = "on_reactor_thread"]
+        fn bridge_on_reactor_thread() -> Result<bool>;
 
         /// Runs a callback on the reactor thread when it expires. Use and
         /// drop it on the reactor thread only: then its callback never runs
         /// after `set(-1)` or after the drop.
         type ReactorTimer;
 
-        fn reactor_timer(callback: UniquePtr<ReactorCallback>) -> Box<ReactorTimer>;
+        #[cxx_name = "reactor_timer"]
+        fn bridge_reactor_timer(callback: UniquePtr<ReactorCallback>) -> Result<Box<ReactorTimer>>;
 
         /// Expire `millis` milliseconds from now, instead of at the
         /// previous time. A negative value disarms the timer.
-        fn set(self: &ReactorTimer, millis: i64);
+        #[cxx_name = "set"]
+        fn bridge_set(self: &ReactorTimer, millis: i64) -> Result<()>;
 
         /// Reports the readiness of a file descriptor to a callback on the
         /// reactor thread, like a level-triggered `poll`: the callback is
@@ -102,26 +114,29 @@ mod ffi {
         /// the drop.
         type FdWatch;
 
-        fn reactor_watch_fd(fd: i32, callback: UniquePtr<FdCallback>) -> Result<Box<FdWatch>>;
+        #[cxx_name = "reactor_watch_fd"]
+        fn bridge_reactor_watch_fd(fd: i32, callback: UniquePtr<FdCallback>) -> Result<Box<FdWatch>>;
 
         /// The directions to report. Without any, nothing is reported.
         #[cxx_name = "setInterest"]
-        fn set_interest(self: &FdWatch, readable: bool, writable: bool);
+        fn bridge_set_interest(self: &FdWatch, readable: bool, writable: bool) -> Result<()>;
 
         /// The cleanup scope of the run on the reactor that polls the
         /// caller, or none (see `CleanupScope::current`). For C++ code
         /// whose drop must wait.
         type CleanupScopeRef;
 
-        fn cleanup_scope_current() -> Box<CleanupScopeRef>;
+        #[cxx_name = "cleanup_scope_current"]
+        fn bridge_cleanup_scope_current() -> Result<Box<CleanupScopeRef>>;
 
         /// Whether there is a scope. Without one, the drop waits in place.
         #[cxx_name = "isSome"]
-        fn is_some(self: &CleanupScopeRef) -> bool;
+        fn bridge_is_some(self: &CleanupScopeRef) -> Result<bool>;
 
         /// Run `cleanup`, a future of `()`, as part of the scope. Without a
         /// scope, drop `cleanup` at once, which cancels it.
-        fn defer(self: &CleanupScopeRef, cleanup: nix_future);
+        #[cxx_name = "defer"]
+        fn bridge_defer(self: &CleanupScopeRef, cleanup: nix_future) -> Result<()>;
     }
 }
 
@@ -713,5 +728,73 @@ impl Drop for FdWatch {
     fn drop(&mut self) {
         drop(lock(&self.shared.afd).take());
         self.task.abort();
+    }
+}
+
+// The bridge functions; see `nix_rust_future::bridge`.
+
+fn bridge_reactor_spawn(future: NixFuture) -> Result<NixFuture, BridgeError> {
+    bridge(|| Ok(reactor_spawn(future)))
+}
+
+fn bridge_reactor_post(callback: UniquePtr<ReactorCallback>) -> Result<(), BridgeError> {
+    bridge(|| {
+        reactor_post(callback);
+        Ok(())
+    })
+}
+
+fn bridge_reactor_sleep(millis: u64) -> Result<NixFuture, BridgeError> {
+    bridge(|| Ok(reactor_sleep(millis)))
+}
+
+fn bridge_reactor_wait_fd(fd: i32, readable: bool, writable: bool) -> Result<NixFuture, BridgeError> {
+    bridge(|| Ok(reactor_wait_fd(fd, readable, writable)))
+}
+
+fn bridge_on_reactor_thread() -> Result<bool, BridgeError> {
+    bridge(|| Ok(on_reactor_thread()))
+}
+
+fn bridge_reactor_timer(callback: UniquePtr<ReactorCallback>) -> Result<Box<ReactorTimer>, BridgeError> {
+    bridge(|| Ok(reactor_timer(callback)))
+}
+
+impl ReactorTimer {
+    fn bridge_set(&self, millis: i64) -> Result<(), BridgeError> {
+        bridge(|| {
+            self.set(millis);
+            Ok(())
+        })
+    }
+}
+
+fn bridge_reactor_watch_fd(fd: i32, callback: UniquePtr<FdCallback>) -> Result<Box<FdWatch>, BridgeError> {
+    bridge(|| Ok(reactor_watch_fd(fd, callback)?))
+}
+
+impl FdWatch {
+    fn bridge_set_interest(&self, readable: bool, writable: bool) -> Result<(), BridgeError> {
+        bridge(|| {
+            self.set_interest(readable, writable);
+            Ok(())
+        })
+    }
+}
+
+fn bridge_cleanup_scope_current() -> Result<Box<CleanupScopeRef>, BridgeError> {
+    bridge(|| Ok(cleanup_scope_current()))
+}
+
+impl CleanupScopeRef {
+    fn bridge_is_some(&self) -> Result<bool, BridgeError> {
+        bridge(|| Ok(self.is_some()))
+    }
+
+    fn bridge_defer(&self, cleanup: NixFuture) -> Result<(), BridgeError> {
+        bridge(|| {
+            self.defer(cleanup);
+            Ok(())
+        })
     }
 }

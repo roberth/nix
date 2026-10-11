@@ -80,6 +80,33 @@ TEST(RustIdentity, rustPanicResumesWithTheSamePayload)
     EXPECT_EQ(std::string(description), "same panic: probe panic 4");
 }
 
+TEST(RustIdentity, panicInABridgeFunctionIsARustPanicInCxx)
+{
+    detail::registerRustErrorFactory();
+
+    /* The part of the cxx shim: the message of the `rust::Error`. */
+    auto message = rs::tests::probeString(
+        [](nix_rust_test_string_sink sink, void * context) { nix_rust_test_bridge_panic(5, sink, context); });
+    EXPECT_EQ(message, "Rust panic: probe panic 5");
+
+    /* The part of `rs::call`: the original. */
+    auto * original = nix_rust_test_take_pending_exception(message.data(), message.size());
+    ASSERT_NE(original, nullptr);
+    std::exception_ptr exception;
+    try {
+        rs::rethrowException(original);
+    } catch (const Error & e) {
+        EXPECT_EQ(typeid(e), typeid(RustPanic));
+        EXPECT_EQ(e.info().msg.str(), "Rust panic: probe panic 5");
+        exception = std::current_exception();
+    }
+
+    /* Back in Rust, the panic resumes with its payload. */
+    auto description = runBlocking(
+        awaitCFuture<rust::String>(nix_rust_test_future_identify(toCFuture(rustIdentityRethrowing(exception)))));
+    EXPECT_EQ(std::string(description), "same panic: probe panic 5");
+}
+
 TEST(RustIdentity, cxxExceptionComesBackAsTheSameObject)
 {
     std::exception_ptr original;

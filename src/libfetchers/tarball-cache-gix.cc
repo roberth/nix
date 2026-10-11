@@ -50,20 +50,23 @@ std::string toString(const ::rust::Vec<uint8_t> & bytes)
 }
 
 /**
- * Call into Rust, and turn an `Err` into a Nix exception.
+ * Call into Rust, and rethrow the original of an error: a `nix::RustError`
+ * or `nix::RustPanic` for an error that started in Rust, or the exception
+ * of a C++ hook (`rs::call`).
  *
- * An `Err` that comes from an exception in a C++ hook, for example
- * `Interrupted`, keeps only its message on the way through Rust. Calling
- * `checkInterrupt()` again throws the original exception type.
+ * A write that stops because the user interrupted it reports that as an
+ * error of the cancel token; `checkInterrupt()` throws `Interrupted`
+ * instead.
  */
 template<typename F>
 auto callRust(F && f) -> decltype(f())
 {
+    nix::detail::registerRustErrorFactory();
     try {
         return f();
-    } catch (::rust::Error & e) {
+    } catch (const ::rust::Error & e) {
         checkInterrupt();
-        throw Error("%s", Uncolored(e.what()));
+        rs::rethrowRustError(e);
     }
 }
 
@@ -435,8 +438,10 @@ namespace nix::fetchers::gix {
 
 Task<UnpackedTree> unpackIntoTarballCache(std::filesystem::path repoDir, ref<TransferStream> stream, bool isZip)
 {
-    auto result = co_await awaitCFuture<rs::TarballUnpackResult>(
-        rs::tarball_cache_unpack((repoDir / "objects").string(), std::make_unique<Unpacker>(std::move(stream), isZip)));
+    auto result = co_await awaitCFuture<rs::TarballUnpackResult>(callRust([&] {
+        return rs::tarball_cache_unpack(
+            (repoDir / "objects").string(), std::make_unique<Unpacker>(std::move(stream), isZip));
+    }));
     co_return UnpackedTree{
         .treeHash = toHash(result.tree),
         .lastModified = (time_t) result.last_modified,
@@ -752,7 +757,7 @@ struct TarballCache final : GitRepo, std::enable_shared_from_this<TarballCache>
 
     bool hasObject(const Hash & oid) override
     {
-        return (*reader_.lock())->has_object(toOid(oid));
+        return callRust([&] { return (*reader_.lock())->has_object(toOid(oid)); });
     }
 
     ref<SourceAccessor>

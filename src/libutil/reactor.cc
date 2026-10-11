@@ -45,84 +45,88 @@ struct FunctionFdCallback final : rs::FdCallback
     }
 };
 
+/**
+ * Call a bridge function of the reactor, and rethrow the original of its
+ * error: a `nix::RustError` or a `nix::RustPanic` (`rs::call`).
+ */
+template<typename F>
+auto callReactor(F && f) -> decltype(f())
+{
+    detail::registerRustErrorFactory();
+    return rs::call(std::forward<F>(f));
+}
+
 } // namespace
 
 bool onReactorThread()
 {
-    return rs::on_reactor_thread();
+    return callReactor([] { return rs::on_reactor_thread(); });
 }
 
 void detail::runOnReactorImpl(Task<void> task)
 {
     if (onReactorThread())
         throw Error("cannot block the reactor thread to run a task on it");
-    runBlocking(awaitCFuture<void>(rs::reactor_spawn(toCFuture(std::move(task)))));
+    runBlocking(awaitCFuture<void>(callReactor([&] { return rs::reactor_spawn(toCFuture(std::move(task))); })));
 }
 
 Task<void> sleepFor(std::chrono::milliseconds duration)
 {
-    co_await awaitCFuture<void>(rs::reactor_sleep(std::max<int64_t>(0, duration.count())));
+    co_await awaitCFuture<void>(callReactor([&] { return rs::reactor_sleep(std::max<int64_t>(0, duration.count())); }));
 }
 
 Task<FdReadiness> waitFd(int fd, bool readable, bool writable)
 {
-    auto ready = co_await awaitCFuture<uint64_t>(rs::reactor_wait_fd(fd, readable, writable));
+    auto ready =
+        co_await awaitCFuture<uint64_t>(callReactor([&] { return rs::reactor_wait_fd(fd, readable, writable); }));
     co_return FdReadiness{.readable = (ready & 1) != 0, .writable = (ready & 2) != 0};
 }
 
 void postToReactor(std::function<void()> f)
 {
-    rs::reactor_post(std::make_unique<FunctionCallback>(std::move(f)));
+    callReactor([&] { rs::reactor_post(std::make_unique<FunctionCallback>(std::move(f))); });
 }
 
 CleanupScope CleanupScope::current()
 {
-    return CleanupScope(rs::cleanup_scope_current());
+    return CleanupScope(callReactor([] { return rs::cleanup_scope_current(); }));
 }
 
 CleanupScope::operator bool() const
 {
-    return scope->isSome();
+    return callReactor([&] { return scope->isSome(); });
 }
 
 void CleanupScope::defer(Task<void> cleanup) const
 {
     assert(*this);
-    scope->defer(toCFuture(std::move(cleanup)));
+    callReactor([&] { scope->defer(toCFuture(std::move(cleanup))); });
 }
 
 ReactorTimer::ReactorTimer(std::function<void()> onExpiry)
-    : timer(rs::reactor_timer(std::make_unique<FunctionCallback>(std::move(onExpiry))))
+    : timer(callReactor([&] { return rs::reactor_timer(std::make_unique<FunctionCallback>(std::move(onExpiry))); }))
 {
 }
 
 void ReactorTimer::set(std::chrono::milliseconds delay)
 {
-    timer->set(std::max<int64_t>(0, delay.count()));
+    callReactor([&] { timer->set(std::max<int64_t>(0, delay.count())); });
 }
 
 void ReactorTimer::cancel()
 {
-    timer->set(-1);
-}
-
-static ::rust::Box<rs::FdWatch> makeFdWatch(int fd, std::function<void(bool, bool)> onReady)
-{
-    try {
-        return rs::reactor_watch_fd(fd, std::make_unique<FunctionFdCallback>(std::move(onReady)));
-    } catch (::rust::Error & e) {
-        throw Error("%s", e.what());
-    }
+    callReactor([&] { timer->set(-1); });
 }
 
 FdWatch::FdWatch(int fd, std::function<void(bool readable, bool writable)> onReady)
-    : watch(makeFdWatch(fd, std::move(onReady)))
+    : watch(callReactor(
+          [&] { return rs::reactor_watch_fd(fd, std::make_unique<FunctionFdCallback>(std::move(onReady))); }))
 {
 }
 
 void FdWatch::setInterest(bool readable, bool writable)
 {
-    watch->setInterest(readable, writable);
+    callReactor([&] { watch->setInterest(readable, writable); });
 }
 
 } // namespace nix

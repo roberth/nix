@@ -124,6 +124,13 @@ nix_exception *
 nix_exception_from_rust(const char * message, size_t length, nix_rust_value value) NIX_FUTURE_ABI_NOEXCEPT;
 
 /**
+ * Take the error that the last failed bridge function of libnixrust kept
+ * on this thread, as an exception, if its message is `message`. Otherwise
+ * return null. `nix::rs::call` calls it; see `nix_rust_future::bridge`.
+ */
+nix_exception * nix_rust_take_pending_exception(const char * message, size_t length) NIX_FUTURE_ABI_NOEXCEPT;
+
+/**
  * A factory for `nix_exception_from_rust`. It must not throw, and the
  * exception must derive from `nix::rs::RustValue` and own `value`.
  */

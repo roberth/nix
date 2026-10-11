@@ -3,6 +3,7 @@
 #include <atomic>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 
 /* The C functions of `future-abi.h` that concern exceptions. They are in
    libnixrust because both the Rust code in libnixrust and the C++ libraries
@@ -72,6 +73,14 @@ RustException::RustException(const std::string & message, nix_rust_value value)
 }
 
 RustException::~RustException() = default;
+
+void rethrowRustError(const ::rust::Error & error)
+{
+    std::string_view message = error.what();
+    if (auto * original = nix_rust_take_pending_exception(message.data(), message.size()))
+        rethrowException(original);
+    throw;
+}
 
 } // namespace nix::rs
 

@@ -1,6 +1,8 @@
 #include <gtest/gtest.h>
 
 #include "nix/util/file-system.hh"
+#include "nix/util/rust-error.hh"
+#include "nix/util/task.hh"
 #include "nix/rust/lib.rs.h"
 #include "nix/rust/tarball_cache.rs.h"
 #include "nix/rust/tests/probes.hh"
@@ -22,13 +24,16 @@ TEST(rust, errBecomesException)
     auto tmpDir = createTempDir();
     AutoDelete delTmpDir(tmpDir, true);
 
-    auto reader = rs::tarball_cache_reader_open(tmpDir.string());
+    detail::registerRustErrorFactory();
+    auto reader = rs::call([&] { return rs::tarball_cache_reader_open(tmpDir.string()); });
     try {
-        reader->read_blob(std::array<uint8_t, 20>{});
+        rs::call([&] { return reader->read_blob(std::array<uint8_t, 20>{}); });
         FAIL() << "read_blob returned normally";
-    } catch (const rust::Error & e) {
+    } catch (const Error & e) {
+        /* The Rust error itself, not only its message. */
+        EXPECT_EQ(typeid(e), typeid(RustError));
         EXPECT_EQ(
-            std::string(e.what()),
+            e.info().msg.str(),
             "Git object '0000000000000000000000000000000000000000' does not exist in the tarball cache");
     }
 }

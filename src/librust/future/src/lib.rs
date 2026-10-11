@@ -370,6 +370,61 @@ impl From<String> for Error {
     }
 }
 
+// Synchronous bridge functions.
+//
+// cxx turns the `Err` of an `extern "Rust"` function into a `rust::Error`
+// that holds only the message, and aborts the process on a panic. To keep
+// the value, `bridge` catches the panic, and keeps the error, or the panic,
+// in `PENDING` of the thread. The C++ caller catches the `rust::Error` and
+// takes the original from there (`nix::rs::call`), on the same thread,
+// before any other bridge function can fail.
+
+thread_local! {
+    static PENDING: std::cell::RefCell<Option<(String, Error)>> = const { std::cell::RefCell::new(None) };
+}
+
+/// The error of an `extern "Rust"` bridge function, as cxx sees it: only
+/// its message. The error itself waits for the C++ caller; see [`bridge`].
+#[derive(Debug)]
+pub struct BridgeError(String);
+
+impl fmt::Display for BridgeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// The body of every `extern "Rust"` bridge function.
+///
+/// It runs `f`, catches a panic, and keeps an error or a panic for the C++
+/// caller, which takes it back with `nix::rs::call` and rethrows the
+/// original: a C++ exception that `f` got from C++, or a `nix::RustError` or
+/// `nix::RustPanic` that owns the Rust value. Without it, cxx aborts the
+/// process on a panic.
+///
+/// Declare each bridge function as returning `Result<T>`, and write its
+/// body as `bridge(|| ...)`. A test in `nix-rust` checks that every one does.
+pub fn bridge<T>(f: impl FnOnce() -> Result<T, Error>) -> Result<T, BridgeError> {
+    let error = match catch_unwind(AssertUnwindSafe(f)) {
+        Ok(Ok(value)) => return Ok(value),
+        Ok(Err(error)) => error,
+        Err(payload) => Error::from_panic(payload),
+    };
+    let message = error.to_string();
+    PENDING.with(|pending| *pending.borrow_mut() = Some((message.clone(), error)));
+    Err(BridgeError(message))
+}
+
+/// Take the error that the last failed bridge function on this thread kept,
+/// as an exception for C++, if its message is `message`. Otherwise drop it
+/// and return null: a C++ caller that did not take it is gone.
+pub fn take_pending_exception(message: &[u8]) -> *mut NixException {
+    match PENDING.with(|pending| pending.borrow_mut().take()) {
+        Some((kept, error)) if kept.as_bytes() == message => error.into_exception(),
+        _ => std::ptr::null_mut(),
+    }
+}
+
 impl Drop for Error {
     fn drop(&mut self) {
         if let Repr::Cxx(exception) = self.0 {

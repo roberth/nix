@@ -38,7 +38,7 @@ use cxx::UniquePtr;
 use gix_hash::ObjectId;
 use gix_object::WriteTo as _;
 
-use crate::future::{AbiType, Error, NixException, NixFuture, export_future};
+use crate::future::{AbiType, BridgeError, Error, NixException, NixFuture, bridge, export_future};
 use crate::reactor::CleanupScope;
 
 #[cxx::bridge(namespace = "nix::rs")]
@@ -112,18 +112,23 @@ mod ffi {
         fn hooks(self: &TarballUnpacker) -> &TarballCacheHooks;
     }
 
+    // Each function here is a `bridge_*` wrapper, at the end of this file,
+    // around the function of the same name without the prefix; see
+    // `nix_rust_future::bridge`. The C++ names stay the same.
     extern "Rust" {
         /// A flag that the owner of an operation sets to stop it. The
         /// operation checks it at points where stopping is safe.
         type CancelToken;
 
-        fn cancel_token_new() -> Box<CancelToken>;
+        #[cxx_name = "cancel_token_new"]
+        fn bridge_cancel_token_new() -> Result<Box<CancelToken>>;
 
         /// Set the flag. Thread-safe.
-        fn cancel(self: &CancelToken);
+        #[cxx_name = "cancel"]
+        fn bridge_cancel(self: &CancelToken) -> Result<()>;
 
         #[cxx_name = "isCancelled"]
-        fn is_cancelled(self: &CancelToken) -> bool;
+        fn bridge_is_cancelled(self: &CancelToken) -> Result<bool>;
 
         /// Unpack an archive into the tarball cache at `objects_dir`, as a
         /// future of `TarballUnpackResult`.
@@ -134,7 +139,8 @@ mod ffi {
         /// before it completes cancels the thread and waits for it; the
         /// cache is then as it was, with no new pack and no temporary
         /// files.
-        fn tarball_cache_unpack(objects_dir: &str, unpacker: UniquePtr<TarballUnpacker>) -> nix_future;
+        #[cxx_name = "tarball_cache_unpack"]
+        fn bridge_tarball_cache_unpack(objects_dir: &str, unpacker: UniquePtr<TarballUnpacker>) -> Result<nix_future>;
 
         /// Writes objects into the tarball cache. All methods take `&self`
         /// and may be called from several threads at once.
@@ -142,42 +148,52 @@ mod ffi {
 
         /// Open a writer for the object directory `objects_dir` of an
         /// existing repository.
-        fn tarball_cache_writer_open(objects_dir: &str) -> Result<Box<TarballCacheWriter>>;
+        #[cxx_name = "tarball_cache_writer_open"]
+        fn bridge_tarball_cache_writer_open(objects_dir: &str) -> Result<Box<TarballCacheWriter>>;
 
         /// Add a blob, and return its id.
-        fn write_blob(self: &TarballCacheWriter, data: &[u8]) -> Result<[u8; 20]>;
+        #[cxx_name = "write_blob"]
+        fn bridge_write_blob(self: &TarballCacheWriter, data: &[u8]) -> Result<[u8; 20]>;
 
         /// Add a tree with `entries`, in any order, and return its id.
-        fn write_tree(self: &TarballCacheWriter, entries: &[GitTreeEntry]) -> Result<[u8; 20]>;
+        #[cxx_name = "write_tree"]
+        fn bridge_write_tree(self: &TarballCacheWriter, entries: &[GitTreeEntry]) -> Result<[u8; 20]>;
 
         /// Write the objects that were added since the last flush as one
         /// pack with its index. Stops with an error, and leaves no files,
         /// when `cancel` is set.
-        fn flush(self: &TarballCacheWriter, cancel: &CancelToken, hooks: &TarballCacheHooks) -> Result<()>;
+        #[cxx_name = "flush"]
+        fn bridge_flush(self: &TarballCacheWriter, cancel: &CancelToken, hooks: &TarballCacheHooks) -> Result<()>;
 
         /// The number of objects that the next `flush` writes.
-        fn pending_objects(self: &TarballCacheWriter) -> usize;
+        #[cxx_name = "pending_objects"]
+        fn bridge_pending_objects(self: &TarballCacheWriter) -> Result<usize>;
 
         /// Reads objects from the tarball cache. Not thread-safe: the caller
         /// serialises the calls.
         type TarballCacheReader;
 
         /// Open a reader for the object directory `objects_dir`.
-        fn tarball_cache_reader_open(objects_dir: &str) -> Result<Box<TarballCacheReader>>;
+        #[cxx_name = "tarball_cache_reader_open"]
+        fn bridge_tarball_cache_reader_open(objects_dir: &str) -> Result<Box<TarballCacheReader>>;
 
         /// Whether the object exists. Looks for new packs on disk if it does
         /// not find the object in the packs that it knows.
-        fn has_object(self: &TarballCacheReader, id: &[u8; 20]) -> bool;
+        #[cxx_name = "has_object"]
+        fn bridge_has_object(self: &TarballCacheReader, id: &[u8; 20]) -> Result<bool>;
 
         /// Follow tags and commits from `id` to a tree, or return `id` if it
         /// is a blob or a tree.
-        fn peel_to_tree_or_blob(self: &mut TarballCacheReader, id: &[u8; 20]) -> Result<GitPeeledObject>;
+        #[cxx_name = "peel_to_tree_or_blob"]
+        fn bridge_peel_to_tree_or_blob(self: &mut TarballCacheReader, id: &[u8; 20]) -> Result<GitPeeledObject>;
 
         /// The entries of the tree `id`, in Git order.
-        fn read_tree(self: &mut TarballCacheReader, id: &[u8; 20]) -> Result<Vec<GitTreeEntry>>;
+        #[cxx_name = "read_tree"]
+        fn bridge_read_tree(self: &mut TarballCacheReader, id: &[u8; 20]) -> Result<Vec<GitTreeEntry>>;
 
         /// The contents of the blob `id`.
-        fn read_blob(self: &mut TarballCacheReader, id: &[u8; 20]) -> Result<Vec<u8>>;
+        #[cxx_name = "read_blob"]
+        fn bridge_read_blob(self: &mut TarballCacheReader, id: &[u8; 20]) -> Result<Vec<u8>>;
     }
 }
 
@@ -873,5 +889,75 @@ impl TarballCacheReader {
             return Err(format!("Git object '{id}' is not a blob"));
         }
         Ok(std::mem::take(&mut self.buffer))
+    }
+}
+
+// The bridge functions; see `nix_rust_future::bridge`.
+
+fn bridge_cancel_token_new() -> Result<Box<CancelToken>, BridgeError> {
+    bridge(|| Ok(cancel_token_new()))
+}
+
+impl CancelToken {
+    fn bridge_cancel(&self) -> Result<(), BridgeError> {
+        bridge(|| {
+            self.cancel();
+            Ok(())
+        })
+    }
+
+    fn bridge_is_cancelled(&self) -> Result<bool, BridgeError> {
+        bridge(|| Ok(self.is_cancelled()))
+    }
+}
+
+fn bridge_tarball_cache_unpack(
+    objects_dir: &str,
+    unpacker: UniquePtr<TarballUnpacker>,
+) -> Result<NixFuture, BridgeError> {
+    bridge(|| Ok(tarball_cache_unpack(objects_dir, unpacker)))
+}
+
+fn bridge_tarball_cache_writer_open(objects_dir: &str) -> Result<Box<TarballCacheWriter>, BridgeError> {
+    bridge(|| Ok(tarball_cache_writer_open(objects_dir)?))
+}
+
+impl TarballCacheWriter {
+    fn bridge_write_blob(&self, data: &[u8]) -> Result<[u8; 20], BridgeError> {
+        bridge(|| Ok(self.write_blob(data)?))
+    }
+
+    fn bridge_write_tree(&self, entries: &[GitTreeEntry]) -> Result<[u8; 20], BridgeError> {
+        bridge(|| Ok(self.write_tree(entries)?))
+    }
+
+    fn bridge_flush(&self, cancel: &CancelToken, hooks: &TarballCacheHooks) -> Result<(), BridgeError> {
+        bridge(|| Ok(self.flush(cancel, hooks)?))
+    }
+
+    fn bridge_pending_objects(&self) -> Result<usize, BridgeError> {
+        bridge(|| Ok(self.pending_objects()))
+    }
+}
+
+fn bridge_tarball_cache_reader_open(objects_dir: &str) -> Result<Box<TarballCacheReader>, BridgeError> {
+    bridge(|| Ok(tarball_cache_reader_open(objects_dir)?))
+}
+
+impl TarballCacheReader {
+    fn bridge_has_object(&self, id: &[u8; 20]) -> Result<bool, BridgeError> {
+        bridge(|| Ok(self.has_object(id)))
+    }
+
+    fn bridge_peel_to_tree_or_blob(&mut self, id: &[u8; 20]) -> Result<GitPeeledObject, BridgeError> {
+        bridge(|| Ok(self.peel_to_tree_or_blob(id)?))
+    }
+
+    fn bridge_read_tree(&mut self, id: &[u8; 20]) -> Result<Vec<GitTreeEntry>, BridgeError> {
+        bridge(|| Ok(self.read_tree(id)?))
+    }
+
+    fn bridge_read_blob(&mut self, id: &[u8; 20]) -> Result<Vec<u8>, BridgeError> {
+        bridge(|| Ok(self.read_blob(id)?))
     }
 }

@@ -5,6 +5,7 @@ _nix_exception_free
 _nix_exception_what
 _nix_exception_from_rust
 _nix_exception_take_rust_value
+_nix_rust_take_pending_exception
 _nix_set_rust_error_factory
 __ZN3nix2rs*
 __ZNK3nix2rs*

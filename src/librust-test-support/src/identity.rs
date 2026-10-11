@@ -5,7 +5,8 @@
 //! the error of a C++ future, and ask Rust whether it got the same value:
 //! the same allocation, not only the same message.
 
-use nix_rust_future::{CxxFuture, Error, NixFuture, export_future};
+use nix_rust_future::{CxxFuture, Error, NixException, NixFuture, bridge, export_future, take_pending_exception};
+use std::ffi::{c_char, c_void};
 use std::fmt;
 use std::future::{Future, poll_fn};
 use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
@@ -55,6 +56,46 @@ pub extern "C" fn nix_rust_test_future_probe_panic(id: u64) -> NixFuture {
         #[allow(unreachable_code)]
         Ok::<(), Error>(())
     })
+}
+
+/// The Rust half of a synchronous bridge function that panics with the
+/// payload `probe panic <id>`: its body runs in `bridge`. Writes the message
+/// that cxx would throw as a `rust::Error` to `sink`. The test support
+/// library has no cxx, so the test plays the part of the cxx shim and of
+/// `nix::rs::call`, with `nix_rust_test_take_pending_exception`.
+///
+/// # Safety
+///
+/// `sink` must accept `context`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn nix_rust_test_bridge_panic(id: u64, sink: crate::StringSink, context: *mut c_void) {
+    let result = bridge(|| -> Result<(), Error> {
+        let message = format!("probe panic {id}");
+        *LAST_PANIC.lock().expect("not poisoned") = message.as_ptr() as usize;
+        resume_unwind(Box::new(message))
+    });
+    let message = match result {
+        Ok(()) => "no error".to_owned(),
+        Err(error) => error.to_string(),
+    };
+    // SAFETY: The caller guarantees that `sink` accepts `context`.
+    unsafe { crate::send_string(sink, context, &message) }
+}
+
+/// `nix_rust_take_pending_exception` of this copy of the Rust code.
+///
+/// # Safety
+///
+/// `message` must be valid for `length` bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn nix_rust_test_take_pending_exception(
+    message: *const c_char,
+    length: usize,
+) -> *mut NixException {
+    // SAFETY: The caller guarantees that `message` is valid for `length`
+    // bytes.
+    let message = unsafe { std::slice::from_raw_parts(message.cast::<u8>(), length) };
+    take_pending_exception(message)
 }
 
 /// A future that awaits `inner`, a C++ future without a value, and

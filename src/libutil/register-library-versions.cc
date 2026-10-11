@@ -18,6 +18,7 @@
 #  include <libcpuid/libcpuid.h>
 #endif
 
+#include "nix/rust/future-abi.hh"
 #include "nix/rust/lib.rs.h"
 
 namespace nix {
@@ -68,7 +69,7 @@ static RegisterLibraryVersion rNlohmannJson{"nlohmann_json", nlohmannJsonVersion
 
 // `libnixrust` reports the compiler that built it. The call also makes every
 // Nix process use the Rust library at run time, not only link it.
-static RegisterLibraryVersion rRustc{"rustc", [] { return std::string(rs::rustc_version()); }};
+static RegisterLibraryVersion rRustc{"rustc", [] { return std::string(rs::call([] { return rs::rustc_version(); })); }};
 
 #if HAVE_LIBCPUID
 static RegisterLibraryVersion rLibcpuid{"libcpuid", [] { return std::string(cpuid_lib_version()); }};

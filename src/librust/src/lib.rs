@@ -9,18 +9,22 @@
 //! `nix/rust/<module>.rs.h`. The headers are listed in `meson.build`.
 
 pub use nix_rust_future as future;
+pub mod boundary;
 pub mod reactor;
 pub mod tarball_cache;
+
+use future::{BridgeError, bridge};
 
 #[cxx::bridge(namespace = "nix::rs")]
 mod ffi {
     extern "Rust" {
         /// The version of the Rust compiler that built `libnixrust`, for
         /// example `1.95.0`.
-        fn rustc_version() -> &'static str;
+        #[cxx_name = "rustc_version"]
+        fn bridge_rustc_version() -> Result<&'static str>;
     }
 }
 
-fn rustc_version() -> &'static str {
-    env!("NIX_RUST_RUSTC_VERSION")
+fn bridge_rustc_version() -> Result<&'static str, BridgeError> {
+    bridge(|| Ok(env!("NIX_RUST_RUSTC_VERSION")))
 }

@@ -78,6 +78,19 @@ nix_future nix_rust_test_future_probe_panic(uint64_t id);
 nix_future nix_rust_test_future_identify(nix_future inner);
 
 /**
+ * The Rust half of a synchronous bridge function whose body panics with
+ * the message `probe panic <id>`. Passes the message that cxx would throw
+ * as a `rust::Error` to `sink`.
+ */
+void nix_rust_test_bridge_panic(uint64_t id, nix_rust_test_string_sink sink, void * context);
+
+/**
+ * `nix_rust_take_pending_exception` for the bridge functions of this
+ * library.
+ */
+nix_exception * nix_rust_test_take_pending_exception(const char * message, size_t length);
+
+/**
  * The version of the Rust compiler that built the library, for example
  * `1.95.0`. The same compiler builds `libnixrust`.
  */
