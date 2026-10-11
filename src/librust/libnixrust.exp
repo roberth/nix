@@ -1,0 +1,17 @@
+# The symbols that the shared `libnixrust` exports on Darwin, for
+# `-exported_symbols_list`. See `libnixrust.map`, the same list for ELF
+# platforms, for the reasons. Darwin adds a leading underscore to each name.
+_nix_exception_free
+_nix_exception_what
+_nix_exception_from_rust
+_nix_set_rust_error_factory
+__ZN3nix2rs*
+__ZNK3nix2rs*
+__ZTVN3nix2rs*
+__ZTIN3nix2rs*
+__ZTSN3nix2rs*
+__ZN4rust10cxxbridge1*
+__ZNK4rust10cxxbridge1*
+__ZTVN4rust10cxxbridge1*
+__ZTIN4rust10cxxbridge1*
+__ZTSN4rust10cxxbridge1*

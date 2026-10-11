@@ -42,6 +42,8 @@ mkMesonLibrary (finalAttrs: {
     ./build.rs
     ./cargo-build.sh
     ./native-static-libs.rs
+    ./libnixrust.map
+    ./libnixrust.exp
     ./src
     ./include
   ];

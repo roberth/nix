@@ -1,0 +1,41 @@
+/* The symbols that the shared `libnixrust` exports on ELF platforms.
+   `libnixrust.exp` is the same list for Darwin; keep the two in sync.
+
+   The interface of `libnixrust` is C++ and C: the C++ side of the cxx
+   bridges, the C++ runtime of cxx that the C++ callers need, and the C
+   functions of `nix/rust/future-abi.h`. All other symbols are local, in
+   particular those of the Rust standard library and of the Rust crates.
+   Another Rust library in the same process then keeps its own copy of
+   them, and neither copy binds to the other.
+
+   The patterns match mangled names, so that `nm -D` output can be compared
+   with this file directly. */
+{
+  global:
+    /* `nix/rust/future-abi.h`. */
+    nix_exception_free;
+    nix_exception_what;
+    nix_exception_from_rust;
+    nix_set_rust_error_factory;
+
+    /* Namespace `nix::rs`: functions, member functions, vtables and type
+       information. The libraries above derive from the abstract classes,
+       so they need the vtables and the type information. */
+    _ZN3nix2rs*;
+    _ZNK3nix2rs*;
+    _ZTVN3nix2rs*;
+    _ZTIN3nix2rs*;
+    _ZTSN3nix2rs*;
+
+    /* Namespace `rust::cxxbridge1`: the C++ runtime of cxx, for example
+       `rust::Str::Str(const std::string &)` and the type information of
+       `rust::Error`. The inline code of `rust/cxx.h` calls it. */
+    _ZN4rust10cxxbridge1*;
+    _ZNK4rust10cxxbridge1*;
+    _ZTVN4rust10cxxbridge1*;
+    _ZTIN4rust10cxxbridge1*;
+    _ZTSN4rust10cxxbridge1*;
+
+  local:
+    *;
+};

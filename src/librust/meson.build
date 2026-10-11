@@ -171,10 +171,35 @@ else
   if host_machine.system() == 'windows'
     windows_link_args += '-Wl,--allow-multiple-definition'
   endif
+
+  # Export only the interface of `libnixrust`, and keep the Rust standard
+  # library and the Rust crates local; see `libnixrust.map`. A Windows DLL
+  # binds each import to the DLL that it names, so a second copy of the
+  # Rust standard library in another DLL does not clash there, and
+  # `linker_export_flags` still exports everything.
+  export_link_args = []
+  export_link_depends = []
+  if host_machine.system() == 'darwin'
+    exported_symbols = files('libnixrust.exp')
+    export_link_args += '-Wl,-exported_symbols_list,' + exported_symbols[0].full_path()
+    export_link_depends += exported_symbols
+  elif host_machine.system() not in [ 'windows', 'cygwin' ]
+    version_script = files('libnixrust.map')
+    export_link_args += [
+      '-Wl,--version-script,' + version_script[0].full_path(),
+      # Calls from `libnixrust` to its own exported functions, such as the
+      # cxx runtime, stay inside `libnixrust`. Another library with the
+      # same cxx runtime cannot interpose them.
+      '-Wl,-Bsymbolic-functions',
+    ]
+    export_link_depends += version_script
+  endif
+
   this_library = shared_library(
     'nixrust',
     link_whole : cargo_staticlib,
-    link_args : linker_export_flags + native_static_libs + windows_link_args,
+    link_args : linker_export_flags + native_static_libs + windows_link_args + export_link_args,
+    link_depends : export_link_depends,
     soversion : meson.project_version().split('+')[0].split('pre')[0],
     install : true,
   )
