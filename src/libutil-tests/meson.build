@@ -46,6 +46,7 @@ sources = files(
   'current-process.cc',
   'environment-variables.cc',
   'executable-path.cc',
+  'fiber.cc',
   'file-content-address.cc',
   'file-descriptor.cc',
   'file-system-at.cc',

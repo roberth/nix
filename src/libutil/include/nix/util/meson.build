@@ -41,6 +41,7 @@ headers = [ config_pub_h ] + files(
   'executable-path.hh',
   'exit.hh',
   'experimental-features.hh',
+  'fiber.hh',
   'file-content-address.hh',
   'file-descriptor.hh',
   'file-path-impl.hh',

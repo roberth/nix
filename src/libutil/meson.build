@@ -186,6 +186,7 @@ sources = [ config_priv_h ] + files(
   'executable-path.cc',
   'exit.cc',
   'experimental-features.cc',
+  'fiber.cc',
   'file-content-address.cc',
   'file-descriptor.cc',
   'file-system.cc',
