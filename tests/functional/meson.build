@@ -200,9 +200,11 @@ if nix_store.found()
     'name' : 'libstoreconsumer',
     'deps' : [
       libstoreconsumer_tester,
+      build_drop_tester,
     ],
     'tests' : [
       'test-libstoreconsumer.sh',
+      'build-drop.sh',
     ],
     'workdir' : meson.current_source_dir(),
   }

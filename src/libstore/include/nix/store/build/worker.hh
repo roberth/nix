@@ -390,7 +390,8 @@ public:
      *
      * Goal code still makes blocking store calls, so the task must be
      * polled on a thread that may block, for example under
-     * `runBlocking`, and never on the reactor thread.
+     * `runBlocking`, and never on the reactor thread. To await a build
+     * from any task, use `buildPathsWithResultsAsync`.
      *
      * A user interrupt cancels the task, through a race with
      * `waitForInterrupt()`.
@@ -421,6 +422,24 @@ public:
      * and give the event to `goal`. The reactor wakes the wait.
      */
     Task<void> waitForChild(Goal & goal);
+
+    /**
+     * Like `buildPathsWithResults`, as a task that runs the goals on the
+     * thread that polls it (see `runGoals`). The goals live in the task:
+     * dropping it cancels the build, kills and reaps the builders, and
+     * releases the locks, on that thread.
+     */
+    Task<std::vector<KeyedBuildResult>> buildPathsWithResultsTask(std::vector<DerivedPath> reqs, BuildMode buildMode);
+
+    /**
+     * Like `buildPathsWithResultsTask`, on a thread of its own
+     * (`runInThread`), so that any task can await it, also on the reactor
+     * thread. Dropping the task cancels the build on that thread; the drop
+     * waits for the thread, or defers the wait to the cleanup scope of the
+     * run on the reactor. The worker must outlive the task and its
+     * cleanup.
+     */
+    Task<std::vector<KeyedBuildResult>> buildPathsWithResultsAsync(std::vector<DerivedPath> reqs, BuildMode buildMode);
 
 #ifdef _WIN32
     /**

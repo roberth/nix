@@ -4,6 +4,7 @@
 #include "nix/store/build/substitution-goal.hh"
 #include "nix/store/build/derivation-trampoline-goal.hh"
 #include "nix/util/strings.hh"
+#include "nix/util/task-thread.hh"
 #include <memory>
 
 namespace nix {
@@ -76,6 +77,22 @@ void Worker::buildPaths(const std::vector<DerivedPath> & reqs, BuildMode buildMo
 
 std::vector<KeyedBuildResult> Worker::buildPathsWithResults(const std::vector<DerivedPath> & reqs, BuildMode buildMode)
 {
+    return runBlocking(buildPathsWithResultsTask(reqs, buildMode));
+}
+
+Task<std::vector<KeyedBuildResult>>
+Worker::buildPathsWithResultsAsync(std::vector<DerivedPath> reqs, BuildMode buildMode)
+{
+    /* The goals live in the task on that thread, so that they run and are
+       dropped on one thread. */
+    co_return co_await runInThread<std::vector<KeyedBuildResult>>([this, reqs = std::move(reqs), buildMode]() {
+        return runBlocking(buildPathsWithResultsTask(reqs, buildMode));
+    });
+}
+
+Task<std::vector<KeyedBuildResult>>
+Worker::buildPathsWithResultsTask(std::vector<DerivedPath> reqs, BuildMode buildMode)
+{
     Goals goals;
     std::vector<std::pair<const DerivedPath &, GoalPtr>> state;
 
@@ -85,7 +102,7 @@ std::vector<KeyedBuildResult> Worker::buildPathsWithResults(const std::vector<De
         state.push_back({req, goal});
     }
 
-    run(goals);
+    co_await runGoals(goals);
 
     std::vector<KeyedBuildResult> results;
     results.reserve(state.size());
@@ -103,7 +120,7 @@ std::vector<KeyedBuildResult> Worker::buildPathsWithResults(const std::vector<De
             });
     }
 
-    return results;
+    co_return results;
 }
 
 BuildResult Worker::buildDerivation(const StorePath & drvPath, const BasicDerivation & drv, BuildMode buildMode)

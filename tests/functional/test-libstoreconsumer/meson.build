@@ -11,3 +11,12 @@ libstoreconsumer_tester = executable(
   ],
   build_by_default : false,
 )
+
+build_drop_tester = executable(
+  'test-build-drop',
+  'build-drop.cc',
+  dependencies : deps_private_no_pkgconfig + [
+    dependency('nix-store'),
+  ],
+  build_by_default : false,
+)
