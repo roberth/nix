@@ -79,6 +79,28 @@ mkMesonLibrary (finalAttrs: {
     "CARGO_TARGET_${hostRust.cargoEnvVarTarget}_LINKER" = ccFor stdenv.cc "cc";
   };
 
+  # See `src/librust/package.nix`.
+  passthru.tests.clippy = stdenv.mkDerivation {
+    pname = "${finalAttrs.pname}-clippy";
+    inherit (finalAttrs)
+      version
+      src
+      sourceRoot
+      cargoDeps
+      env
+      ;
+    nativeBuildInputs = finalAttrs.nativeBuildInputs ++ [ buildPackages.clippy ];
+    dontConfigure = true;
+    buildPhase = ''
+      runHook preBuild
+      cargo clippy --offline --locked --all-targets -- --deny warnings
+      runHook postBuild
+    '';
+    installPhase = ''
+      touch $out
+    '';
+  };
+
   meta = {
     platforms = lib.platforms.unix ++ lib.platforms.windows;
   };
