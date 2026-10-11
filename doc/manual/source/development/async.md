@@ -58,6 +58,9 @@ Two consequences:
 - `runOnReactor(task)` runs a task on the [reactor](#the-reactor) thread, and blocks the current thread until the task and its [cleanups](#asynchronous-drop) are done.
   A user interrupt destroys the task on the reactor thread, waits for the cleanups, and throws `Interrupted`.
   It must not be called on the reactor thread, which would wait for itself.
+- `spawnOnReactor(task)` is the same run on the reactor as a task, which any executor can await.
+  Its drop cancels the run and waits for its cleanups.
+- `runOnFiber(fn)` runs blocking code, such as the evaluator, on a fiber, as a task; see [Evaluator on fibers](#evaluator-on-fibers).
 - `waitForInterrupt()` is a task that throws `Interrupted` on a user interrupt, or when the `runInThread` task of its thread is dropped.
   `race(work, waitForInterrupt())` makes an interrupt cancel `work` under any executor.
   Under `runBlocking` on the thread of a `runInThread` task, a drop of that task also wakes the loop, and `runBlocking` unwinds and drops its task on that thread.
@@ -354,3 +357,127 @@ Rejected alternatives:
   The scope of the first poll is explicit.
 
 A cleanup that never ends makes its run never end, as a drop that waits forever does under `runBlocking`.
+
+## Evaluator on fibers
+
+The evaluator is recursive C++.
+A primop that waits for a store query or a fetch is many C++ frames below the top of the evaluation, and each of those frames would have to become a task before the wait could be a `co_await`.
+The evaluator instead runs on a fiber: a stack of its own, which it can leave at any depth and come back to later.
+At the boundary, a fiber is a task like any other.
+
+- `runOnFiber(fn)` (`nix/util/fiber.hh`) is a task.
+  Its poll switches onto the fiber, which runs `fn` until `fn` suspends or returns.
+- `awaitOnFiber(task)`, called by `fn` at any depth, polls `task` on the fiber with the waker of the outer poll.
+  While `task` is pending, the fiber suspends, and the outer poll returns `NIX_POLL_PENDING`.
+  A wake of `task` wakes the outer task, whose next poll resumes the fiber, which polls `task` again.
+- The result of `fn`, or its exception, is the result of the task.
+  An exception crosses in both directions as the same object: from `task` to the code on the fiber, and from `fn` to the awaiter of the outer task.
+- A drop of the outer task while the fiber is suspended cancels it.
+  The fiber resumes once more, and `awaitOnFiber` throws `Interrupted` instead of a poll.
+  The stack unwinds like for any exception: the destructors of the frames on it run, and `task`, a local of `awaitOnFiber`, is dropped, which cancels the operation below it.
+  Then the stack returns to the pool.
+  A `catch` on the fiber can stop the unwinding, but the next `awaitOnFiber` throws again, so the drop waits only until `fn` returns.
+- The stacks come from a pool of the process, so a fiber after the first one costs no `mmap` and no page faults.
+  A stack has 60 MiB of address space, as much as the evaluator asks for on the main thread; only the pages that a fiber touches use memory.
+
+`awaitOnFiber` outside of a fiber is `runBlocking`.
+Code that can run in both places, such as a fetcher, calls it unconditionally.
+
+### Where an evaluation suspends
+
+`downloadIntoTarballCache`, which `builtins.fetchTarball`, `builtins.fetchTree` and the tarball inputs of flakes reach, awaits its fetch task with `awaitOnFiber` when it runs on a fiber, through `spawnOnReactor` when curl runs on the reactor.
+Off a fiber, it blocks as before.
+
+Nothing runs an evaluation on a fiber by default.
+`_NIX_EVAL_ON_FIBER=1` makes `nix-instantiate` evaluate under `runBlocking(runOnFiber(...))`.
+A user interrupt then wakes `runBlocking` while the evaluation is suspended in a fetch, and `runBlocking` drops it.
+`tests/functional/tarball-cancel.sh` checks that this stops the transfer and leaves no pack in the tarball cache.
+
+The unit tests in `src/libexpr-tests/fiber-fetch.cc` evaluate `builtins.fetchTarball` against a server that holds each response until the test releases it.
+They show that the evaluation suspends in the fetch and continues with the right result; that a drop closes the connection, runs the destructors of the evaluator's frames, and leaves a thunk that can be forced again; and that two evaluations, each with its own `EvalState`, wait in their fetches at the same time on one thread and complete in the order of the responses.
+
+### The garbage collector
+
+A suspended fiber keeps `Value`s on its stack, and while a fiber runs, the stack of its thread keeps the `Value`s of the frames below the switch.
+The Boehm GC scans only the stack that a stopped thread executes on.
+The fork of bdwgc of Determinate Systems (`packaging/dependencies.nix`) adds stacks that the client registers (`GC_register_stack`), each with a saved stack pointer, and scans each registered stack that has one.
+DeterminateSystems/nix-src uses the same fork for its parallel evaluator.
+
+The pool registers each stack when it allocates it, through the `FiberStackHooks` that `initGC` installs.
+On each switch, the hooks save the stack pointer of the stack that the thread leaves, and clear it on the stack that the thread enters.
+The saved stack pointer is lower than the real one by 512 bytes, for the registers that the switch stores below it, which can hold pointers of the callers.
+A switch from a stack other than the one that the hooks expect, for example from a `sinkToSource` coroutine, panics, because the collector would scan from one stack to the base of another.
+A free stack of the pool has no saved stack pointer, so the collector ignores it.
+
+The tests in `src/libexpr-tests/fiber-gc.cc` keep 1000 `Value`s only on the stack of a suspended fiber, collect twice from outside while allocating 200000 other `Value`s, and check that the 1000 survive with their contents.
+Without the hooks, none survive, and their memory holds other `Value`s.
+The tests also pass with a bdwgc that is built with `--enable-gc-assertions`.
+
+A build whose bdwgc has no registered stacks disables the fibers: `runOnFiber` then runs `fn` in place, on its first poll, and `awaitOnFiber` blocks.
+The evaluator then behaves as before the fibers.
+Windows does the same: Nix builds without the GC there, but no test of the fibers ran on Windows.
+
+### Rules for code on a fiber
+
+- A fiber runs only on the thread that started it; a resumption on another thread panics.
+  The compiler can keep the address of a `thread_local` across a call, because a function never changes threads in C++, and a stack switch is a call.
+  Fibers that move between threads would need every thread-local on their stacks to be fiber-local instead: `GC_current_stack`, the state of the C++ runtime for exceptions, the current activity of the logger, the interrupt check and the cancellation of `runInThread`, and the allocation cache of `Value`s.
+  DeterminateSystems/nix-src pins its fibers to their threads for the same reason.
+- The fibers on one thread share its thread-locals.
+  The current activity of the logger is fiber-local: `Fiber::resume` swaps it, because `PushActivity` restores the previous activity, and two fibers would restore each other's.
+  The other thread-locals of Nix are correct to share: the interrupt check and the cancellation of `runInThread` belong to the thread, and the allocation cache of `Value`s is a free list.
+- `awaitOnFiber` in a `catch` block, or during unwinding, blocks instead of suspending.
+  The C++ runtime keeps the exceptions that are caught as a stack per thread, and a second fiber on the thread would push and pop its own exceptions on it.
+  While the owner of a fiber unwinds and drops it, the code on the fiber sees the exception of the owner in `std::uncaught_exceptions()`.
+- A lock that is held across `awaitOnFiber` deadlocks when another fiber on the same thread takes it.
+- Two evaluations that run at the same time need an `EvalState` each.
+  The state of an `EvalState` assumes one evaluation at a time: a thunk that a suspended evaluation forces is a black hole, which another evaluation reports as infinite recursion, and the call depth counter adds up the depths of all suspended evaluations.
+  The parallel evaluator of DeterminateSystems/nix-src has a fiber-aware call depth and waits for thunks that another fiber forces; that is out of the scope of this design.
+
+### Measurements
+
+Measured with the release builds of this branch (`nix-everything`, `nix-expr-tests`), on a machine with 32 cores and a load average of about 14 from other work.
+
+A whole evaluation on a fiber costs no more than the noise.
+`nix-instantiate --eval --readonly-mode` of the `drvPath` of a minimal NixOS system, with and without `_NIX_EVAL_ON_FIBER=1`, interleaved, 6 runs each, against the dummy store:
+
+| Mode | Median wall (range) | Lowest user + sys | Max RSS |
+|------|------|------|------|
+| Direct | 2.14 s (2.07–2.61) | 2.54 s | 635–638 MiB |
+| On a fiber | 2.15 s (2.11–3.86) | 2.58 s | 635–638 MiB |
+
+Both give the same `.drv` path.
+
+`nix-expr-fiber-bench` (`src/libexpr-tests/fiber-bench.cc`) measures the rest without I/O:
+
+| Measurement | Result |
+|------|------|
+| Resident memory per suspended fiber, at a depth of 0 Nix calls | 8 KiB |
+| The same, at a depth of 100 (1000 fibers) | 236 KiB |
+| The same, at a depth of 1000 (100 fibers) | 2240 KiB |
+| Memory mappings per fiber | 2 (the stack and its guard page) |
+| Drop of a suspended evaluation, at a depth of 0 (median of 200) | 10.6 µs |
+| The same, at a depth of 1000 | 2.19 ms |
+| Suspension and resumption of a fiber, per round trip | 115 ns |
+| The same wait in a coroutine task | 18 ns |
+
+The memory of a suspended evaluation grows by about 2.2 KiB for each Nix call that it is deep in.
+The benchmark does not separate stack from heap; a call of the benchmark allocates an environment and a few values on the heap, so most of it is probably stack, which the same evaluation also uses on the main thread.
+The fiber itself adds 8 KiB and two mappings.
+With a `vm.max_map_count` of 65530, the default of Linux, a process can hold about 32000 suspended fibers.
+
+The drop of a deep evaluation is slow because it is a C++ exception that unwinds through the frames of the evaluator, which catch and rethrow it at each forced thunk, as a user interrupt does without fibers.
+
+The drop of an evaluation that waits in `builtins.fetchTarball` (`fiber-fetch.cc`, which cancels the transfer and the unpacking too) took 1.5 ms in the package build of the tests.
+In `tarball-cancel.sh`, `nix-instantiate` exited 3 to 9 ms after `SIGINT` when it evaluated on a fiber, and 3 to 5 ms when it did not (debug-optimised build, 8 interrupts each).
+
+### What remains
+
+- Only the tarball fetch suspends.
+  Import from derivation, store queries, and the fetchers other than tarballs still block the fiber, and with it the thread.
+  `Worker::buildPathsWithResultsAsync` is the task for import from derivation.
+- Concurrent evaluations on one `EvalState`, and evaluations that move between threads; see [Rules for code on a fiber](#rules-for-code-on-a-fiber).
+- No test of the fibers ran on Darwin or Windows.
+  The flake output for `aarch64-darwin` evaluates, but it was not built.
+- The bdwgc fork reads and writes the saved stack pointers without atomics, and a FIXME in it notes that a thread inside `GC_do_blocking`, which the collector does not stop, must not switch stacks.
+  Nix does not call `GC_do_blocking`, and a fiber must run on a thread that is registered with the collector, which the threads that evaluate are.
