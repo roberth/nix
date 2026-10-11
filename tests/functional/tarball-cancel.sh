@@ -95,27 +95,37 @@ interruptFetch() {
     git -C "$cache" fsck --full
 }
 
-# During the download: the server stalls after 500 kB, while the unpacking
-# waits for more data. The interrupt also stops the transfer.
-interruptFetch "http://127.0.0.1:$port/stall/tree.tar.gz" "" "$serverLog" "stalled tree.tar.gz"
-waitForText "$serverLog" "closed by client tree.tar.gz 500000"
+# curl runs on the reactor, and the fetch with `runOnReactor()`, or curl runs
+# on a thread of its own, and the fetch with `runBlocking()`. Both must
+# stop in each phase.
+for backend in reactor thread; do
+    export _NIX_FILE_TRANSFER_BACKEND=$backend
+    : > "$serverLog"
 
-# A static Nix cannot load the plugin. The unit tests in
-# `libfetchers-tests/tarball-unpack.cc` cover these phases there.
-if [[ -n ${_NIX_TEST_TARBALL_CACHE_PAUSE_PLUGIN:-} ]]; then
-    # While unpacking: the unpacking holds still after the first file.
-    interruptFetch "http://127.0.0.1:$port/tree.tar.gz" unpack "$TEST_ROOT/nix-unpack.err" "paused in phase 'unpack'"
+    # During the download: the server stalls after 500 kB, while the
+    # unpacking waits for more data. The interrupt also stops the transfer.
+    interruptFetch "http://127.0.0.1:$port/stall/tree.tar.gz" "" "$serverLog" "stalled tree.tar.gz"
+    waitForText "$serverLog" "closed by client tree.tar.gz 500000"
 
-    # During the flush: the flush holds still after it wrote the temporary
-    # pack, before the index. The interrupt removes the temporary pack.
-    interruptFetch "http://127.0.0.1:$port/tree.tar.gz" flush "$TEST_ROOT/nix-flush.err" "paused in phase 'flush'"
-else
-    echo "no tarball cache pause plugin; skipping the unpack and flush phases"
-fi
+    # A static Nix cannot load the plugin. The unit tests in
+    # `libfetchers-tests/tarball-unpack.cc` cover these phases there.
+    if [[ -n ${_NIX_TEST_TARBALL_CACHE_PAUSE_PLUGIN:-} ]]; then
+        # While unpacking: the unpacking holds still after the first file.
+        interruptFetch "http://127.0.0.1:$port/tree.tar.gz" unpack "$TEST_ROOT/nix-unpack.err" "paused in phase 'unpack'"
 
-# A fetch after the interrupted ones unpacks the same tree, into one pack.
-out=$(nix eval --impure --raw --expr "$(fetchExpr "http://127.0.0.1:$port/tree.tar.gz")")
-[[ $(nix hash path "$out") == "$expectedHash" ]]
-[[ $(find "$cache/objects/pack" -type f -name 'pack-*.pack' | wc -l) == 1 ]]
-[[ $(find "$cache/objects/pack" -type f -name 'tmp_*' | wc -l) == 0 ]]
-git -C "$cache" fsck --full
+        # During the flush: the flush holds still after it wrote the
+        # temporary pack, before the index. The interrupt removes the
+        # temporary pack.
+        interruptFetch "http://127.0.0.1:$port/tree.tar.gz" flush "$TEST_ROOT/nix-flush.err" "paused in phase 'flush'"
+    else
+        echo "no tarball cache pause plugin; skipping the unpack and flush phases"
+    fi
+
+    # A fetch after the interrupted ones unpacks the same tree, into one
+    # pack.
+    out=$(nix eval --impure --raw --expr "$(fetchExpr "http://127.0.0.1:$port/tree.tar.gz")")
+    [[ $(nix hash path "$out") == "$expectedHash" ]]
+    [[ $(find "$cache/objects/pack" -type f -name 'pack-*.pack' | wc -l) == 1 ]]
+    [[ $(find "$cache/objects/pack" -type f -name 'tmp_*' | wc -l) == 0 ]]
+    git -C "$cache" fsck --full
+done
