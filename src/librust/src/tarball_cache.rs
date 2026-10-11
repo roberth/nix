@@ -270,14 +270,32 @@ pub struct TarballCacheWriter {
     objects_dir: PathBuf,
     store: Arc<gix_odb::Store>,
     pending: Mutex<Pending>,
+    /// Stops `write_blob` and `write_tree` within one `CHUNK` of their
+    /// object. The writer of an unpack future shares the token of the
+    /// future; other writers have one that is never set.
+    cancel: Arc<CancelToken>,
 }
 
+/// The size of the pieces in which the writer hashes and compresses an
+/// object, with a check for cancellation before each. A file of an archive
+/// can be large, and in a debug build, hashing and compressing 1 MiB takes
+/// tens of milliseconds.
+const CHUNK: usize = 1 << 20;
+
 fn tarball_cache_writer_open(objects_dir: &str) -> Result<Box<TarballCacheWriter>, String> {
-    Ok(Box::new(TarballCacheWriter {
+    Ok(Box::new(open_writer(
+        objects_dir,
+        Arc::new(CancelToken(AtomicBool::new(false))),
+    )?))
+}
+
+fn open_writer(objects_dir: &str, cancel: Arc<CancelToken>) -> Result<TarballCacheWriter, String> {
+    Ok(TarballCacheWriter {
         objects_dir: PathBuf::from(objects_dir),
         store: open_store(objects_dir)?,
         pending: Mutex::new(Pending::default()),
-    }))
+        cancel,
+    })
 }
 
 impl TarballCacheWriter {
@@ -287,8 +305,33 @@ impl TarballCacheWriter {
         self.pending.lock().unwrap_or_else(|e| e.into_inner())
     }
 
+    /// The id of an object, hashed in pieces of `CHUNK` bytes.
+    fn compute_hash(&self, kind: gix_object::Kind, data: &[u8]) -> Result<ObjectId, String> {
+        let mut hasher = gix_hash::hasher(HASH);
+        hasher.update(&gix_object::encode::loose_header(kind, data.len() as u64));
+        for chunk in data.chunks(CHUNK) {
+            self.cancel.check()?;
+            hasher.update(chunk);
+        }
+        hasher.try_finalize().map_err(|e| e.to_string())
+    }
+
+    /// The compressed object, compressed in pieces of `CHUNK` bytes. Git
+    /// and libgit2 compress pack entries at the zlib default level.
+    fn deflate(&self, data: &[u8]) -> Result<Vec<u8>, String> {
+        let mut out = gix_zlib::stream::deflate::Write::new(Vec::new(), gix_zlib::Compression::DEFAULT);
+        for chunk in data.chunks(CHUNK) {
+            self.cancel.check()?;
+            out.write_all(chunk)
+                .map_err(|e| format!("compressing a Git object: {e}"))?;
+        }
+        out.flush()
+            .map_err(|e| format!("compressing a Git object: {e}"))?;
+        Ok(out.into_inner())
+    }
+
     fn write_object(&self, kind: gix_object::Kind, data: &[u8]) -> Result<ObjectId, String> {
-        let id = gix_object::compute_hash(HASH, kind, data).map_err(|e| e.to_string())?;
+        let id = self.compute_hash(kind, data)?;
 
         if self.lock().known.contains(&id) {
             return Ok(id);
@@ -307,7 +350,7 @@ impl TarballCacheWriter {
             return Ok(id);
         }
 
-        let compressed = deflate(data)?;
+        let compressed = self.deflate(data)?;
 
         let mut pending = self.lock();
         if pending.known.insert(id) {
@@ -394,15 +437,6 @@ fn check_entry_name(name: &[u8]) -> Result<(), String> {
         ));
     }
     Ok(())
-}
-
-fn deflate(data: &[u8]) -> Result<Vec<u8>, String> {
-    // Git and libgit2 compress pack entries at the zlib default level.
-    let mut out = gix_zlib::stream::deflate::Write::new(Vec::new(), gix_zlib::Compression::DEFAULT);
-    out.write_all(data)
-        .and_then(|()| out.flush())
-        .map_err(|e| format!("compressing a Git object: {e}"))?;
-    Ok(out.into_inner())
 }
 
 /// Where an entry is in the pack, for the index.
@@ -591,7 +625,9 @@ fn make_read_only(path: &Path) -> std::io::Result<()> {
 
 /// What the thread of an unpack future shares with the future.
 struct UnpackShared {
-    cancel: CancelToken,
+    /// Shared with the writer of the thread, so that a cancellation also
+    /// stops the hashing and compressing of a large file.
+    cancel: Arc<CancelToken>,
     /// The result of the thread, when it is done.
     result: Mutex<Option<Result<TarballUnpackResult, Error>>>,
     /// The waker of the last poll. The thread wakes it when it is done.
@@ -656,7 +692,7 @@ fn tarball_cache_unpack(objects_dir: &str, unpacker: UniquePtr<TarballUnpacker>)
 
 fn start_unpack(objects_dir: String, unpacker: UniquePtr<TarballUnpacker>) -> UnpackJob {
     let shared = Arc::new(UnpackShared {
-        cancel: CancelToken(AtomicBool::new(false)),
+        cancel: Arc::new(CancelToken(AtomicBool::new(false))),
         result: Mutex::new(None),
         waker: Mutex::new(None),
     });
@@ -701,9 +737,9 @@ fn start_unpack(objects_dir: String, unpacker: UniquePtr<TarballUnpacker>) -> Un
 fn unpack(
     objects_dir: &str,
     unpacker: &TarballUnpacker,
-    cancel: &CancelToken,
+    cancel: &Arc<CancelToken>,
 ) -> Result<TarballUnpackResult, Error> {
-    let writer = tarball_cache_writer_open(objects_dir).map_err(Error::msg)?;
+    let writer = open_writer(objects_dir, cancel.clone()).map_err(Error::msg)?;
 
     let mut out = TarballUnpackResult {
         tree: [0; 20],
