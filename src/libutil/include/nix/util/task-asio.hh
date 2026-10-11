@@ -69,8 +69,8 @@ struct AsioTaskRunner : WakeTarget
 
     /**
      * The task can wait for a wake from another thread, for example the
-     * curl thread. Keep the `io_context` running until then. Reset on
-     * completion. Protected by `mutex`.
+     * thread that drives curl. Keep the `io_context` running until then.
+     * Reset on completion. Protected by `mutex`.
      */
     std::optional<WorkGuard> workGuard;
 

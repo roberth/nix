@@ -101,6 +101,10 @@ An upward call whose C++ exception must keep its type returns it as a `nix_excep
 In the other direction, a bridge function takes a `nix_future` that C++ made with `toCFuture(task)`, and Rust awaits `CxxFuture::<T>::new(future)`.
 See [Asynchronous code](./async.md#tasks-and-rust-futures) for the semantics.
 
+Rust code that needs timers, readiness of file descriptors, or a place to run a future uses the reactor (`src/reactor.rs`), a tokio runtime with one thread.
+Code that runs on the reactor thread must not block, also not in a drop; see [The reactor](./async.md#the-reactor) and [Asynchronous drop](./async.md#asynchronous-drop).
+Do not start another tokio runtime: a tokio timer or descriptor belongs to the runtime that registered it, and fires only while a thread drives that runtime.
+
 ## Adding a crate dependency
 
 Add the dependency to `Cargo.toml` and run `cargo update -p <crate>` (or `cargo generate-lockfile`) in `src/librust`.

@@ -55,12 +55,12 @@ Two consequences:
 
 - `runBlocking(task)` runs a task on the current thread.
   A user interrupt wakes it, throws `Interrupted`, and destroys the task.
-- `asyncRunTask(task, token)` and `taskToAwaitable(task)` run a task as a Boost.Asio operation.
-  All polls run on the handler's executor.
-  An Asio cancellation destroys the task.
-- `awaitableToTask(executor, awaitable)` awaits a Boost.Asio awaitable from a task.
-  Destroying the task emits a terminal cancellation to the awaitable.
-  Asio cancellation is cooperative, so the awaitable can run until its next cancellable operation.
+- `runOnReactor(task)` runs a task on the [reactor](#the-reactor) thread, and blocks the current thread until the task and its [cleanups](#asynchronous-drop) are done.
+  A user interrupt destroys the task on the reactor thread, waits for the cleanups, and throws `Interrupted`.
+  It must not be called on the reactor thread, which would wait for itself.
+- The build `Worker` runs goals as tasks on its own thread; see [Goals and the Worker](#goals-and-the-worker).
+- `asyncRunTask(task, token)` and `taskToAwaitable(task)` in `nix/util/task-asio.hh` run a task as a Boost.Asio operation, and `awaitableToTask(executor, awaitable)` awaits a Boost.Asio awaitable from a task.
+  No code of Nix uses Boost.Asio any more; only the tests of the adapters do.
 
 ## Leaves and combinators
 
@@ -80,12 +80,13 @@ Two consequences:
   An edge task can refer to its element by reference: the element is in the result set, whose nodes do not move.
 - `runInThread<T>(fn)` runs blocking code on a thread of its own, as a task.
   The thread starts on the first poll.
-  Dropping the task makes `checkInterrupt()` on that thread throw `Interrupted`, calls the callbacks that the thread registered with `onThreadCancelled`, and then joins the thread.
+  Dropping the task makes `checkInterrupt()` on that thread throw `Interrupted`, calls the callbacks that the thread registered with `onThreadCancelled`, and then joins the thread, on the reactor as a cleanup of the run (see [Asynchronous drop](#asynchronous-drop)).
   A blocking wait registers such a callback to wake up; `FileTransfer::download(request, sink)` cancels its transfer in it.
   The cancellation is per task: it does not set the global interrupt flag.
 
 There is no detached spawn.
 A task always has an owner, so its lifetime is visible in the code.
+The reactor spawns a task only for a run (`runOnReactor`), whose caller owns it, and for a deferred cleanup, which the scope of a run owns.
 The build `Worker` is the one place where several owners share a task; see [Goals and the Worker](#goals-and-the-worker).
 
 ## Goals and the Worker
@@ -182,8 +183,10 @@ The tests are not in the table: they add 741 lines and remove 28 lines of the ol
 ### What remains for the Worker
 
 - The `Worker` is not a task, so a task cannot await a build.
-  To make `Worker::run` a task needs a reactor for file descriptors and timers that tasks share, which does not exist yet; `runBlocking` only waits for wakes.
-  It is the same question as which reactor owns the curl multi handle.
+  A reactor for file descriptors and timers that tasks share now exists ([The reactor](#the-reactor)), and curl runs on it.
+  The `Worker` does not use it yet: it still waits in its own `poll()` for child processes and timeouts.
+  To make `Worker::run` a task, its child-process descriptors would go to `FdWatch` or `waitFd`, its timeouts to `sleepFor`, and the goals would run in a `runOnReactor`.
+  That moves the blocking store operations of the next item onto the reactor thread, so they must move to tasks or `runInThread` first.
 - Goal code still calls blocking store operations on the `Worker` thread, which stops all goals while they run:
   `computeFSClosure` (a nested `runBlocking`), `queryRealisation` in `DrvOutputSubstitutionGoal`, `isValidPath`, the registration of outputs, the hashing in `pathContentsGood`, the build hook protocol, and `copyClosure`.
   Each needs a task version, or `runInThread`.
@@ -230,26 +233,83 @@ It shows the patterns that a migration of other code can use:
 
 - Blocking work behind a future.
   The Rust future starts a thread on its first poll, and the thread wakes the future when it is done.
-  Dropping the future sets a cancellation token, wakes the thread from a blocking read, and joins it.
+  Dropping the future sets a cancellation token, wakes the thread from a blocking read, and joins it, on the reactor as a cleanup of the run (see [Asynchronous drop](#asynchronous-drop)).
 - A stream between two concurrent tasks.
   `FileTransfer::transferStreaming` writes the body of a transfer into a `TransferStream`, which a blocking reader on another thread reads.
   The owner closes the stream to wake the reader when it cancels both.
 - A cancellation token per operation, instead of the global interrupt flag.
-  `runBlocking` turns a user interrupt into the destruction of the task, and the destruction reaches the operation through its owner.
+  `runOnReactor` and `runBlocking` turn a user interrupt into the destruction of the task, and the destruction reaches the operation through its owner.
 - An exception that a C library swallows.
   libarchive turns an exception of its input into a message.
   The code that calls libarchive remembers the exception and rethrows it, so that it keeps its type.
 
-### What remains for a Rust executor
+## The reactor
 
-Today C++ drives every chain: `runBlocking` or the Asio runner polls the outermost task, and Rust futures run inside it.
-No Rust code spawns a task or owns a reactor.
-To run a chain on tokio, for example for network code in Rust, the following is necessary and does not exist yet:
+The reactor is one tokio runtime for the whole process, with the `current_thread` scheduler, on a thread of its own (`nix-reactor`).
+It is in libnixrust (`src/librust/src/reactor.rs`), and `nix/util/reactor.hh` gives it to C++:
 
-- A tokio runtime with a `LocalSet` for futures that contain C++ tasks, or an argument that the C++ tasks are thread-safe, so that a multi-threaded runtime can poll them.
-- A C++ entry point that submits a `nix_future` to the runtime and returns a task that completes with it, so that C++ code can wait for tokio without blocking an Asio thread.
-- Interrupt handling: `runBlocking` turns a user interrupt into a drop of the task, and a tokio-driven chain needs the same, for example by racing it against an interrupt future.
-- A decision about which reactor owns the curl multi handle, which is the same question for C++ code with or without Rust.
-- An asynchronous drop for futures that own a thread.
-  The tarball unpacking joins its thread when it is dropped, which blocks the thread that drops it until the unpacking stops.
-  Under `runBlocking` that is acceptable, but an executor thread must not block; a drop would have to hand the thread to a task that joins it.
+- `runOnReactor(task)` runs a task on it (see [Running tasks](#running-tasks)).
+  Rust code does the same with `reactor_spawn`, which returns a future of the completion.
+- `sleepFor(duration)` and `waitFd(fd, readable, writable)` are tasks that the reactor wakes.
+  Any thread can poll them, also under `runBlocking`.
+- `postToReactor(f)`, `ReactorTimer` and `FdWatch` run callbacks on the reactor thread.
+  They are for C libraries that report the timers and descriptors that they need, such as the curl multi interface.
+  `FdWatch` reports readiness like a level-triggered `poll`, which curl expects, although tokio registers descriptors edge-triggered.
+
+One thread drives the runtime, so its callbacks never run at the same time.
+A C library that is not thread-safe, such as a curl multi handle, can therefore make all its calls on the reactor thread without a lock.
+The thread is the reactor's own, and not the thread of a `runBlocking` caller, because synchronous code also starts transfers, and something must drive curl while no task waits.
+
+curl runs on the reactor (`_NIX_FILE_TRANSFER_BACKEND=reactor`, the default except on Windows).
+Its socket and timer callbacks register with the reactor, and a transfer completes through its callback on the reactor thread, which wakes the task that waits for it.
+With `_NIX_FILE_TRANSFER_BACKEND=thread`, curl runs on a thread of its own that polls, as before the reactor.
+That backend stays during the migration: Windows needs it, because tokio cannot watch arbitrary sockets there, and it gives a way back without a new build.
+
+A tarball fetch runs with `runOnReactor` when curl runs on the reactor, so that the transfer and the task share a thread.
+
+The rules for code that runs on the reactor thread:
+
+- Do not block.
+  A blocked reactor thread stops all transfers and timers of the process.
+  Blocking work, such as libarchive's reads, goes to a thread of its own behind a future (see [Example: fetching a tarball](#example-fetching-a-tarball)).
+- Do not call `runOnReactor`; await the task instead.
+- A drop must not block either; see [Asynchronous drop](#asynchronous-drop).
+
+## Asynchronous drop
+
+Some drops must wait: a future that owns a thread joins it, a writer flushes a pack, a process must be killed and reaped.
+Under `runBlocking`, the drop can wait in place: it blocks only the thread of the caller, which waits for the task anyway.
+On the reactor thread, a drop that waits stops everything else.
+
+The rule:
+
+- A drop that must wait first starts the cancellation without waiting: it sets the cancellation token, closes the stream, or sends the signal.
+- Then it gives the wait to the cleanup scope of the run that polled it, as a future: `CleanupScope::defer` in Rust, `nix::CleanupScope::defer` in C++ (`nix/util/reactor.hh`), which takes a task.
+  The drop returns at once.
+- A run on the reactor (`runOnReactor`, `reactor_spawn`) completes only after all cleanups in its scope are done, and its drop waits for them too.
+  The caller of `runOnReactor` therefore sees the same state as with a drop that waits: no thread of the task runs any more, and no temporary file is left.
+- A future gets the scope with `CleanupScope::current()` on its first poll, and keeps it.
+  The scope is the run that the future belongs to; the drop can happen where tokio's task-local scope is not visible.
+- Without a scope, for example under `runBlocking`, the drop waits in place, as before.
+
+Two leaves follow this rule:
+
+- The unpacking of a tarball (`UnpackJob` in `tarball_cache.rs`): its drop sets the token, closes the `TransferStream`, and defers a future that waits for the last message of the thread and then joins it.
+- `runInThread` (`ThreadLeaf` in `nix/util/task-thread.hh`): its drop cancels the thread and calls its `onThreadCancelled` callbacks, and defers a task that waits for the result of the thread and then joins it.
+  In the `Worker`, which has no scope, the drop joins in place as before.
+
+Other drops that may wait, for example of a goal with a builder process that must be killed and reaped, have not been audited; the `Worker` runs them outside the reactor today.
+
+Rejected alternatives:
+
+- An explicit `close()`, or `co_await shutdown()`, before the drop.
+  A cancellation is a drop at any suspension point, where no code of the owner runs that could call `close()`.
+  A `close()` helps where the owner completes normally, but cancellation is the case that needs the wait.
+- A detached cleanup task, which the executor owns and nothing awaits.
+  The drop does not block, but the caller loses the guarantee that the work stopped: a new fetch could start while the old thread still writes to the cache, and the process could exit before the thread removed its temporary files.
+  The scope keeps the guarantee, because the run waits for its cleanups.
+- A cleanup scope that the drop finds through tokio's task-local storage.
+  Whether a drop sees it depends on how tokio drops an aborted task, and on which thread destroys the owner.
+  The scope of the first poll is explicit.
+
+A cleanup that never ends makes its run never end, as a drop that waits forever does under `runBlocking`.

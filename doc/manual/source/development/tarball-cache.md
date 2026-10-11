@@ -52,14 +52,14 @@ The libgit2 repository functions still create the cache, so that the format of a
 ## Fetching a tarball as a task
 
 `fetchTarball`, `fetchTree { type = "tarball"; }`, and the tarball and GitHub-style flake inputs unpack through `downloadIntoTarballCache()` (`src/libfetchers/tarball.cc`).
-With the gitoxide implementation, the function runs one task with `runBlocking()`.
+With the gitoxide implementation, the function runs one task with `runOnReactor()`, or with `runBlocking()` when curl runs on a thread of its own (`_NIX_FILE_TRANSFER_BACKEND=thread`).
 The task owns the whole chain:
 
 ```
-runBlocking
-└─ downloadIntoGixTarballCache                     C++ task
+runOnReactor
+└─ downloadIntoGixTarballCache                     C++ task, on the reactor thread
    └─ whenAll
-      ├─ FileTransfer::transferStreaming           C++ task; the transfer runs on the curl thread
+      ├─ FileTransfer::transferStreaming           C++ task; curl runs on the reactor thread
       │     └─ writes the body into a TransferStream
       └─ unpackIntoTarballCache                    C++ task
          └─ tarball_cache_unpack                   Rust future
@@ -70,24 +70,25 @@ runBlocking
 ```
 
 The download and the unpacking run at the same time.
-The `TransferStream` connects them: the curl thread appends the data, and the unpacking thread reads it.
+The `TransferStream` connects them: curl appends the data on the reactor thread, and the unpacking thread reads it.
 When the buffer exceeds `download-buffer-size`, the transfer pauses until the unpacking has taken the data.
 
 The unpacking runs on a thread of the Rust future, because its work blocks: libarchive pulls its input with blocking reads, and gitoxide writes synchronously.
-No Rust executor exists in Nix yet (see [Asynchronous code](./async.md#what-remains-for-a-rust-executor)), so the future starts the thread on its first poll, and the thread wakes the future when it is done.
+The reactor thread must not block (see [Asynchronous code](./async.md#the-reactor)), so the future starts the thread on its first poll, and the thread wakes the future when it is done.
 libarchive stays, because it reads all the archive formats that Nix accepts.
 A Rust reader would have to match them, and the tar adapter, which both implementations share, would have to move to Rust too.
 
 ### Cancellation
 
 Destroying the task cancels the whole chain.
-`runBlocking()` destroys it on a user interrupt; a combinator such as `whenAll` or `race` destroys it when another task fails or wins.
+`runOnReactor()` destroys it on a user interrupt; a combinator such as `whenAll` or `race` destroys it when another task fails or wins.
 
 - The transfer task removes the transfer from curl.
-- Dropping the Rust future sets the `CancelToken` of its thread, closes the `TransferStream` so that a blocked read returns, and joins the thread.
+- Dropping the Rust future sets the `CancelToken` of its thread, closes the `TransferStream` so that a blocked read returns, and waits for the thread.
+  On the reactor, the wait is a cleanup of the run (see [Asynchronous drop](./async.md#asynchronous-drop)), so that the drop does not block the reactor thread; under `runBlocking()` the drop joins the thread.
   The thread checks the token at each read of the stream, between the entries of the archive, and in the flush, up to the moment before the pack and its index are renamed into place.
 
-After the drop, no thread of the fetch runs, nothing writes to the cache, and the cache has no new pack and no temporary file.
+When `runOnReactor()` returns, or after the drop under `runBlocking()`, no thread of the fetch runs, nothing writes to the cache, and the cache has no new pack and no temporary file.
 `tarball-cancel.sh` tests this for an interrupt during the download, the unpacking and the flush.
 `maintainers/tarball-cancel-stress.sh` interrupts many fetches at random times and checks the cache after each.
 
@@ -100,11 +101,11 @@ libarchive turns an exception of its input into a message, so the unpacker remem
 
 The limits of the guarantee:
 
-- Joining the thread blocks the thread that drops the future until the unpacking threads reach their next check.
+- The wait for the thread lasts until the unpacking threads reach their next check.
+  On the reactor it delays the return of `runOnReactor()`, not other work; under `runBlocking()` it blocks the thread that drops the future.
   The tar adapter writes files on a pool of at most 10 threads.
   After a cancellation, a pool thread skips the files that are still queued, and the writer stops the file that it is hashing or compressing before its next piece of 1 MiB (`CHUNK` in `tarball_cache.rs`).
   The wait is therefore bounded by the time to hash and compress 1 MiB on each pool thread, plus 10 ms for the parse to notice while it waits for room in the backlog.
-  A future executor would need an asynchronous drop instead, for example a task that joins the thread.
 - The backlog of the tar adapter, the files that are parsed but not yet written, holds at most 2 files per pool thread and 64 MiB; the parse waits when it is full.
   The parse is often faster than the writers, for example in a debug build or on a machine with few cores.
   Without the bound, it parsed the whole archive ahead of the writers, with the contents of all queued files in memory, and a cancellation waited until the writers had drained the queue: up to 7.9 s in a debug build.
