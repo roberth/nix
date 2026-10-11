@@ -1,16 +1,18 @@
 #!/bin/sh
-# Build the `nix-rust` staticlib with cargo for Meson.
+# Build a Rust staticlib with cargo for Meson.
 #
 # Meson calls this from a `custom_target`. The script copies the artifacts to
 # the paths that Meson declares as outputs, and rewrites cargo's dep-info file
 # so that Ninja rebuilds the target when a Rust source changes.
 #
-# Usage: cargo-build.sh CARGO MANIFEST TARGET_DIR PROFILE RUST_TARGET OUTDIR DEPFILE
+# Usage: cargo-build.sh CARGO MANIFEST TARGET_DIR PROFILE RUST_TARGET OUTDIR DEPFILE CRATE [cxx]
 #
-# RUST_TARGET is empty for a build for the machine that runs cargo.
+# RUST_TARGET is empty for a build for the machine that runs cargo. CRATE is
+# the name of the package, for example `nix-rust`; its staticlib is
+# `lib<CRATE with underscores>.a`.
 #
-# OUTDIR receives:
-# - `libnix_rust.a`, the staticlib;
+# OUTDIR receives the staticlib. With the last argument `cxx`, it also
+# receives:
 # - the generated bridge headers (`<module>.rs.h`) and `cxx.h`, which are the
 #   outputs that Meson installs;
 # - the same headers under `include/nix/rust/` and `include/rust/`, the paths
@@ -25,6 +27,10 @@ profile=$4
 rust_target=$5
 outdir=$6
 depfile=$7
+crate=$8
+cxx_headers=${9:-}
+
+staticlib=lib$(printf '%s' "$crate" | tr - _).a
 
 if [ -n "$rust_target" ]; then
     set -- --target "$rust_target"
@@ -43,7 +49,7 @@ esac
 export CARGO_PROFILE_RELEASE_STRIP=false
 
 mkdir -p "$target_dir"
-messages=$target_dir/nix-rust-messages.json
+messages=$target_dir/$crate-messages.json
 "$cargo" build \
     --manifest-path "$manifest" \
     --target-dir "$target_dir" \
@@ -52,20 +58,24 @@ messages=$target_dir/nix-rust-messages.json
     --message-format=json-render-diagnostics \
     "$@" > "$messages"
 
-cp "$artifact_dir/libnix_rust.a" "$outdir/libnix_rust.a"
+cp "$artifact_dir/$staticlib" "$outdir/$staticlib"
 
 # Cargo names its own artifact as the target of the dependency rule. Ninja
 # checks that the rule names the first output that Meson declared.
-sed "1s|^[^:]*:|$outdir/libnix_rust.a:|" "$artifact_dir/libnix_rust.d" > "$depfile"
+sed "1s|^[^:]*:|$outdir/$staticlib:|" "$artifact_dir/${staticlib%.a}.d" > "$depfile"
+
+if [ "$cxx_headers" != cxx ]; then
+    exit 0
+fi
 
 # cxx-build writes the generated headers to the `OUT_DIR` of the build script
-# of nix-rust. Cargo reports that directory in its `build-script-executed`
+# of the crate. Cargo reports that directory in its `build-script-executed`
 # message, also when the build script does not run again. (cxx-build also
 # publishes the headers as links under `TARGET_DIR/cxxbridge`, but not in every
 # configuration: the links are absent in a Nix sandbox build.)
 out_dir=$(
     grep '"reason":"build-script-executed"' "$messages" \
-        | grep '#nix-rust@' \
+        | grep "#$crate@" \
         | sed 's/.*"out_dir":"\([^"]*\)".*/\1/'
 )
 generated=$out_dir/cxxbridge/include
@@ -91,7 +101,7 @@ copy_if_changed() {
 mkdir -p "$outdir/include/rust" "$outdir/include/nix/rust"
 cp -L "$generated/rust/cxx.h" "$outdir/cxx.h"
 copy_if_changed "$generated/rust/cxx.h" "$outdir/include/rust/cxx.h"
-for header in "$generated"/nix-rust/src/*.rs.h; do
+for header in "$generated/$crate"/src/*.rs.h; do
     cp -L "$header" "$outdir/"
     copy_if_changed "$header" "$outdir/include/nix/rust/$(basename "$header")"
 done
