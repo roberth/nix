@@ -176,6 +176,7 @@ suites = [
       'store-info.sh',
       'store-print-env.sh',
       'structured-attrs.sh',
+      'substitute-cancel-ssh.sh',
       'substitute-with-invalid-ca.sh',
       'suggestions.sh',
       'supplementary-groups.sh',
