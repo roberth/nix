@@ -644,7 +644,16 @@ struct curlFileTransfer : public FileTransfer, public std::enable_shared_from_th
                  + (fileTransfer.settings.userAgentSuffix != "" ? " " + fileTransfer.settings.userAgentSuffix.get()
                                                                 : ""))
                     .c_str());
-            curl_easy_setopt(req, CURLOPT_PIPEWAIT, 1);
+            /* Wait for a connection that may multiplex instead of opening
+               another one. Only a TLS connection can multiplex here
+               (`CURL_HTTP_VERSION_2TLS`, HTTP/3). On plain HTTP, a transfer
+               that waits for a new connection to the same server waits
+               until the transfer on that connection is done (curl 8.21
+               re-examines its waiting transfers when a connection changes,
+               and a plain HTTP/1.1 connection never does), so concurrent
+               transfers to one server ran one after the other. */
+            if (request.uri.scheme() == "https")
+                curl_easy_setopt(req, CURLOPT_PIPEWAIT, 1L);
             /* Enable HTTP3 only on user config and linked libcurl have support, o.w. fall back. */
             if (fileTransfer.settings.enableHttp3 && fileTransfer.http3Supported)
                 curl_easy_setopt(req, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_3);
