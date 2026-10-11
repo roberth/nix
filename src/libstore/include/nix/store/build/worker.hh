@@ -10,6 +10,8 @@
 #include "nix/store/realisation.hh"
 #include "nix/util/muxable-pipe.hh"
 
+#include <array>
+#include <chrono>
 #include <functional>
 #include <future>
 #include <atomic>
@@ -217,6 +219,27 @@ public:
      */
     size_t nrGoalsSuspendedElsewhere = 0;
 
+    /**
+     * How long the polls of the goals took: the time that an executor of
+     * the goals could do nothing else. `_NIX_REACTOR_STATS` prints these
+     * numbers when the worker is destroyed, and a poll that is longer than
+     * `_NIX_REACTOR_SLOW_POLL_MS` (50 ms by default) is logged at the debug
+     * level, as for the reactor (`nix/util/reactor.hh`).
+     */
+    struct GoalPollStats
+    {
+        uint64_t polls = 0;
+        std::chrono::microseconds busy{0};
+        std::chrono::microseconds longest{0};
+        std::string longestGoal;
+        /**
+         * The number of polls of at least 1, 10 and 50 ms.
+         */
+        std::array<uint64_t, 3> atLeast{};
+    };
+
+    GoalPollStats goalPollStats;
+
     const Activity act;
     const Activity actDerivations;
     const Activity actSubstitutions;
@@ -423,6 +446,8 @@ public:
      * continue.
      */
     bool runRound();
+
+    void recordGoalPoll(const Goal & goal, std::chrono::steady_clock::duration duration);
 
     /**
      * Make goal wakes wake `waker`, the waker of the task that runs the

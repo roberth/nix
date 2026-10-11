@@ -14,6 +14,7 @@
 #include "nix/util/signals.hh"
 #include "nix/util/reactor.hh"
 #include "nix/util/task-thread.hh"
+#include "nix/util/environment-variables.hh"
 #include "nix/store/globals.hh"
 
 namespace nix {
@@ -49,6 +50,21 @@ Worker::~Worker()
        are in trouble, since goals may call childTerminated() etc. in
        their destructors). */
     topGoals.clear();
+
+    if (goalPollStats.polls && getEnv("_NIX_REACTOR_STATS")) {
+        auto & s = goalPollStats;
+        /* A measurement aid, like the statistics of the reactor: straight
+           to stderr, past the logger. */
+        writeToStderr(
+            fmt("nix: goals: %d polls, busy %d ms, longest poll %d us (%s), polls of at least 1/10/50 ms: %d/%d/%d\n",
+                s.polls,
+                s.busy.count() / 1000,
+                s.longest.count(),
+                s.longestGoal,
+                s.atLeast[0],
+                s.atLeast[1],
+                s.atLeast[2]));
+    }
 
     assert(expectedSubstitutions == 0);
     assert(expectedDownloadSize == 0);
@@ -356,6 +372,49 @@ void Worker::run(const Goals & topGoals)
     runBlocking(runGoals(topGoals));
 }
 
+namespace {
+
+/**
+ * The threshold of a slow poll, as for the reactor: `_NIX_REACTOR_SLOW_POLL_MS`,
+ * 50 ms by default.
+ */
+std::chrono::milliseconds slowPollThreshold()
+{
+    static const auto threshold = [] {
+        if (auto s = getEnv("_NIX_REACTOR_SLOW_POLL_MS"))
+            if (auto n = string2Int<int64_t>(*s))
+                return std::chrono::milliseconds(*n);
+        return std::chrono::milliseconds(50);
+    }();
+    return threshold;
+}
+
+} // namespace
+
+void Worker::recordGoalPoll(const Goal & goal, std::chrono::steady_clock::duration duration)
+{
+    auto & s = goalPollStats;
+    auto us = std::chrono::duration_cast<std::chrono::microseconds>(duration);
+    s.polls++;
+    s.busy += us;
+    if (us > s.longest) {
+        s.longest = us;
+        s.longestGoal = goal.name;
+    }
+    using namespace std::chrono_literals;
+    if (us >= 1ms)
+        s.atLeast[0]++;
+    if (us >= 10ms)
+        s.atLeast[1]++;
+    if (us >= 50ms)
+        s.atLeast[2]++;
+    if (duration >= slowPollThreshold())
+        debug(
+            "the goal '%s' held the thread of the goals for %d ms in one poll; no other goal ran in that time",
+            goal.name,
+            us.count() / 1000);
+}
+
 bool Worker::runRound()
 {
     // TODO GC interface?
@@ -376,19 +435,18 @@ bool Worker::runRound()
         awake.clear();
 
         for (auto & goal : awake2) {
-            std::chrono::time_point<std::chrono::steady_clock> startTime;
-            if (verbosity >= lvlVomit)
-                startTime = std::chrono::steady_clock::now();
+            auto startTime = std::chrono::steady_clock::now();
 
             goal->work();
+
+            auto duration = std::chrono::steady_clock::now() - startTime;
+            recordGoalPoll(*goal, duration);
 
             /* Useful for tracing which goals hod the event loop. */
             vomit(
                 "worker event loop worked goal '%1%' for %2$.3fms",
                 goal->name,
-                std::chrono::duration_cast<std::chrono::duration<float, std::milli>>(
-                    std::chrono::steady_clock::now() - startTime)
-                    .count());
+                std::chrono::duration_cast<std::chrono::duration<float, std::milli>>(duration).count());
 
             if (topGoals.empty())
                 break; // stuff may have been cancelled
