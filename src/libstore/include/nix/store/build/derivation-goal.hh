@@ -77,8 +77,8 @@ private:
     /**
      * The states.
      */
-    Co<ExitCode> init(bool storeDerivation);
-    Co<BuildResult> haveDerivation(bool storeDerivation);
+    Task<ExitCode> init(bool storeDerivation);
+    Task<BuildResult> haveDerivation(bool storeDerivation);
 
     /**
      * Return `std::nullopt` if the output is unknown, e.g. un unbuilt
@@ -95,7 +95,7 @@ private:
      */
     UnkeyedRealisation assertPathValidity();
 
-    Co<BuildResult> repairClosure();
+    Task<BuildResult> repairClosure();
 
     BuildResult success(BuildResult::Success::Status status, UnkeyedRealisation builtOutput);
 

@@ -77,12 +77,12 @@ private:
 
     using LocalBuildOutcome = std::variant<Result, NeedsSlot>;
 
-    Co<ExitCode> init();
-    Co<void> realiseInputs();
-    Co<Result> tryToBuild();
-    Co<Result> buildWithHook(
+    Task<ExitCode> init();
+    Task<void> realiseInputs();
+    Task<Result> tryToBuild();
+    Task<Result> buildWithHook(
         const StorePathSet & inputPaths, std::map<std::string, InitialOutput> & initialOutputs, PathLocks outputLocks);
-    Co<LocalBuildOutcome> buildLocally(
+    Task<LocalBuildOutcome> buildLocally(
         LocalBuildCapability localBuildCap,
         const StorePathSet & inputPaths,
         std::map<std::string, InitialOutput> & initialOutputs,

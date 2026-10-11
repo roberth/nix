@@ -183,13 +183,6 @@ public:
 
     using ChildEvent = std::variant<ChildOutput, ChildEOF, std::unique_ptr<TimedOut>>;
 
-    /**
-     * The coroutine type of goal code. Goal code is ordinary `Task` code;
-     * the alias keeps the signatures of the goal classes short.
-     */
-    template<typename T>
-    using Co = Task<T>;
-
 private:
     class ChildEvents
     {
@@ -389,30 +382,30 @@ protected:
      * goals that did not finish yet are released. A goal that nothing
      * else holds is cancelled then.
      */
-    Co<void> await(Goals waitees);
+    Task<void> await(Goals waitees);
 
     /**
      * Wait for several seconds. Used for retrying goals blocked on
      * acquiring lockfiles.
      */
-    Co<void> waitForAWhile();
+    Task<void> waitForAWhile();
 
     /**
      * Wait until a build or substitution slot (according to
      * `jobCategory()`) may be free. The caller checks again.
      */
-    Co<void> waitForBuildSlot();
+    Task<void> waitForBuildSlot();
 
     /**
      * Let the other goals that are awake run first.
      */
-    Co<void> yield();
+    Task<void> yield();
 
     /**
      * Wait for the next output, EOF or timeout of the child processes of
      * this goal.
      */
-    Co<ChildEvent> waitForChildEvent();
+    Task<ChildEvent> waitForChildEvent();
 };
 
 void addToWeakGoals(WeakGoals & goals, GoalPtr p);

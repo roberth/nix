@@ -155,7 +155,7 @@ static std::unique_ptr<PostBuildHookState> runPostBuildHook(
     const StorePathSet & outputPaths);
 #endif
 
-Goal::Co<Goal::ExitCode> DerivationBuildingGoal::init()
+Task<Goal::ExitCode> DerivationBuildingGoal::init()
 {
     auto result = co_await tryToBuild();
 
@@ -271,7 +271,7 @@ static BuildError reject(const LocalBuildRejection & rejection, std::string_view
     return BuildError(BuildResult::Failure::InputRejected, std::move(msg));
 }
 
-Goal::Co<void> DerivationBuildingGoal::realiseInputs()
+Task<void> DerivationBuildingGoal::realiseInputs()
 {
     Goals waitees;
 
@@ -306,7 +306,7 @@ Goal::Co<void> DerivationBuildingGoal::realiseInputs()
 
 /* At least one of the output paths could not be
    produced using a substitute.  So we have to build instead. */
-Goal::Co<DerivationBuildingGoal::Result> DerivationBuildingGoal::tryToBuild()
+Task<DerivationBuildingGoal::Result> DerivationBuildingGoal::tryToBuild()
 {
     co_await realiseInputs();
 
@@ -413,7 +413,7 @@ Goal::Co<DerivationBuildingGoal::Result> DerivationBuildingGoal::tryToBuild()
         return LocalBuildCapability{*localStoreP, ext};
     }();
 
-    auto acquireResources = [&](PathLocks & outputLocks) -> Goal::Co<bool> {
+    auto acquireResources = [&](PathLocks & outputLocks) -> Task<bool> {
         trace("trying to build");
 
         /**
@@ -492,7 +492,7 @@ Goal::Co<DerivationBuildingGoal::Result> DerivationBuildingGoal::tryToBuild()
         co_return false;
     };
 
-    auto tryHookLoop = [&]() -> Goal::Co<std::optional<Result>> {
+    auto tryHookLoop = [&]() -> Task<std::optional<Result>> {
         {
             PathLocks outputLocks;
             if (co_await acquireResources(outputLocks))
@@ -562,7 +562,7 @@ Goal::Co<DerivationBuildingGoal::Result> DerivationBuildingGoal::tryToBuild()
         }
     };
 
-    auto tryBuildLocally = [&]() -> Goal::Co<std::optional<LocalBuildOutcome>> {
+    auto tryBuildLocally = [&]() -> Task<std::optional<LocalBuildOutcome>> {
         if (auto * cap = std::get_if<LocalBuildCapability>(&localBuildResult)) {
             PathLocks outputLocks;
             if (co_await acquireResources(outputLocks))
@@ -610,7 +610,7 @@ Goal::Co<DerivationBuildingGoal::Result> DerivationBuildingGoal::tryToBuild()
     co_return reject(*rejection, storePath);
 }
 
-Goal::Co<DerivationBuildingGoal::Result> DerivationBuildingGoal::buildWithHook(
+Task<DerivationBuildingGoal::Result> DerivationBuildingGoal::buildWithHook(
     const StorePathSet & inputPaths, std::map<std::string, InitialOutput> & initialOutputs, PathLocks outputLocks)
 {
 #ifdef _WIN32 // TODO enable build hook on Windows
@@ -830,7 +830,7 @@ Goal::Co<DerivationBuildingGoal::Result> DerivationBuildingGoal::buildWithHook(
 #endif
 }
 
-Goal::Co<DerivationBuildingGoal::LocalBuildOutcome> DerivationBuildingGoal::buildLocally(
+Task<DerivationBuildingGoal::LocalBuildOutcome> DerivationBuildingGoal::buildLocally(
     LocalBuildCapability localBuildCap,
     const StorePathSet & inputPaths,
     std::map<std::string, InitialOutput> & initialOutputs,

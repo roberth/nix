@@ -258,7 +258,7 @@ void Goal::removeWaiter(const WaiteeSet * set)
     });
 }
 
-Goal::Co<void> Goal::await(Goals newWaitees)
+Task<void> Goal::await(Goals newWaitees)
 {
     if (newWaitees.empty())
         co_return;
@@ -413,18 +413,18 @@ void Goal::timedOut(TimedOut && ex)
     childEvents.pushChildEvent(std::move(ex));
 }
 
-Goal::Co<void> Goal::yield()
+Task<void> Goal::yield()
 {
     co_await YieldLeaf(suspendedOnWorker);
 }
 
-Goal::Co<void> Goal::waitForAWhile()
+Task<void> Goal::waitForAWhile()
 {
     trace("wait for a while");
     co_await WaitQueueLeaf(suspendedOnWorker, worker.waitingForAWhile, false);
 }
 
-Goal::Co<void> Goal::waitForBuildSlot()
+Task<void> Goal::waitForBuildSlot()
 {
     trace("wait for build slot");
     auto category = jobCategory();
@@ -434,7 +434,7 @@ Goal::Co<void> Goal::waitForBuildSlot()
         worker.slotAvailable(category));
 }
 
-Goal::Co<Goal::ChildEvent> Goal::waitForChildEvent()
+Task<Goal::ChildEvent> Goal::waitForChildEvent()
 {
     struct ChildEventLeaf : WorkerLeaf
     {

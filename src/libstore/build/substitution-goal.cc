@@ -23,14 +23,14 @@ PathSubstitutionGoal::PathSubstitutionGoal(
 
 PathSubstitutionGoal::~PathSubstitutionGoal() = default;
 
-Goal::Co<Goal::ExitCode> PathSubstitutionGoal::init()
+Task<Goal::ExitCode> PathSubstitutionGoal::init()
 {
     auto result = co_await substitute();
     buildResult = std::move(result.second);
     co_return result.first;
 }
 
-Goal::Co<PathSubstitutionGoal::Result> PathSubstitutionGoal::substitute()
+Task<PathSubstitutionGoal::Result> PathSubstitutionGoal::substitute()
 {
     trace("init");
 
@@ -185,7 +185,7 @@ Goal::Co<PathSubstitutionGoal::Result> PathSubstitutionGoal::substitute()
     };
 }
 
-Goal::Co<PathSubstitutionGoal::SubstitutionResult>
+Task<PathSubstitutionGoal::SubstitutionResult>
 PathSubstitutionGoal::tryToRun(StorePath subPath, nix::ref<Store> sub, std::shared_ptr<const ValidPathInfo> info)
 {
     trace("all references realised");

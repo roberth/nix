@@ -122,10 +122,10 @@ private:
     using LoadResult = std::variant<LoadedDerivation, BuildResult::Failure>;
     using Result = std::pair<ExitCode, BuildResult>;
 
-    Co<ExitCode> init(Co<Result> work);
-    Co<LoadResult> loadDerivation();
-    Co<Result> haveToLoadFromStore();
-    Co<Result> haveDerivation(StorePath drvPath, Derivation drv);
+    Task<ExitCode> init(Task<Result> work);
+    Task<LoadResult> loadDerivation();
+    Task<Result> haveToLoadFromStore();
+    Task<Result> haveDerivation(StorePath drvPath, Derivation drv);
 
     BuildMode buildMode;
 

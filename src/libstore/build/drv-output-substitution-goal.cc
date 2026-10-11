@@ -12,7 +12,7 @@ DrvOutputSubstitutionGoal::DrvOutputSubstitutionGoal(const DrvOutput & id, Worke
     trace("created");
 }
 
-Goal::Co<Goal::ExitCode> DrvOutputSubstitutionGoal::init()
+Task<Goal::ExitCode> DrvOutputSubstitutionGoal::init()
 {
     trace("init");
 

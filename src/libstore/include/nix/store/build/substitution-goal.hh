@@ -38,8 +38,9 @@ class PathSubstitutionGoal : public Goal
 
     using Result = std::pair<ExitCode, BuildResult>;
 
-    Co<Result> substitute();
-    Co<SubstitutionResult> tryToRun(StorePath subPath, nix::ref<Store> sub, std::shared_ptr<const ValidPathInfo> info);
+    Task<Result> substitute();
+    Task<SubstitutionResult>
+    tryToRun(StorePath subPath, nix::ref<Store> sub, std::shared_ptr<const ValidPathInfo> info);
 
 public:
     PathSubstitutionGoal(
@@ -63,7 +64,7 @@ public:
     /**
      * The states.
      */
-    Co<ExitCode> init();
+    Task<ExitCode> init();
 
     JobCategory jobCategory() const override
     {

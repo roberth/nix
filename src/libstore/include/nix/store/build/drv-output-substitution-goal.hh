@@ -41,7 +41,7 @@ public:
      */
     std::shared_ptr<const UnkeyedRealisation> outputInfo;
 
-    Co<ExitCode> init();
+    Task<ExitCode> init();
 
     std::string key() override;
 
